@@ -1,0 +1,7 @@
+pyserial>=3.5
+
+# 摄像头流式传输（camera_stream.py，可选）
+# 在香橙派/带摄像头的机器上需要时再安装：
+#   pip install opencv-python flask
+# opencv-python>=4.5
+# flask>=2.0

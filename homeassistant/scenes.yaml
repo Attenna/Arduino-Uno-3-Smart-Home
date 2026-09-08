@@ -1,0 +1,34 @@
+# 场景（scene）说明
+# Home Assistant 的 scene 本质是"实体状态快照"，适合可保存/恢复状态的实体。
+# 本系统的执行器是通过 MQTT 命令驱动的，更推荐用"脚本"组合多个硬件动作。
+#
+# 建议把"一键离家/回家"实现为脚本（放在 scripts.yaml 中），例如：
+#
+#   leave_home:
+#     alias: "一键离家"
+#     sequence:
+#       - service: script.door_close
+#       - service: script.window_close
+#       - service: mqtt.publish
+#         data:
+#           topic: "smarthome/output/command"
+#           payload: '{"cmd":"light","action":"off"}'
+#       - service: mqtt.publish
+#         data:
+#           topic: "smarthome/output/command"
+#           payload: '{"cmd":"fan","action":"off"}'
+#
+#   come_home:
+#     alias: "一键回家"
+#     sequence:
+#       - service: mqtt.publish
+#         data:
+#           topic: "smarthome/output/command"
+#           payload: '{"cmd":"light","action":"white","value":255}'
+#       - service: script.window_normal
+#
+# 如需使用 scene，可结合脚本调用，例如：
+#   - id: "scene_good_night"
+#     name: "晚安模式"
+#     entities: {}
+#     # 在 action 中调用脚本组合即可

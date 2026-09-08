@@ -1,0 +1,98 @@
+# Home Assistant 主配置
+# 本配置将 Home Assistant 作为唯一的"业务决策层"：
+# 所有传感器联动（自动化）都在这里实现，Arduino 只报告 / 只执行。
+
+default_config:
+
+# 自动化 / 脚本 / 场景
+automation: !include automations.yaml
+script: !include scripts.yaml
+scene: !include scenes.yaml
+
+# MQTT：连接 Orange Pi 上的 Mosquitto
+mqtt:
+  broker: localhost
+  port: 1883
+
+  # ---- Module A 传感器（周期数据） ----
+  sensor:
+    - name: "Temperature"
+      state_topic: "smarthome/sensor/data"
+      value_template: "{{ value_json.data.temperature }}"
+      unit_of_measurement: "°C"
+      device_class: temperature
+
+    - name: "Humidity"
+      state_topic: "smarthome/sensor/data"
+      value_template: "{{ value_json.data.humidity }}"
+      unit_of_measurement: "%"
+      device_class: humidity
+
+    - name: "Light Level"
+      state_topic: "smarthome/sensor/data"
+      value_template: "{{ value_json.data.light }}"
+      unit_of_measurement: "lx"
+
+    - name: "Distance"
+      state_topic: "smarthome/sensor/data"
+      value_template: "{{ value_json.data.distance }}"
+      unit_of_measurement: "cm"
+      device_class: distance
+
+  # ---- Module A 布尔状态 ----
+  binary_sensor:
+    - name: "Smoke"
+      state_topic: "smarthome/sensor/data"
+      value_template: "{{ 'ON' if value_json.data.smoke else 'OFF' }}"
+      device_class: smoke
+
+    - name: "Rain"
+      state_topic: "smarthome/sensor/data"
+      value_template: "{{ 'ON' if value_json.data.rain else 'OFF' }}"
+      device_class: moisture
+
+    - name: "Touch"
+      state_topic: "smarthome/sensor/data"
+      value_template: "{{ 'ON' if value_json.data.touch else 'OFF' }}"
+
+  # ---- Module B 执行器（开关） ----
+  switch:
+    - name: "Door"
+      command_topic: "smarthome/output/command"
+      payload_on: '{"cmd":"door","action":"open"}'
+      payload_off: '{"cmd":"door","action":"close"}'
+      state_topic: "smarthome/output/state"
+      value_template: "{{ 'ON' if value_json.door == 'open' else 'OFF' }}"
+      state_on: "ON"
+      state_off: "OFF"
+
+    - name: "Light"
+      command_topic: "smarthome/output/command"
+      payload_on: '{"cmd":"light","action":"white","value":255}'
+      payload_off: '{"cmd":"light","action":"off"}'
+      state_topic: "smarthome/output/state"
+      value_template: "{{ 'ON' if value_json.light | int > 0 else 'OFF' }}"
+      state_on: "ON"
+      state_off: "OFF"
+
+    - name: "Buzzer"
+      command_topic: "smarthome/output/command"
+      payload_on: '{"cmd":"buzzer","action":"on"}'
+      payload_off: '{"cmd":"buzzer","action":"off"}'
+      state_topic: "smarthome/output/state"
+      value_template: "{{ 'ON' if value_json.buzzer == 'on' else 'OFF' }}"
+      state_on: "ON"
+      state_off: "OFF"
+
+  # ---- 风扇（开关 + 百分比调速） ----
+  fan:
+    - name: "Fan"
+      command_topic: "smarthome/output/command"
+      payload_on: '{"cmd":"fan","action":"on"}'
+      payload_off: '{"cmd":"fan","action":"off"}'
+      percentage_command_topic: "smarthome/output/command"
+      percentage_command_template: '{"cmd":"fan","action":"set_speed","value":{{ percentage * 255 // 100 }}}'
+      state_topic: "smarthome/output/state"
+      state_value_template: "{{ 'on' if value_json.fan | int > 0 else 'off' }}"
+      percentage_state_topic: "smarthome/output/state"
+      percentage_value_template: "{{ (value_json.fan | int * 100 // 255) if value_json.fan is defined else 0 }}"

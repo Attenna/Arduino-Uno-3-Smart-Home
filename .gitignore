@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# 日志与数据
+*.csv
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Home Assistant 运行时缓存
+homeassistant/.HA_VERSION
+homeassistant/.cache/
+
+# 临时文件
+_tmp/
+*.tmp
+# 本地临时自检脚本（保留在磁盘，不进仓库）
+PC_Test/_cam_test.py

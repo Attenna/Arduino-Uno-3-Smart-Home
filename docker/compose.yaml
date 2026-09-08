@@ -1,0 +1,26 @@
+# Docker Compose：Mosquitto (MQTT) + Home Assistant
+# 在 Orange Pi 上运行：docker compose up -d
+
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: mosquitto
+    restart: unless-stopped
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+
+  homeassistant:
+    image: ghcr.io/home-assistant/home-assistant:stable
+    container_name: homeassistant
+    restart: unless-stopped
+    privileged: true
+    ports:
+      - "8123:8123"
+    environment:
+      - TZ=Asia/Shanghai
+    volumes:
+      - ../homeassistant:/config
+    depends_on:
+      - mosquitto

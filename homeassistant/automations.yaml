@@ -1,0 +1,72 @@
+# 业务逻辑示例：所有联动都由 Home Assistant 完成。
+
+# 1. 温度过高 → 开风扇
+- id: "temp_high_turn_on_fan"
+  alias: "温度过高自动开风扇"
+  trigger:
+    - platform: numeric_state
+      entity_id: sensor.temperature
+      above: 30
+  condition: []
+  action:
+    - service: fan.turn_on
+      target:
+        entity_id: fan.fan
+    - service: script.set_fan_speed
+      data:
+        speed: 100
+
+# 2. 下雨 → 关窗
+- id: "rain_close_window"
+  alias: "下雨自动关窗"
+  trigger:
+    - platform: state
+      entity_id: binary_sensor.rain
+      to: "on"
+  condition: []
+  action:
+    - service: script.window_close
+
+# 3. 烟雾报警 → 蜂鸣 + 红灯
+- id: "smoke_alarm"
+  alias: "烟雾报警"
+  trigger:
+    - platform: state
+      entity_id: binary_sensor.smoke
+      to: "on"
+  condition: []
+  action:
+    - service: mqtt.publish
+      data:
+        topic: "smarthome/output/command"
+        payload: '{"cmd":"buzzer","action":"beep","count":10,"on_ms":300,"off_ms":300}'
+    - service: mqtt.publish
+      data:
+        topic: "smarthome/output/command"
+        payload: '{"cmd":"light","action":"red"}'
+
+# 4. 烟雾解除 → 停止蜂鸣
+- id: "smoke_clear"
+  alias: "烟雾解除"
+  trigger:
+    - platform: state
+      entity_id: binary_sensor.smoke
+      to: "off"
+  condition: []
+  action:
+    - service: mqtt.publish
+      data:
+        topic: "smarthome/output/command"
+        payload: '{"cmd":"buzzer","action":"off"}'
+
+# 5. 刷卡开门（RFID 事件）
+- id: "rfid_open_door"
+  alias: "刷卡开门"
+  trigger:
+    - platform: mqtt
+      topic: "smarthome/sensor/event"
+      value_template: "{{ value_json.event }}"
+      payload: "rfid"
+  condition: []
+  action:
+    - service: script.door_open

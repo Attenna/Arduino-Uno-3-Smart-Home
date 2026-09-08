@@ -1,0 +1,102 @@
+# 可复用脚本：把硬件命令封装成语义清晰的脚本。
+
+# 门
+door_open:
+  alias: "开门"
+  sequence:
+    - service: mqtt.publish
+      data:
+        topic: "smarthome/output/command"
+        payload: '{"cmd":"door","action":"open"}'
+
+door_close:
+  alias: "关门"
+  sequence:
+    - service: mqtt.publish
+      data:
+        topic: "smarthome/output/command"
+        payload: '{"cmd":"door","action":"close"}'
+
+# 窗
+window_open:
+  alias: "开窗"
+  sequence:
+    - service: mqtt.publish
+      data:
+        topic: "smarthome/output/command"
+        payload: '{"cmd":"window","action":"open"}'
+
+window_close:
+  alias: "关窗"
+  sequence:
+    - service: mqtt.publish
+      data:
+        topic: "smarthome/output/command"
+        payload: '{"cmd":"window","action":"close"}'
+
+window_normal:
+  alias: "窗户正常"
+  sequence:
+    - service: mqtt.publish
+      data:
+        topic: "smarthome/output/command"
+        payload: '{"cmd":"window","action":"normal"}'
+
+# 风扇调速（speed: 0~255）
+set_fan_speed:
+  alias: "设置风扇速度"
+  fields:
+    speed:
+      description: "速度 0~255"
+      example: 180
+  sequence:
+    - service: mqtt.publish
+      data:
+        topic: "smarthome/output/command"
+        payload_template: '{"cmd":"fan","action":"set_speed","value":{{ speed }}}'
+
+# 灯光 RGB
+set_light_rgb:
+  alias: "设置灯光颜色"
+  fields:
+    r:
+      example: 255
+    g:
+      example: 0
+    b:
+      example: 0
+  sequence:
+    - service: mqtt.publish
+      data:
+        topic: "smarthome/output/command"
+        payload_template: '{"cmd":"light","action":"rgb","r":{{ r }},"g":{{ g }},"b":{{ b }}}'
+
+# 数码管显示时间
+display_time:
+  alias: "数码管显示时间"
+  fields:
+    hour:
+      example: 14
+    minute:
+      example: 30
+  sequence:
+    - service: mqtt.publish
+      data:
+        topic: "smarthome/output/command"
+        payload_template: '{"cmd":"display","action":"show_time","hour":{{ hour }},"minute":{{ minute }}}'
+
+# OLED 显示文本
+oled_show_text:
+  alias: "OLED 显示文本"
+  fields:
+    line:
+      description: "行号 0~7"
+      example: 2
+    text:
+      description: "文本，最多 16 字符"
+      example: "T: 25.3 C"
+  sequence:
+    - service: mqtt.publish
+      data:
+        topic: "smarthome/output/command"
+        payload_template: '{"cmd":"oled","action":"show_text","line":{{ line }},"text":"{{ text }}"}'
