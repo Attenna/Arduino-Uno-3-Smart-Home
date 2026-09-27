@@ -23,7 +23,7 @@ public:
 private:
     CommandDispatcher* _dispatcher;
     CommandParser _parser;
-    char _buf[96];
+    char _buf[128];
     byte _pos;
 
     void handleLine(const char* line);

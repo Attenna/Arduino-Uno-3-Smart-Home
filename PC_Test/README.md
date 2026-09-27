@@ -200,9 +200,11 @@ py -3.13 camera_test.py --cam 0 --frames 10
 
 OLED 轮播连发多行命令时，若 B 板固件处理不过来会导致命令错位。已在 `oled_carousel.py` 中内置**逐行 30ms 节流** + **仅发送变化行**，正常使用即可。
 
-### B 板 JSON 命令 parse_error
+### B 板 JSON 命令 parse_error（已修复）
 
-B 板固件当前存在 JSON 解析 bug（所有 JSON 命令返回 `parse_error`），因此 DSL 动作统一降级为**文本命令**（`B:XXX` 格式），已实测全部正常。详见 [automation/README.md](automation/README.md) 的操作映射表。
+~~B 板固件曾存在 JSON 解析 bug（所有 JSON 命令返回 `parse_error`）~~ 已修复：根因是 Uno 2KB RAM 下
+ArduinoJson 7 的堆分配必然失败（详见 `module-b-output/src/core/CommandParser.cpp` 头部注释），
+现固件改用零分配解析器，JSON 与冒号命令均已实测正常。DSL 动作继续使用 `B:XXX` 文本命令亦无问题。
 
 ---
 

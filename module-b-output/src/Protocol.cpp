@@ -75,7 +75,7 @@ void Protocol::handleLine(const char* line) {
     // 系统命令
     if (strcmp(cmd.device, "system") == 0) {
         if (strcmp(cmd.action, "status") == 0) {
-            char buf[96];
+            char buf[128];
             _dispatcher->buildStatus(buf, sizeof(buf));
             Serial.println(buf);
             return;
@@ -140,7 +140,7 @@ bool Protocol::handleLegacy(const char* line) {
 
     // 查询
     if (strcmp(p, "STATUS") == 0) {
-        char out[96];
+        char out[128];
         _dispatcher->buildStatus(out, sizeof(out));
         Serial.println(out);
         return true;
