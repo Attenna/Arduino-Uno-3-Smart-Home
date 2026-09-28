@@ -1,0 +1,67 @@
+# 语音交互模式配置 —— voice_assistant.py / mcp_home_server.py / qwen_server.py 共用
+# 命令行参数会覆盖本文件里的同名字段。
+# 复制为 voice_config.local.yaml 做个人定制（已被 .gitignore 忽略）。
+
+# ── 串口（auto = 自动探测；Module A=传感器，Module B=执行器）──
+serial:
+  port_a: auto        # 传感器板，如 COM7
+  port_b: auto        # 执行器板，如 COM6
+
+# ── LLM 引擎：Qwen2.5（国内合规，已移除 Ollama）──
+# mode=local      ：本地推理（离线，qwen_server.py 提供服务），权重经魔搭 ModelScope 下载
+# mode=dashscope  ：阿里云百炼 OpenAI 兼容端点（国内云服务，需 API Key）
+llm:
+  mode: "local"
+  base_url: "http://127.0.0.1:8000/v1"        # local 模式：qwen_server.py 监听地址
+  # base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"  # dashscope 模式改用这行
+  api_key: "none"       # dashscope 模式填百炼 API Key（或设环境变量 DASHSCOPE_API_KEY）；local 无需
+  model: "qwen2.5-1.5b-instruct-q4_k_m"   # local=GGUF 文件名去 .gguf；dashscope 改 "qwen2.5-1.5b-instruct"
+  system_prompt: |
+    你是智能家居语音助手，控制一台通过串口连接的 Arduino 智能家居模型。
+    规则：
+    1) 涉及硬件操作（灯/门/窗/风扇/蜂鸣器/OLED/数码管）必须调用对应工具，禁止编造执行结果。
+    2) 查询当前状态（温度、湿度、是否有人等）必须先调 get_sensor_status，再用真实数据回答。
+    3) 回复口语化、简短（一两句即可），不要列工具名或 JSON。
+    4) 不确定用户意图时简短反问，不要乱调设备。
+    设备能力：门、窗、风扇（可调速）、RGB 灯、蜂鸣器、OLED 屏、数码管、红外发射。
+  local:                # mode=local 时生效（qwen_server.py 读取）
+    gguf_path: "models/qwen/qwen2.5-1.5b-instruct-q4_k_m.gguf"  # 1.5B-Q4 ~1GB，香橙派 CPU 可跑
+    n_ctx: 8192         # 上下文长度
+    n_threads: 0        # CPU 线程数，0=自动
+    n_gpu_layers: 0     # 目标机香橙派 AI Pro（昇腾 NPU，llama.cpp 不支持）→ 纯 CPU；0
+    port: 8000
+
+# ── Sherpa-ONNX 语音前端（KWS 唤醒 + 流式 ASR + 本地 TTS，全离线，香橙派 CPU 可实时）──
+# 模型下载: py -3.13 download_sherpa_models.py
+# 香橙派 AI Pro 的昇腾 NPU 暂不走（Sherpa ACL 后端面向 910 系列），全链路 CPU + INT8 即可。
+sherpa:
+  provider: "cpu"       # sherpa 引擎推理后端（cpu；INT8 模型在香橙派多核 ARM 上足够实时）
+  num_threads: 2        # KWS/ASR 推理线程（香橙派可试 4）
+  kws:                  # 唤醒词检测（zipformer-wenetspeech 3.3M，声学级唤醒）
+    model_dir: "models/sherpa/kws"
+    keywords_file: "models/sherpa/kws/keywords.txt"
+    keywords_score: 1.5       # 唤醒词打分提升（调大更易唤醒，误唤醒也会增加）
+    keywords_threshold: 0.25  # 声学阈值（调小更灵敏，误唤醒也会增加）
+  asr:                  # 流式识别（streaming Zipformer 中英双语，INT8 三件套）
+    model_dir: "models/sherpa/asr"
+    rule1_silence: 2.4  # 端点规则：句尾静音秒数
+    rule2_silence: 1.2  #           句中有内容后的静音秒数
+    rule3_utt_len: 20.0 #           最长句长（秒）
+  tts:                  # 本地语音合成（vits-melo-tts-zh_en）
+    model_dir: "models/sherpa/tts"
+    speaker_id: 0       # melo-tts-zh_en 说话人 id（0=中文女声）
+    speed: 1.0          # 语速倍数
+    num_threads: 2
+
+# ── 唤醒词（仅用于：从「唤醒词+指令」连读句中剥前缀；实际唤醒由 KWS 声学检测）──
+wake:
+  words:
+    - "你邮你邮"
+    - "你好你好"      # KWS 别名，见 keywords.txt
+  command_timeout: 6.0   # 命令模式等整句秒数
+  followup_timeout: 8.0  # 回答后追问窗口（秒），期间无需重新唤醒即可直接说话
+  wake_ack: "在的"        # 命中唤醒词后 TTS 回一句
+
+# ── 麦克风 ──
+mic:
+  device_index: null   # null=系统默认输入；用 `--list-mic` 查看索引

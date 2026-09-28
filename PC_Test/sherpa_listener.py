@@ -1,0 +1,142 @@
+"""sherpa_listener.py — Sherpa-ONNX 音频前端：KWS 唤醒 + 流式 ASR
+
+一条麦克风流同时喂两条引擎：
+    KeywordSpotter（zipformer-wenetspeech）→ 唤醒词事件（声学级唤醒，非文本匹配）
+    OnlineRecognizer（streaming Zipformer transducer INT8，端点检测）→ 流式识别事件
+
+事件由调用方在音频回调里消费：
+    ("wake",    "你邮你邮")   — KWS 命中
+    ("partial", "你好")       — ASR 中间结果（实时显示用）
+    ("final",   "把灯调成蓝色") — 端点切分出的整句
+
+模型目录结构（见 download_sherpa_models.py）：
+    models/sherpa/kws/     encoder.onnx decoder.onnx joiner.onnx tokens.txt keywords.txt
+    models/sherpa/asr/     encoder.onnx decoder.onnx joiner.onnx tokens.txt（transducer）
+                           （无 joiner.onnx 时回退 paraformer：encoder+decoder）
+"""
+import os
+
+import numpy as np
+
+_SAMPLE_RATE = 16000
+
+
+class SherpaListener:
+    """KWS + 流式 ASR 双引擎前端。线程安全假定：accept() 只在音频回调线程调用。"""
+
+    def __init__(self, cfg: dict):
+        import sherpa_onnx
+
+        s = cfg["sherpa"]
+        kws_dir = _abspath(s["kws"]["model_dir"])
+        asr_dir = _abspath(s["asr"]["model_dir"])
+
+        # ── KWS（唤醒词）──
+        keywords_file = _abspath(s["kws"]["keywords_file"])
+        self.kws = sherpa_onnx.KeywordSpotter(
+            tokens=os.path.join(kws_dir, "tokens.txt"),
+            encoder=os.path.join(kws_dir, "encoder.onnx"),
+            decoder=os.path.join(kws_dir, "decoder.onnx"),
+            joiner=os.path.join(kws_dir, "joiner.onnx"),
+            keywords_file=keywords_file,
+            keywords_score=float(s["kws"].get("keywords_score", 1.5)),
+            keywords_threshold=float(s["kws"].get("keywords_threshold", 0.25)),
+            num_threads=int(s.get("num_threads", 2)),
+            provider=s.get("provider", "cpu"),
+        )
+        self.kws_stream = self.kws.create_stream()
+        self.keywords = [l.split("@", 1)[1].strip()
+                         for l in open(keywords_file, encoding="utf-8")
+                         if l.strip() and "@" in l]
+
+        # ── 流式 ASR（Zipformer transducer INT8；无 joiner 时回退 Paraformer）──
+        ep = dict(
+            num_threads=int(s.get("num_threads", 2)),
+            enable_endpoint_detection=True,
+            rule1_min_trailing_silence=float(s["asr"].get("rule1_silence", 2.4)),
+            rule2_min_trailing_silence=float(s["asr"].get("rule2_silence", 1.2)),
+            rule3_min_utterance_length=float(s["asr"].get("rule3_utt_len", 20.0)),
+            provider=s.get("provider", "cpu"),
+        )
+        joiner_path = os.path.join(asr_dir, "joiner.onnx")
+        if os.path.isfile(joiner_path):
+            self.recognizer = sherpa_onnx.OnlineRecognizer.from_transducer(
+                tokens=os.path.join(asr_dir, "tokens.txt"),
+                encoder=os.path.join(asr_dir, "encoder.onnx"),
+                decoder=os.path.join(asr_dir, "decoder.onnx"),
+                joiner=joiner_path,
+                **ep)
+        else:
+            self.recognizer = sherpa_onnx.OnlineRecognizer.from_paraformer(
+                tokens=os.path.join(asr_dir, "tokens.txt"),
+                encoder=os.path.join(asr_dir, "encoder.onnx"),
+                decoder=os.path.join(asr_dir, "decoder.onnx"),
+                **ep)
+        self.asr_stream = self.recognizer.create_stream()
+        self.last_partial = ""
+
+    def accept(self, pcm_float32: np.ndarray) -> list[tuple[str, str]]:
+        """喂一帧 16kHz 单声道 float32 PCM，返回本帧产生的事件列表。"""
+        events: list[tuple[str, str]] = []
+
+        # KWS
+        self.kws_stream.accept_waveform(_SAMPLE_RATE, pcm_float32)
+        while self.kws.is_ready(self.kws_stream):
+            self.kws.decode_stream(self.kws_stream)
+        kw = self.kws.get_result(self.kws_stream)  # Python 绑定直接返回关键词字符串
+        if kw:
+            events.append(("wake", kw))
+            self.kws.reset(self.kws_stream)
+
+        # ASR（端点检测自动切句）
+        self.asr_stream.accept_waveform(_SAMPLE_RATE, pcm_float32)
+        while self.recognizer.is_ready(self.asr_stream):
+            self.recognizer.decode_stream(self.asr_stream)
+        # 1.13 Python 绑定：get_result 直接返回识别文本字符串
+        text = self.recognizer.get_result(self.asr_stream).strip()
+        if text and text != self.last_partial:
+            self.last_partial = text
+            events.append(("partial", text))
+        if self.recognizer.is_endpoint(self.asr_stream):
+            final = self.recognizer.get_result(self.asr_stream).strip()
+            self.recognizer.reset(self.asr_stream)
+            self.last_partial = ""
+            if final:
+                events.append(("final", final))
+        return events
+
+    def reset_asr(self):
+        """丢弃当前 ASR 半句（处理指令期间误录入时调用）。"""
+        self.recognizer.reset(self.asr_stream)
+        self.last_partial = ""
+
+
+def _abspath(p: str) -> str:
+    if os.path.isabs(p):
+        return p
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), p)
+
+
+def check_models(cfg: dict) -> list[str]:
+    """返回缺失文件列表（空列表=齐全）。"""
+    s = cfg["sherpa"]
+    need = []
+    kws_dir = _abspath(s["kws"]["model_dir"])
+    for f in ("encoder.onnx", "decoder.onnx", "joiner.onnx", "tokens.txt"):
+        if not os.path.isfile(os.path.join(kws_dir, f)):
+            need.append(f"kws/{f}")
+    if not os.path.isfile(_abspath(s["kws"]["keywords_file"])):
+        need.append("kws/keywords.txt")
+    asr_dir = _abspath(s["asr"]["model_dir"])
+    # transducer（zipformer）需要 joiner；paraformer 只有 encoder+decoder
+    asr_files = (("encoder.onnx", "decoder.onnx", "joiner.onnx", "tokens.txt")
+                 if os.path.isfile(os.path.join(asr_dir, "joiner.onnx"))
+                 else ("encoder.onnx", "decoder.onnx", "tokens.txt"))
+    for f in asr_files:
+        if not os.path.isfile(os.path.join(asr_dir, f)):
+            need.append(f"asr/{f}")
+    tts_dir = _abspath(s["tts"]["model_dir"])
+    for f in ("model.onnx", "tokens.txt"):
+        if not os.path.isfile(os.path.join(tts_dir, f)):
+            need.append(f"tts/{f}")
+    return need

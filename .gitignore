@@ -13,6 +13,7 @@ env/
 # IDE
 .vscode/
 .idea/
+.trae/
 *.swp
 
 # Home Assistant 运行时缓存
@@ -24,3 +25,8 @@ _tmp/
 *.tmp
 # 本地临时自检脚本（保留在磁盘，不进仓库）
 PC_Test/_cam_test.py
+
+# 语音模式：模型、本地配置与密钥不入库
+PC_Test/models/
+PC_Test/voice_config.local.yaml
+PC_Test/dashscope_key.txt
