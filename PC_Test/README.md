@@ -52,7 +52,7 @@ PC_Test/
 | `test_serial.py` | 手动发命令测试单块板 | 排查硬件、验证某个传感器/执行器是否正常 |
 | `run_automation.py` | 运行 `.auto` 自动化脚本 | 写联动规则、定时任务、OLED 轮播 |
 | `camera_stream.py` | USB 摄像头流式传输 + 人脸检测 | 视频监控、人脸识别（香橙派部署用 HTTP 流） |
-| `voice_assistant.py` | 语音交互（KWS 唤醒 + Qwen2.5 + MCP） | 说「你邮你邮」唤醒，用自然语言控制硬件 |
+| `voice_assistant.py` | 语音交互（KWS 唤醒 + Qwen2.5 + MCP） | 说「Hey Bota」唤醒（或键盘打字/HTTP 下发），自然语言控制硬件 |
 | `link_server.py` | 旧的硬编码规则联动 | ⚠️ 已过时，建议改用 `run_automation.py` |
 
 ---
@@ -201,22 +201,24 @@ py -3.13 camera_test.py --cam 0 --frames 10
 
 ## ⑤ voice_assistant.py — 语音交互模式（唤醒词 + Qwen2.5 + MCP）
 
-对着麦克风说唤醒词「你邮你邮」，再说一句指令（如「把灯调成蓝色」「现在多少度」），
+对着麦克风说唤醒词「**Hey Bota**」（或直接键盘打字 / HTTP 下发指令），
+再说一句指令（如「把灯调成蓝色」「现在多少度」），
 **Qwen2.5 大模型**理解意图后，通过 MCP 工具直接控制 Arduino Module B，回复用流式 TTS 播放。
 
 **数据流**：
 
 ```text
-麦克风 ──Sherpa-ONNX──▶ KWS 声学唤醒「你邮你邮」──▶ 切 COMMAND + TTS 回「在的」
+麦克风 ──Sherpa-ONNX──▶ KWS 声学唤醒「Hey Bota」──▶ 切 COMMAND + 滴声提示
                         流式 ASR 整句 ──▶ 用户指令 ──▶ 切 IDLE
+键盘打字回车 / HTTP POST /say ─────────┘
 用户指令 ──Qwen2.5 流式 + 工具调用──▶ delta.content 按句喂 VITS TTS（边生成边播）
                                   └─ tool_calls ──MCP──▶ mcp_home_server ──▶ Module B
 ```
 
 语音前端为 **Sherpa-ONNX**（全离线，同栈可直接移植香橙派）：
-KWS 关键词声学唤醒（zipformer-wenetspeech 3.3M）+ 流式 ASR（streaming Paraformer 中英双语，
+KWS 关键词声学唤醒（zipformer-wenetspeech 3.3M）+ 流式 ASR（streaming Zipformer 中英双语 INT8，
 自带端点检测）+ 本地 VITS 语音合成（vits-melo-tts-zh_en）。
-模型一键下载：`py -3.13 download_sherpa_models.py`（KWS ~14MB / ASR ~1GB / TTS ~160MB，国内镜像加速）。
+模型一键下载：`py -3.13 download_sherpa_models.py`（KWS ~31MB / ASR ~1GB / TTS ~160MB，国内镜像加速）。
 
 `mcp_home_server.py` 作为子进程独占 A/B 两串口，暴露 8 个工具：
 `light / door / window / fan / buzzer / oled / display / get_sensor_status`。
@@ -327,7 +329,8 @@ py -3.13 voice_assistant.py --port-a COM7 --port-b COM6 --llm-mode local --model
 > 或 Arduino IDE 串口监视器（会报「拒绝访问」，属 Windows 串口单进程规则，非 bug）。
 > TCP 方面无冲突：Qwen 服务固定 8000，camera_stream 8080。
 
-启动后说「你邮你邮」→ 听到「在的」→ 说指令，例如：
+启动后说「Hey Bota」（发音贴近「黑波塔」）→ 听到滴声 → 说指令；
+也可以直接在终端打字回车发送指令。例如：
 
 - 「把灯调成蓝色」→ Module B 灯变蓝 + TTS「已为您把灯调成蓝色」
 - 「现在多少度」→ 调 `get_sensor_status` → TTS 回读数
@@ -342,11 +345,22 @@ pip install mcp       # 含 mcp CLI
 mcp dev mcp_home_server.py --port-a COM7 --port-b COM6
 ```
 
-### 唤醒词说明
+### 唤醒词说明（Hey Bota）
 
-「你邮你邮」由 Sherpa-ONNX KWS 做声学级唤醒（不再依赖文本模糊匹配），唤醒词定义在
-`models/sherpa/kws/keywords.txt`（pypinyin 声调格式），另内置别名「你好你好」。
-灵敏度在 `voice_config.yaml` 的 `sherpa.kws.keywords_score / keywords_threshold` 调节
+「Hey Bota」由 Sherpa-ONNX KWS 做声学级唤醒，定义在
+`models/sherpa/kws/keywords.txt`。由于 KWS 模型是中文 wenetspeech（拼音音素词表），
+英文唤醒词按最近发音拆成拼音声韵母，并放了 4 个声调变体提高命中率：
+
+```text
+h ēi b ōu t ǎ @Hey_Bota     ← @ 后名字不能含空格，下划线在代码里还原为 "Hey Bota"
+h éi b ōu t ā @Hey_Bota
+h ēi b ōu t a @Hey_Bota
+h ēi b ō t ǎ @Hey_Bota
+```
+
+换唤醒词时直接编辑该文件（每行「音素 空格 分隔 @名字」，音素必须取自同目录 `tokens.txt`），
+重启即可；注意 `voice_config.yaml` 的 `wake.words` 也要同步（用于剥连读前缀）。
+灵敏度在 `sherpa.kws.keywords_score / keywords_threshold` 调节
 （score 调大 / threshold 调小 = 更易唤醒，误唤醒也会增加）。
 播放 TTS 期间自动跳过唤醒检测（防喇叭回声误触发）。
 
@@ -355,20 +369,30 @@ mcp dev mcp_home_server.py --port-a COM7 --port-b COM6
 语音链路已全离线境内化：Sherpa-ONNX（KWS/ASR/TTS）+ Qwen2.5（ModelScope / 百炼），
 不再依赖 edge-tts（微软）与 Vosk 等境外服务；模型下载走 ghfast.top 国内镜像。
 
-### 手动触发对话（不喊唤醒词也能开始）
+### 手动输入：键盘文字对话 + HTTP 接口（不喊唤醒词也行）
 
-除了 KWS 语音唤醒，助手内置两条等价的手动触发通道（`voice_config.yaml` 的 `trigger` 段）：
+除 KWS 语音唤醒外，助手内置两类手动输入通道（`voice_config.yaml` 的 `trigger` 段）：
 
-- **键盘**：终端运行时直接按回车。
-- **HTTP**（默认 `http://0.0.0.0:8101`）：
-  - 手机/浏览器开 `http://<香橙派IP>:8101/`，页面上有大按钮；
-  - 命令行：`curl http://<香橙派IP>:8101/trigger`（POST 亦可，可用请求头
+- **键盘双通道**（终端运行时）：
+  - 直接**打字后回车** → 文本指令，绕过麦克风直接送给大模型（安静环境/调试/没带麦时用）；
+  - **只按回车（空行）** → 开启语音监听，等价于喊唤醒词。
+- **HTTP**（默认 `http://0.0.0.0:8101`，零额外依赖，标准库实现）：
+  - 手机/浏览器开 `http://<香橙派IP>:8101/`：大圆按钮开语音，下方输入框可直接打字发送；
+  - 开语音监听：`curl http://<香橙派IP>:8101/trigger`（POST 亦可）；
+  - **直接下发文本指令**（外部系统/Home Assistant/任何程序都能对话控家）：
+
+    ```bash
+    curl -X POST http://<香橙派IP>:8101/say \
+         -H "Content-Type: application/json" \
+         -d '{"text":"把灯打开"}'
+    curl "http://<香橙派IP>:8101/say?text=把灯打开"      # GET 形式，适合极简 IoT 设备
+    ```
+  - 香橙派物理按键：GPIO 守护进程按下时 `curl` 一下 `/trigger` 即可接入（可用请求头
     `X-Trigger-Source: gpio-button` 标记来源）；
-  - 香橙派物理按键：GPIO 守护进程检测到按下时 `curl` 一下 `/trigger` 即可接入；
   - `GET /state` 查当前状态（IDLE/COMMAND/THINKING/FOLLOWUP）。
 
-手动触发会立即打断正在播放的回答（barge-in）并丢弃触发前的半句录音，响一声提示音后进入听指令状态。
-stdin 被重定向（后台运行）时键盘通道自动禁用，不会误触发。
+无论是键盘还是 HTTP 文本，都会立即打断正在播放的回答（barge-in）、丢弃半句旧录音后进对话；
+文本指令不受"先唤醒"限制，随时可发。stdin 被重定向（后台运行）时键盘通道自动禁用，不会误触发。
 
 ### ASR 热词（智能家居词汇提准）
 
@@ -402,6 +426,16 @@ stdin 被重定向（后台运行）时键盘通道自动禁用，不会误触�
 
 ### 更新记录
 
+- **2026-09-29（深夜）**：唤醒词改「Hey Bota」+ 键盘/HTTP 文本对话。
+  - 唤醒词由「你邮你邮」改为英文 **Hey Bota**：中文 KWS 模型用拼音音近拼接
+    （`h ēi b ōu t ǎ` 等 4 个声调变体，绕开 @ 名禁空格限制，下划线在代码层还原）；
+    前缀剥离改为大小写/空格/标点归一化匹配。
+  - **键盘文字对话**：终端直接打字回车即把文本送 LLM（无需唤醒、无需麦克风），
+    空回车仍为开启语音监听。
+  - **HTTP /say 接口**：`POST /say {"text":"..."}` / `GET /say?text=...` 直接下发文本指令，
+    供外部程序、Home Assistant、其他 IoT 系统对接控家；网页控制台同步加文本输入框。
+  - 已实测：文本指令端到端（LLM 回复 + TTS + 工具调用无板容错）、6 条前缀剥离去例、
+    HTTP 端点 POST/GET/空值/来源头。
 - **2026-09-29（晚）**：3B 模型 + 交互体验迭代。
   - LLM 默认升为 **Qwen2.5-3B-Instruct q4_k_m**（~2GB）：隐式动作/查询类工具调用修复，六指令压测全过。
   - **手动触发接口**：终端回车 + HTTP（`/trigger`、`/state`、手机网页大按钮），

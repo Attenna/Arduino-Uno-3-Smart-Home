@@ -55,11 +55,12 @@ sherpa:
     speed: 1.0          # 语速倍数
     num_threads: 2
 
-# ── 唤醒词（仅用于：从「唤醒词+指令」连读句中剥前缀；实际唤醒由 KWS 声学检测）──
+# ── 唤醒词「Hey Bota」（仅用于：从「唤醒词+指令」连读句中剥前缀；实际唤醒由 KWS 声学检测）──
+# 声学词表见 models/sherpa/kws/keywords.txt（英文词用拼音音近拼接，4 个声调变体），
+# 修改唤醒词后重跑 py -3.13 download_sherpa_models.py 会覆盖该文件，自定义请直接编辑。
 wake:
   words:
-    - "你邮你邮"
-    - "你好你好"      # KWS 别名，见 keywords.txt
+    - "hey bota"
   command_timeout: 6.0   # 命令模式等整句秒数
   followup_timeout: 8.0  # 回答后追问窗口（秒），期间无需重新唤醒即可直接说话
   wake_ack: "在的"        # voice/both 模式命中唤醒词后 TTS 回一句
@@ -67,16 +68,18 @@ wake:
   chirp_freq: 880        # 滴声音高 Hz
   chirp_ms: 120          # 滴声时长 ms
 
-# ── 手动触发对话开始（与 KWS 唤醒等价；香橙派物理按钮/手机网页可接入）──
+# ── 手动输入通道（键盘文字对话/空行语音触发；HTTP 供香橙派按钮/手机/外部程序接入）──
 trigger:
-  keyboard: true         # 终端按回车触发（不想误触可关）
-  http: true             # 开启 HTTP 触发接口
+  keyboard: true         # 终端里打字回车=文本指令；空回车=开启语音监听（不想误触可关）
+  http: true             # 开启 HTTP 接口
   host: "0.0.0.0"        # 监听地址（0.0.0.0=局域网可访问；127.0.0.1=仅本机）
   port: 8101
   # 用法：
-  #   浏览器开 http://<香橙派IP>:8101/  点大按钮
-  #   curl http://<香橙派IP>:8101/trigger
-  #   GPIO 按钮守护进程按下时 curl 一下即可
+  #   浏览器开 http://<香橙派IP>:8101/  点按钮开语音，或直接输入文字发送
+  #   开语音监听: curl http://<香橙派IP>:8101/trigger
+  #   直接下发文本指令: curl -X POST http://<香橙派IP>:8101/say -H "Content-Type: application/json" -d "{\"text\":\"把灯打开\"}"
+  #                    curl "http://<香橙派IP>:8101/say?text=把灯打开"
+  #   GPIO 按钮守护进程：按下时 curl /trigger；其他系统要控家直接 POST /say
 
 # ── 麦克风 ──
 mic:

@@ -2,7 +2,7 @@
 
 流程：
     麦克风 → Sherpa-ONNX 双引擎（sherpa_listener.SherpaListener）
-        KWS（zipformer 关键词检测）→ 命中「你邮你邮」→ 切 COMMAND + TTS 回「在的」
+        KWS（zipformer 关键词检测）→ 命中「Hey Bota」→ 切 COMMAND + 提示音
         流式 Paraformer ASR + 端点检测 → 整句指令
         FOLLOWUP：回答后 8s 追问窗口，无需再唤醒
     用户指令 → Qwen2.5 LLM 流式 + 工具调用（本地 qwen_server.py 或阿里云百炼）
@@ -58,7 +58,7 @@ DEFAULT_CONFIG = {
         "tts": {"model_dir": "models/sherpa/tts", "speaker_id": 0,
                 "speed": 1.0, "num_threads": 2},
     },
-    "wake": {"words": ["你邮你邮", "你好你好", "你有你有", "你由你由"],
+    "wake": {"words": ["hey bota"],
              "command_timeout": 6.0,
              "followup_timeout": 8.0, "wake_ack": "在的",
              "ack_mode": "chirp",       # chirp=滴声(最快) / voice=说"在的" / both / none
@@ -95,16 +95,19 @@ class TriggerBus:
 class TriggerHTTPServer:
     """标准库 HTTP 触发服务（零额外依赖）。
 
-    GET  /            状态页（含「开始对话」按钮，手机可直接开）
+    GET  /            状态页（含「开始对话」按钮 + 文本输入框，手机可直接开）
     GET  /state       当前状态 JSON
-    GET/POST /trigger 触发一次对话（curl/物理按钮/网页均可）
+    GET/POST /trigger 触发一次语音监听（curl/物理按钮/网页均可）
+    POST /say         直接下发文本指令（JSON: {"text": "..."}，绕过麦克风直接对话）
+    GET  /say?text=.. 同上，GET 形式（方便纯 curl/无 body 的 IoT 设备）
     """
 
-    def __init__(self, host: str, port: int, bus: TriggerBus, get_state):
+    def __init__(self, host: str, port: int, bus: TriggerBus, get_state, submit_text):
         import http.server
         import threading
+        from urllib.parse import urlparse, parse_qs
 
-        bus_ref, state_ref = bus, get_state
+        bus_ref, state_ref, say_ref = bus, get_state, submit_text
 
         class _Handler(http.server.BaseHTTPRequestHandler):
             def log_message(self, *a):
@@ -123,16 +126,39 @@ class TriggerHTTPServer:
                 bus_ref.fire(who)
                 self._json(200, {"ok": True, "state": state_ref()})
 
+            def _say(self, text: str, who: str):
+                text = (text or "").strip()
+                if not text:
+                    self._json(400, {"ok": False, "error": "text 不能为空"})
+                    return
+                say_ref(text, who)
+                self._json(200, {"ok": True, "text": text, "state": state_ref()})
+
             def do_POST(self):
-                if self.path.split("?")[0] == "/trigger":
+                path = urlparse(self.path).path
+                if path == "/trigger":
                     self._fire()
+                elif path == "/say":
+                    try:
+                        length = int(self.headers.get("Content-Length") or 0)
+                        raw = self.rfile.read(length) if length else b"{}"
+                        data = json.loads(raw.decode("utf-8") or "{}")
+                        text = data.get("text", "") if isinstance(data, dict) else ""
+                    except Exception:
+                        text = ""
+                    who = self.headers.get("X-Trigger-Source", "http")
+                    self._say(text, who)
                 else:
                     self._json(404, {"ok": False})
 
             def do_GET(self):
-                path = self.path.split("?")[0]
+                u = urlparse(self.path)
+                path, q = u.path, parse_qs(u.query)
                 if path == "/trigger":
                     self._fire()
+                elif path == "/say":
+                    who = self.headers.get("X-Trigger-Source", "http")
+                    self._say((q.get("text") or [""])[0], who)
                 elif path == "/state":
                     self._json(200, {"state": state_ref()})
                 elif path == "/":
@@ -162,25 +188,41 @@ class TriggerHTTPServer:
 
 _TRIGGER_PAGE = """<!doctype html><html lang="zh"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>语音助手 · 手动触发</title>
+<title>Hey Bota · 控制台</title>
 <style>body{font-family:system-ui;margin:0;background:#0f1117;color:#e6e6e6;
 display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh}
-#s{font-size:20px;margin-bottom:28px;opacity:.8}
-button{width:220px;height:220px;border-radius:50%;border:0;font-size:26px;
-background:linear-gradient(145deg,#3b82f6,#1d4ed8);color:#fff;box-shadow:0 12px 40px #1d4ed866}
-button:active{transform:scale(.96)}</style></head>
+#s{font-size:20px;margin-bottom:24px;opacity:.8}
+button{width:200px;height:200px;border-radius:50%;border:0;font-size:24px;
+background:linear-gradient(145deg,#3b82f6,#1d4ed8);color:#fff;box-shadow:0 12px 40px #1d4ed866;margin-bottom:30px}
+button:active{transform:scale(.96)}
+.row{display:flex;gap:10px;width:min(90vw,460px)}
+input{flex:1;font-size:18px;padding:14px 16px;border-radius:12px;border:1px solid #333b4d;
+background:#171a23;color:#e6e6e6;outline:none}
+input:focus{border-color:#3b82f6}
+#send{width:auto;height:auto;border-radius:12px;padding:0 24px;font-size:17px;margin:0}
+</style></head>
 <body><div id="s">状态：--</div>
-<button onclick="go()">开 始<br>对 话</button>
+<button onclick="go()">开 始<br>语音对话</button>
+<div class="row"><input id="t" placeholder="或直接输入文字指令，回车发送"
+ onkeydown="if(event.key==='Enter')say()">
+<button id="send" onclick="say()">发送</button></div>
 <script>
 async function refresh(){try{const r=await fetch('/state');
 const j=await r.json();document.getElementById('s').textContent='状态：'+j.state}catch(e){}}
 async function go(){await fetch('/trigger');setTimeout(refresh,200);setTimeout(refresh,1200)}
+async function say(){const t=document.getElementById('t');const v=t.value.trim();if(!v)return;
+await fetch('/say',{method:'POST',headers:{'Content-Type':'application/json'},
+body:JSON.stringify({text:v})});t.value='';setTimeout(refresh,200)}
 refresh();setInterval(refresh,1500);
 </script></body></html>"""
 
 
-def _start_keyboard_trigger(bus: TriggerBus) -> None:
-    """终端按回车触发对话（stdin 为 EOF/管道时静默禁用，避免空转误触发）。"""
+def _start_keyboard_console(assistant: "VoiceAssistant") -> None:
+    """终端键盘双通道（stdin 为 EOF/管道时静默禁用，避免空转误触发）：
+
+        直接打字后回车 → 文本指令，绕过麦克风直接和大模型对话；
+        只按回车（空行）→ 开启语音监听（等价喊唤醒词）。
+    """
     import threading
 
     def loop():
@@ -189,11 +231,15 @@ def _start_keyboard_trigger(bus: TriggerBus) -> None:
                 line = sys.stdin.readline()
                 if line == "":
                     return  # EOF：后台运行/输入被重定向，键盘通道自动失效
-                bus.fire("键盘回车")
+                text = line.strip()
+                if text:
+                    assistant.submit_text(text, source="键盘")
+                else:
+                    assistant.trigger.fire("键盘回车")
         except Exception:
             return
 
-    threading.Thread(target=loop, daemon=True, name="trigger-keyboard").start()
+    threading.Thread(target=loop, daemon=True, name="keyboard-console").start()
 
 
 # ==================== 通用 OpenAI 兼容 LLM 客户端（流式 + 工具调用）====================
@@ -349,7 +395,7 @@ class VoiceAssistant:
         if new_state != self._last_state:
             self._last_state = new_state
             if new_state == "IDLE":
-                print("\n  [⏸ 待唤醒] 说「你邮你邮」唤醒我", flush=True)
+                print("\n  [⏸ 待唤醒] 说「Hey Bota」唤醒我（也可直接打字）", flush=True)
             elif new_state == "COMMAND":
                 print(f"\n  [🎤 请说指令] （{self.command_timeout:.0f}s 内有效）", flush=True)
             elif new_state == "THINKING":
@@ -378,6 +424,23 @@ class VoiceAssistant:
         print(f"\n  [⭐ 唤醒成功！] {tag}「{keyword}」→ 已切换到指令模式", flush=True)
         self._emit_state("COMMAND")
 
+    def submit_text(self, text: str, source: str = "键盘") -> None:
+        """键盘/HTTP 直接输入文本指令（绕过 ASR）：打断播报、清空残句、入队对话。"""
+        text = (text or "").strip()
+        if not text:
+            return
+        if self.tts.is_busy():
+            self.tts.stop()
+        if self.state == "THINKING":
+            print(f"\n  [📥 {source}指令已排队] {text}", flush=True)
+        else:
+            print(f"\n  [📥 {source}文本指令] {text}", flush=True)
+        self.state = "THINKING"
+        self._last_state = "THINKING"  # 抑制随后重复的思考状态行
+        if self.listener:
+            self.listener.reset_asr()
+        self.command_queue.put(text)
+
     def _on_final(self, text: str):
         print(f"  [识别] {text}", flush=True)
         if self.state == "COMMAND":
@@ -397,12 +460,29 @@ class VoiceAssistant:
             self.state = "THINKING"
             self._emit_state("THINKING")
 
+    @staticmethod
+    def _norm_wake(t: str) -> str:
+        """归一化：小写 + 去空格/标点（兼容 "Hey Bota," / "heybota" / "hey  bota"）。"""
+        return re.sub(r"[\s,，。.!！?？、]+", "", t.strip().lower())
+
     def _strip_wake_prefix(self, text: str) -> str:
-        """KWS 唤醒后用户可能「唤醒词+指令」一口气说完，ASR 文本含唤醒词，剥掉前缀。"""
+        """KWS 唤醒后用户可能「唤醒词+指令」一口气说完，ASR 文本含唤醒词，剥掉前缀。
+
+        原文的空格/标点数量不可控（"Hey Bota,开灯"/"heybota 开灯"），
+        按归一化后应消费的字符数在原文上扫描，跳过空白标点。
+        """
         t = text.strip()
+        norm_t = self._norm_wake(t)
         for w in self.wake_words:
-            if t.startswith(w):
-                return t[len(w):].strip()
+            nw = self._norm_wake(w)
+            if not nw or not norm_t.startswith(nw):
+                continue
+            i, consumed = 0, 0
+            while i < len(t) and consumed < len(nw):
+                if not re.fullmatch(r"[\s,，。.!！?？、]", t[i]):
+                    consumed += 1
+                i += 1
+            return t[i:].strip(" ，,.。!！?？、")
         return t
 
     def _audio_callback(self, indata, frames, time_info, status):
@@ -537,16 +617,17 @@ class VoiceAssistant:
                 print(f"[MCP] 已加载 {len(llm_tools)} 个工具: "
                       f"{[t['function']['name'] for t in llm_tools]}", flush=True)
 
-                # 手动触发通道（键盘回车 + HTTP，配置可关）
+                # 输入通道（配置可关）：键盘（打字对话/空行触发）+ HTTP（/trigger、/say）
                 tcfg = self.cfg.get("trigger", {})
                 if tcfg.get("keyboard", True):
-                    _start_keyboard_trigger(self.trigger)
+                    _start_keyboard_console(self)
                 if tcfg.get("http", True):
                     try:
                         self.trigger_http = TriggerHTTPServer(
                             tcfg.get("host", "0.0.0.0"),
                             int(tcfg.get("port", 8101)),
-                            self.trigger, lambda: self.state)
+                            self.trigger, lambda: self.state,
+                            lambda text, who: self.submit_text(text, source=who))
                     except Exception as e:
                         print(f"[触发] HTTP 接口启动失败（不影响语音）: {e}", flush=True)
 
@@ -556,9 +637,11 @@ class VoiceAssistant:
                 print("  麦克风: " + (f"索引 {self.mic_device}" if self.mic_device is not None else "系统默认"), flush=True)
                 print("  唤醒词(KWS): " + " / ".join(self.listener.keywords), flush=True)
                 if tcfg.get("keyboard", True):
-                    print("  ⌨️  手动触发: 终端按回车", flush=True)
+                    print("  ⌨️  键盘对话: 直接打字回车发送指令；空回车=开始语音监听", flush=True)
                 if self.trigger_http is not None:
-                    print(f"  🌐 手动触发: http://<本机IP>:{self.trigger_http.port}/ （网页按钮 / curl /trigger）",
+                    p = self.trigger_http.port
+                    print(f"  🌐 HTTP 接口: http://<本机IP>:{p}/ （网页）", flush=True)
+                    print(f"             语音触发 POST/GET /trigger；文本指令 POST /say  {{\"text\":\"...\"}}",
                           flush=True)
                 print("=" * 56, flush=True)
                 self._emit_state("IDLE")
@@ -732,7 +815,7 @@ async def self_check(cfg: dict) -> int:
 
 
 def kws_repl(cfg: dict) -> int:
-    """KWS + ASR 实时 REPL：说「你邮你邮」测唤醒，说话测识别（Ctrl+C 退出）。"""
+    """KWS + ASR 实时 REPL：说「Hey Bota」测唤醒，说话测识别（Ctrl+C 退出）。"""
     import numpy as np
     import sounddevice as sd
     from sherpa_listener import SherpaListener, check_models
@@ -753,7 +836,8 @@ def kws_repl(cfg: dict) -> int:
             elif kind == "final":
                 print(f"  [FINAL] {text}", flush=True)
 
-    print("[kws-repl] 说「你邮你邮」测试唤醒；随便说话测识别（Ctrl+C 退出）", flush=True)
+    print("[kws-repl] 说「Hey Bota」测试唤醒（中文模型用拼音近似，发音贴近「黑波塔」）；"
+          "随便说话测识别（Ctrl+C 退出）", flush=True)
     with sd.InputStream(samplerate=16000, channels=1, dtype="float32",
                         blocksize=1600, device=cfg["mic"]["device_index"],
                         callback=cb):

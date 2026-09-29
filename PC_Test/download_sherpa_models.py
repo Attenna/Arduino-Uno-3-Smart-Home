@@ -6,7 +6,7 @@
     TTS  vits-melo-tts-zh_en（中英双语 VITS）                → models/sherpa/tts/
 
 解压后统一重命名为 encoder.onnx / decoder.onnx / joiner.onnx / tokens.txt，
-并写入 keywords.txt（唤醒词「你邮你邮」，可再编辑）。
+并写入 keywords.txt（唤醒词「Hey Bota」，可再编辑）。
 
 用法：
     py -3.13 download_sherpa_models.py               # 全部下载（缺失才下）
@@ -50,11 +50,17 @@ PACKS = {
     }),
 }
 
-# 唤醒词（pypinyin 声调符号格式，空格分词，@ 后为显示名）
-# 你邮你邮 = nǐ yóu nǐ yóu；另加一个「你好你好」别名（发音相近时兜底）
+# 唤醒词「Hey Bota」：KWS 模型是中文 wenetspeech（拼音音素 token），
+# 英文词用发音最近的拼音声韵母拼接，并放多个声调变体提高命中率。
+#   Hey /heɪ/ → hēi(h ēi) 或阳平升调 h éi
+#   Bota /ˈboʊtə/ → bōu(b ōu)/bō(b ō) + 轻声/各声调 t a
+# 每行格式：音素空格分隔 @内部名；注意 @ 后名字不能含空格（否则被当音素编码失败），
+# 用下划线 Hey_Bota，sherpa_listener 回调时自动还原成 "Hey Bota"。
 KEYWORDS_TXT = """\
-n ǐ y óu n ǐ y óu @你邮你邮
-n ǐ h ǎo n ǐ h ǎo @你好你好
+h ēi b ōu t ǎ @Hey_Bota
+h éi b ōu t ā @Hey_Bota
+h ēi b ōu t a @Hey_Bota
+h ēi b ō t ǎ @Hey_Bota
 """
 
 # ASR 热词（hotwords）：智能家居控制高频词，按字切分（该 BPE 词表中文以单字为 token）。
@@ -191,7 +197,7 @@ def write_wordlists() -> None:
     if os.path.isdir(kws_dir):
         with open(os.path.join(kws_dir, "keywords.txt"), "w", encoding="utf-8") as f:
             f.write(KEYWORDS_TXT)
-        print("  刷新 KWS 唤醒词 keywords.txt: 你邮你邮 / 你好你好")
+        print("  刷新 KWS 唤醒词 keywords.txt: Hey Bota（4 个拼音音近变体）")
     asr_dir = os.path.join(MODELS_ROOT, "asr")
     if os.path.isdir(asr_dir):
         with open(os.path.join(asr_dir, "hotwords.txt"), "w", encoding="utf-8") as f:

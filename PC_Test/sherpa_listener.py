@@ -5,8 +5,8 @@
     OnlineRecognizer（streaming Zipformer transducer INT8，端点检测）→ 流式识别事件
 
 事件由调用方在音频回调里消费：
-    ("wake",    "你邮你邮")   — KWS 命中
-    ("partial", "你好")       — ASR 中间结果（实时显示用）
+    ("wake",    "Hey Bota")   — KWS 命中
+    ("partial", "把灯")       — ASR 中间结果（实时显示用）
     ("final",   "把灯调成蓝色") — 端点切分出的整句
 
 模型目录结构（见 download_sherpa_models.py）：
@@ -45,9 +45,14 @@ class SherpaListener:
             provider=s.get("provider", "cpu"),
         )
         self.kws_stream = self.kws.create_stream()
-        self.keywords = [l.split("@", 1)[1].strip()
-                         for l in open(keywords_file, encoding="utf-8")
-                         if l.strip() and "@" in l]
+        # @ 后的内部名不能含空格（声学词表限制），下划线在对外事件里还原为空格
+        # 去重：多个音近变体可映射同一个显示名（Hey_Bota ×4 → "Hey Bota"）
+        self.keywords = []
+        for l in open(keywords_file, encoding="utf-8"):
+            if l.strip() and "@" in l:
+                name = l.split("@", 1)[1].strip().replace("_", " ")
+                if name not in self.keywords:
+                    self.keywords.append(name)
 
         # ── 流式 ASR（Zipformer transducer INT8；无 joiner 时回退 Paraformer）──
         ep = dict(
@@ -92,9 +97,9 @@ class SherpaListener:
         self.kws_stream.accept_waveform(_SAMPLE_RATE, pcm_float32)
         while self.kws.is_ready(self.kws_stream):
             self.kws.decode_stream(self.kws_stream)
-        kw = self.kws.get_result(self.kws_stream)  # Python 绑定直接返回关键词字符串
+        kw = self.kws.get_result(self.kws_stream)  # Python 绑定直接返回关键词内部名
         if kw:
-            events.append(("wake", kw))
+            events.append(("wake", kw.replace("_", " ")))  # Hey_Bota → "Hey Bota"
             self.kws.reset(self.kws_stream)
 
         # ASR（端点检测自动切句）

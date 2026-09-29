@@ -142,7 +142,7 @@ if (-not $useDashscope) {
 
 # ── 5. 启动语音助手 ─────────────────────────────────────────
 Step "5/5 启动语音助手"
-Write-Host "🎤 说「你邮你邮」唤醒我！（Ctrl+C 退出）`n" -ForegroundColor Cyan
+Write-Host "🎤 说「Hey Bota」唤醒我（也可直接打字发指令；Ctrl+C 退出）`n" -ForegroundColor Cyan
 if ($useDashscope) {
     py -3.13 voice_assistant.py --llm-mode dashscope
 } else {
