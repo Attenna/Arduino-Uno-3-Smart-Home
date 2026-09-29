@@ -1,0 +1,10 @@
+# run_web.py（Flask + YOLO/ArcFace 人脸识别）镜像专用依赖
+# torch / torchvision 由 Dockerfile 走 CPU 专用 index 先装（避免拉入 ~2.5GB CUDA 轮子）
+pyserial>=3.5
+# 固定 1.x：web 硬件桥 MCP stdio client 基于 1.x API（2.x 已不兼容）
+mcp>=1.2.0,<2
+pyyaml>=6.0
+flask>=3.0
+numpy>=1.26
+ultralytics>=8.2.0
+onnxruntime>=1.17.0

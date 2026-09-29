@@ -1,0 +1,25 @@
+# camera_stream.py —— USB 摄像头 MJPEG 视频流（轻量镜像，无 X11 依赖）
+# 摄像头设备由 compose 透传（默认 /dev/video0）。
+FROM python:3.12-slim
+
+# headless 版 OpenCV 只需要 libglib2.0-0（无需 libGL/X11）
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libglib2.0-0 \
+        libgomp1 \
+        tini \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY docker/requirements-camera.txt /tmp/requirements-camera.txt
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install -r /tmp/requirements-camera.txt
+
+COPY . /app
+
+EXPOSE 8080
+HEALTHCHECK --interval=20s --timeout=8s --start-period=20s --retries=3 \
+    CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/',timeout=5).status==200 else 1)"
+
+ENTRYPOINT ["tini", "--"]
+# 容器内用数字索引 0（按名称 'Web Cam' 是 Windows 习惯，Linux 下用 /dev/video*）
+CMD ["python", "-u", "camera_stream.py", "--mode", "web", "--host", "0.0.0.0", "--port", "8080", "--cam", "0"]

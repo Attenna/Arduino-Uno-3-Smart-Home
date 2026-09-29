@@ -8,7 +8,8 @@ sherpa-onnx>=1.12
 sounddevice>=0.4.6
 numpy>=1.26
 # MCP：官方 Python SDK（server + stdio client）
-mcp>=1.2.0
+# 固定 1.x：mcp 2.x 移除了 mcp.server.fastmcp 且 client API 不兼容
+mcp>=1.2.0,<2
 # LLM 流式客户端（OpenAI 兼容协议）
 httpx>=0.27
 # 配置文件
@@ -29,3 +30,13 @@ modelscope>=1.20
 #   pip install opencv-python flask
 # opencv-python>=4.5
 # flask>=2.0
+
+# ── Web 仪表盘服务（run_web.py，可选）──────────────────────────────────
+# 仪表盘 + 门禁 + 历史图表（Flask，模板与静态资源在 web/ 下）
+flask>=3.0
+# 真实人脸识别：YOLOv8-face 检测（会自动带入 opencv-python）。
+# 未安装时 web 服务自动回退「模拟模式」，页面与门禁流程仍可演示。
+ultralytics>=8.2.0
+# ArcFace/FaceNet ONNX 高精度身份识别（simple_grayscale_cosine 方式无需此包）
+onnxruntime>=1.17.0
+

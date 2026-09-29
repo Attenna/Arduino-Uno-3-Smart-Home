@@ -1,0 +1,23 @@
+# ============================================================================
+# Docker Desktop（Windows/macOS）本地体验覆盖文件
+#
+# Docker Desktop 的 WSL2/HyperKit 后端不能像 Linux 那样透传物理串口
+# (/dev/ttyUSB*)、声卡 (/dev/snd) 与 USB 摄像头 (/dev/video*)，
+# 因此桌面端体验栈做两处降级：
+#   - voice：移除设备透传，设 SMART_HOME_DISABLE_MIC=1
+#            （MCP 硬件工具与 HTTP /tool 仍在，操作板子会返回"未连接"）
+#   - camera：加 profile，默认不启动（桌面端摄像头直接用裸机 camera_stream.py）
+#
+#   docker compose -f docker-compose.yml -f docker-compose.desktop.yml up -d
+#
+# 香橙派等真实 Linux 设备部署不要加本文件，直接 docker compose up -d。
+# ============================================================================
+services:
+  voice:
+    devices: !reset null
+    environment:
+      - SMART_HOME_DISABLE_MIC=1
+
+  camera:
+    # 需要显式 --profile desktop-camera 才会启动（默认跳过）
+    profiles: ["desktop-camera"]

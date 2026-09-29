@@ -100,14 +100,18 @@ class TriggerHTTPServer:
     GET/POST /trigger 触发一次语音监听（curl/物理按钮/网页均可）
     POST /say         直接下发文本指令（JSON: {"text": "..."}，绕过麦克风直接对话）
     GET  /say?text=.. 同上，GET 形式（方便纯 curl/无 body 的 IoT 设备）
+    POST /tool        直接调用 MCP 硬件工具（JSON: {"name":"door","arguments":{...}}）
+                       不经 LLM/TTS，静默执行——供 Web 人脸识别等外部系统联动硬件。
     """
 
-    def __init__(self, host: str, port: int, bus: TriggerBus, get_state, submit_text):
+    def __init__(self, host: str, port: int, bus: TriggerBus, get_state, submit_text,
+                 call_tool=None):
         import http.server
         import threading
         from urllib.parse import urlparse, parse_qs
 
         bus_ref, state_ref, say_ref = bus, get_state, submit_text
+        tool_ref = call_tool  # 同步回调：(name, arguments) -> (ok: bool, text: str)
 
         class _Handler(http.server.BaseHTTPRequestHandler):
             def log_message(self, *a):
@@ -134,6 +138,34 @@ class TriggerHTTPServer:
                 say_ref(text, who)
                 self._json(200, {"ok": True, "text": text, "state": state_ref()})
 
+            def _tool(self):
+                if tool_ref is None:
+                    self._json(503, {"ok": False, "error": "MCP 工具通道不可用"})
+                    return
+                try:
+                    length = int(self.headers.get("Content-Length") or 0)
+                    raw = self.rfile.read(length) if length else b"{}"
+                    data = json.loads(raw.decode("utf-8") or "{}")
+                except Exception:
+                    self._json(400, {"ok": False, "error": "JSON 解析失败"})
+                    return
+                name = data.get("name") if isinstance(data, dict) else None
+                arguments = data.get("arguments") if isinstance(data, dict) else None
+                if not isinstance(name, str) or not name:
+                    self._json(400, {"ok": False, "error": "name 不能为空"})
+                    return
+                if arguments is None:
+                    arguments = {}
+                if not isinstance(arguments, dict):
+                    self._json(400, {"ok": False, "error": "arguments 必须是对象"})
+                    return
+                try:
+                    ok, text = tool_ref(name, arguments)
+                except Exception as e:
+                    self._json(500, {"ok": False, "error": f"工具调用异常: {e}"})
+                    return
+                self._json(200 if ok else 502, {"ok": ok, "name": name, "result": text})
+
             def do_POST(self):
                 path = urlparse(self.path).path
                 if path == "/trigger":
@@ -148,6 +180,8 @@ class TriggerHTTPServer:
                         text = ""
                     who = self.headers.get("X-Trigger-Source", "http")
                     self._say(text, who)
+                elif path == "/tool":
+                    self._tool()
                 else:
                     self._json(404, {"ok": False})
 
@@ -383,6 +417,11 @@ class VoiceAssistant:
         self.listener = SherpaListener(self.cfg)
 
     def _start_mic(self):
+        if os.environ.get("SMART_HOME_DISABLE_MIC") == "1":
+            # 无麦克风的部署（纯硬件网关 / 容器测试）：跳过音频采集，
+            # MCP 硬件工具与 HTTP /tool、/say 仍正常工作。
+            print("[语音] SMART_HOME_DISABLE_MIC=1，已跳过麦克风初始化", flush=True)
+            return
         import sounddevice as sd
         self.stream = sd.InputStream(
             samplerate=16000, channels=1, dtype="float32",
@@ -617,6 +656,32 @@ class VoiceAssistant:
                 print(f"[MCP] 已加载 {len(llm_tools)} 个工具: "
                       f"{[t['function']['name'] for t in llm_tools]}", flush=True)
 
+                loop = asyncio.get_running_loop()
+                allowed_tools = {t["function"]["name"] for t in llm_tools}
+
+                def _direct_call_tool(name, arguments):
+                    """供 POST /tool 使用：跨线程直调 MCP，不经 LLM/TTS。"""
+                    if name not in allowed_tools:
+                        return False, f"未知工具: {name}"
+
+                    async def _do():
+                        res = await session.call_tool(name, arguments)
+                        text = ""
+                        for c in (res.content or []):
+                            part = getattr(c, "text", None)
+                            if part is None and isinstance(c, dict):
+                                part = c.get("text")
+                            if part:
+                                text += part
+                        return text or "(工具无文本输出)"
+
+                    fut = asyncio.run_coroutine_threadsafe(_do(), loop)
+                    try:
+                        text = fut.result(timeout=15)
+                    except Exception as e:
+                        return False, f"工具执行异常: {e}"
+                    return (not text.startswith("error")), text
+
                 # 输入通道（配置可关）：键盘（打字对话/空行触发）+ HTTP（/trigger、/say）
                 tcfg = self.cfg.get("trigger", {})
                 if tcfg.get("keyboard", True):
@@ -627,7 +692,8 @@ class VoiceAssistant:
                             tcfg.get("host", "0.0.0.0"),
                             int(tcfg.get("port", 8101)),
                             self.trigger, lambda: self.state,
-                            lambda text, who: self.submit_text(text, source=who))
+                            lambda text, who: self.submit_text(text, source=who),
+                            call_tool=_direct_call_tool)
                     except Exception as e:
                         print(f"[触发] HTTP 接口启动失败（不影响语音）: {e}", flush=True)
 
@@ -643,9 +709,10 @@ class VoiceAssistant:
                     print(f"  🌐 HTTP 接口: http://<本机IP>:{p}/ （网页）", flush=True)
                     print(f"             语音触发 POST/GET /trigger；文本指令 POST /say  {{\"text\":\"...\"}}",
                           flush=True)
+                    print(f"             硬件直调 POST /tool {{\"name\":\"door\",\"arguments\":{{...}}}}（静默，不经语音）",
+                          flush=True)
                 print("=" * 56, flush=True)
                 self._emit_state("IDLE")
-                loop = asyncio.get_running_loop()
                 try:
                     while True:
                         text = await loop.run_in_executor(None, self.command_queue.get)
@@ -929,6 +996,22 @@ def main():
         cfg["llm"]["api_key"] = args.api_key
     if args.mic_index is not None:
         cfg["mic"]["device_index"] = args.mic_index
+
+    # 环境变量覆盖（优先级最高）——Docker Compose 服务发现/外设配置用：
+    #   SMART_HOME_LLM_BASE_URL / SMART_HOME_LLM_API_KEY / SMART_HOME_LLM_MODEL
+    #   SMART_HOME_MIC_INDEX / SMART_HOME_PORT_A / SMART_HOME_PORT_B
+    if os.environ.get("SMART_HOME_LLM_BASE_URL"):
+        cfg["llm"]["base_url"] = os.environ["SMART_HOME_LLM_BASE_URL"]
+    if os.environ.get("SMART_HOME_LLM_API_KEY"):
+        cfg["llm"]["api_key"] = os.environ["SMART_HOME_LLM_API_KEY"]
+    if os.environ.get("SMART_HOME_LLM_MODEL"):
+        cfg["llm"]["model"] = os.environ["SMART_HOME_LLM_MODEL"]
+    if os.environ.get("SMART_HOME_MIC_INDEX"):
+        cfg["mic"]["device_index"] = int(os.environ["SMART_HOME_MIC_INDEX"])
+    if os.environ.get("SMART_HOME_PORT_A"):
+        cfg["serial"]["port_a"] = os.environ["SMART_HOME_PORT_A"]
+    if os.environ.get("SMART_HOME_PORT_B"):
+        cfg["serial"]["port_b"] = os.environ["SMART_HOME_PORT_B"]
 
     if args.list_mic:
         from tts_player import list_input_devices

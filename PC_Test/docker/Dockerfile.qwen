@@ -1,0 +1,40 @@
+# qwen_server.py —— 本地 Qwen2.5 OpenAI 兼容服务（llama.cpp CPU）
+# 多阶段：builder 里带 gcc（aarch64 无预编译 llama-cpp-python 轮子时源码编译），
+# 运行镜像不带编译链，体积更小。
+FROM python:3.12-slim AS builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /wheels
+COPY docker/requirements-qwen.txt /tmp/requirements-qwen.txt
+# --user 安装到 /root/.local，二阶段整体拷走
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --user -r /tmp/requirements-qwen.txt
+
+# ── 运行镜像 ──────────────────────────────────────────────────────────────
+FROM python:3.12-slim
+
+# libgomp1 = llama.cpp 运行时依赖的 OpenMP
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libgomp1 \
+        tini \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /root/.local /root/.local
+ENV PATH=/root/.local/bin:$PATH \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /app
+COPY . /app
+
+EXPOSE 8000
+# 容器内必须绑 0.0.0.0，否则同 compose 网络内的 voice 无法访问
+# start_period 给足 GGUF 模型加载时间（3B-Q4 CPU 约 30~120s）
+HEALTHCHECK --interval=30s --timeout=10s --start-period=180s --retries=5 \
+    CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/v1/models',timeout=5).status==200 else 1)"
+
+ENTRYPOINT ["tini", "--"]
+CMD ["python", "-u", "qwen_server.py", "--host", "0.0.0.0", "--port", "8000"]

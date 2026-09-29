@@ -1,0 +1,4 @@
+# camera_stream.py 镜像专用依赖（轻量；headless 版无需 X11/libGL）
+flask>=3.0
+numpy>=1.26
+opencv-python-headless>=4.8

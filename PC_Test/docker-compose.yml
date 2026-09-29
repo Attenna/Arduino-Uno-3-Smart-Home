@@ -1,0 +1,109 @@
+# ============================================================================
+# 智能家居联动栈 —— Docker Compose（目标：香橙派等 Linux aarch64 设备）
+#
+#   Web 仪表盘/人脸 :5000   摄像头流 :8080   语音助手 :8101   本地LLM :8000
+#
+# 架构与 start_all.py 一致：voice 容器独占 Arduino 串口；web 以 --no-serial
+# 运行，硬件调用/人脸自动开门经 compose 内网 http://voice:8101/tool 静默转发。
+#
+# 快速开始（在 PC_Test/ 目录）：
+#   cp docker/.env.example .env       # 按实际串口/摄像头设备号修改
+#   docker compose up -d --build      # 首次构建较慢（aarch64 上 llama.cpp 要编译）
+#   docker compose logs -f web voice
+#
+# 设备透传说明：
+#   Arduino  Uno 克隆版(CH340) 通常是 /dev/ttyUSB0、/dev/ttyUSB1
+#            正版 Uno(RTL)      通常是 /dev/ttyACM0、/dev/ttyACM1
+#   USB 摄像头通常是 /dev/video0（ls -l /dev/video* / ls /dev/tty{USB,ACM}* 查看）
+#   麦克风走 ALSA：透传整个 /dev/snd
+#
+# 云端 LLM（免本地 3B 模型）：docker compose -f docker-compose.yml \
+#                              -f docker-compose.dashscope.yml up -d --build
+# ============================================================================
+name: smart-home
+
+services:
+  # ── ① 本地 LLM（OpenAI 兼容；语音助手通过 http://qwen:8000/v1 访问）────────
+  qwen:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.qwen
+    image: smarthome-qwen:latest
+    volumes:
+      # 模型不进镜像（2GB+），宿主机 PC_Test/models/qwen 直接挂载
+      - ./models:/app/models
+    environment:
+      - TZ=${TZ:-Asia/Shanghai}
+    ports:
+      - "${QWEN_PORT:-8000}:8000"
+    restart: unless-stopped
+
+  # ── ② 语音助手（独占串口；麦克风/扬声器走 ALSA）──────────────────────────
+  voice:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.voice
+    image: smarthome-voice:latest
+    depends_on:
+      qwen:
+        condition: service_healthy
+    devices:
+      # Arduino A/B 板（设备不存在时 compose 会报错：在 .env 改成真实设备名，
+      # 或临时把不用的两行删掉）
+      - "${SERIAL_PORT_A:-/dev/ttyUSB0}:${SERIAL_PORT_A:-/dev/ttyUSB0}"
+      - "${SERIAL_PORT_B:-/dev/ttyUSB1}:${SERIAL_PORT_B:-/dev/ttyUSB1}"
+      # ALSA 声卡（麦克风 + 扬声器），整目录透传
+      - /dev/snd:/dev/snd
+    volumes:
+      - ./models:/app/models
+      # 改配置无需重建镜像（只读挂载；文件须存在于宿主机）
+      - ./voice_config.yaml:/app/voice_config.yaml:ro
+    environment:
+      - TZ=${TZ:-Asia/Shanghai}
+      # compose 内网服务发现
+      - SMART_HOME_LLM_BASE_URL=http://qwen:8000/v1
+      - SMART_HOME_PORT_A=${SERIAL_PORT_A:-/dev/ttyUSB0}
+      - SMART_HOME_PORT_B=${SERIAL_PORT_B:-/dev/ttyUSB1}
+      # 多麦克风时用 docker compose exec voice python voice_assistant.py --list-mic
+      # 查到索引后填到 .env 的 MIC_INDEX
+      - SMART_HOME_MIC_INDEX=${MIC_INDEX:-}
+    ports:
+      - "${VOICE_PORT:-8101}:8101"
+    restart: unless-stopped
+
+  # ── ③ Web 仪表盘 + YOLOv8-face/ArcFace 人脸识别（不碰串口）───────────────
+  web:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.web
+    image: smarthome-web:latest
+    depends_on:
+      voice:
+        condition: service_healthy
+    volumes:
+      - ./models:/app/models
+      # SQLite、人脸注册照片、embeddings.pkl 持久化
+      - ./data:/app/data
+      - ./web_config.yaml:/app/web_config.yaml:ro
+    environment:
+      - TZ=${TZ:-Asia/Shanghai}
+      # 硬件控制/人脸开门 → voice 容器 POST /tool（静默，不经语音播报）
+      - SMART_HOME_HW_RELAY=http://voice:8101
+    ports:
+      - "${WEB_PORT:-5000}:5000"
+    restart: unless-stopped
+
+  # ── ④ USB 摄像头 MJPEG 视频流（http://宿主:8080）─────────────────────────
+  camera:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.camera
+    image: smarthome-camera:latest
+    devices:
+      - "${CAMERA_DEVICE:-/dev/video0}:${CAMERA_DEVICE:-/dev/video0}"
+    environment:
+      - TZ=${TZ:-Asia/Shanghai}
+    ports:
+      - "${CAMERA_PORT:-8080}:8080"
+    restart: unless-stopped
+    # 无摄像头的主机可临时不起： docker compose up -d --scale camera=0

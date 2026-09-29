@@ -15,6 +15,7 @@ PC 端在电脑上通过 USB 串口直接与两块 Arduino 通信，用于**调�
 PC_Test/
 ├── README.md               # 本文件（PC 端总览）
 ├── requirements.txt        # Python 依赖
+├── web_config.yaml         # ⑥ Web 仪表盘配置（串口/端口/人脸/开门联动）
 │
 ├── test_serial.py          # ① 串口调试控制台（交互式，手动发命令测试硬件）
 ├── run_automation.py       # ② 自动化 DSL 运行器（运行 .auto 脚本）
@@ -26,10 +27,27 @@ PC_Test/
 ├── voice_assistant.py      # ⑤ 语音交互模式（唤醒词 → Qwen2.5 → MCP 控硬件 → 流式 TTS）
 ├── qwen_server.py          #    本地 Qwen2.5 OpenAI 兼容服务（llama.cpp 后端 + 工具调用）
 ├── download_qwen.py        #    Qwen2.5 权重下载器（ModelScope 国内渠道）
-├── mcp_home_server.py      #    智能家居 MCP server（独占串口，暴露 8 个工具）
+├── mcp_home_server.py      #    智能家居 MCP server（独占串口，暴露 8 个工具；⑤⑥共用）
 ├── tts_player.py           #    流式 TTS 播放器（Sherpa-ONNX VITS 本地合成）
+├── sherpa_listener.py      #    Sherpa-ONNX KWS/ASR 前端封装
 ├── voice_config.yaml       #    语音模式配置（串口/LLM 引擎/唤醒词/TTS 音色）
-├── models/.gitignore       #    模型目录占位（Qwen GGUF / Sherpa-ONNX 语音模型不入库）
+│
+├── run_web.py              # ⑥ Web 仪表盘服务入口（Flask，http://localhost:5000）
+├── web/                    #    Web 服务包（数据库 + REST API + 人脸识别 + 前端）
+│   ├── app.py              #    Flask 应用工厂（蓝图注册 / 错误处理 / 硬件桥启停）
+│   ├── config.py           #    路径常量 + web_config.yaml 装载
+│   ├── database.py         #    SQLite 持久层（仅真实硬件数据，含迁移/WAL/校验）
+│   ├── hardware.py         #    MCP 硬件桥（stdio 拉起 mcp_home_server，轮询入库）
+│   ├── ha_client.py        #    可选 Home Assistant REST 客户端（硬件管理页）
+│   ├── utils.py            #    节流 / 安全 Base64 / 连接健康 / 重试
+│   ├── api/                #    REST 蓝图：status / devices / access / face / ha / pages
+│   ├── face/               #    人脸引擎：YOLOv8-face 检测 + ArcFace/灰度嵌入识别
+│   ├── templates/          #    前端页面（dashboard/history/access/hardware）
+│   └── static/             #    前端资源（css/js，Chart.js 图表）
+├── scripts/
+│   └── enroll_faces.py     #    人脸注册：data/face/authorized/<姓名>/ → embeddings.pkl
+├── data/                   #    运行时数据（不入库）：smart_home.db、face/、ha_config.json
+├── models/                 #    模型权重（不入库）：qwen/、sherpa/、face/yolov8n-face.pt
 │
 └── automation/             # AST 自动化引擎核心库
     ├── __init__.py
@@ -45,7 +63,7 @@ PC_Test/
 
 ---
 
-## 三个工具怎么选
+## PC 端工具一览
 
 | 工具 | 用途 | 什么时候用 |
 |------|------|-----------|
@@ -53,6 +71,8 @@ PC_Test/
 | `run_automation.py` | 运行 `.auto` 自动化脚本 | 写联动规则、定时任务、OLED 轮播 |
 | `camera_stream.py` | USB 摄像头流式传输 + 人脸检测 | 视频监控、人脸识别（香橙派部署用 HTTP 流） |
 | `voice_assistant.py` | 语音交互（KWS 唤醒 + Qwen2.5 + MCP） | 说「Hey Bota」唤醒（或键盘打字/HTTP 下发），自然语言控制硬件 |
+| `run_web.py` | Web 仪表盘（监控 + 控制 + 门禁 + 人脸 + 历史曲线） | 浏览器访问 http://localhost:5000，日常使用的主界面 |
+| `start_all.py` | **一键启动联动栈**：语音助手 + Web 人脸 + 摄像头流 | 三者要同时运行时用（或双击 start_all.bat） |
 | `link_server.py` | 旧的硬编码规则联动 | ⚠️ 已过时，建议改用 `run_automation.py` |
 
 ---
@@ -451,6 +471,264 @@ h ēi b ō t ǎ @Hey_Bota
   - JSON 板子交互链路（MCP 8 工具独占串口）保持不变。
 - 更早：Qwen2.5（ModelScope 国内渠道）替换 Ollama/Gemma；MCP 工具调用 3 轮上限；
   TTS 播放期间跳过唤醒检测；8 秒 FOLLOWUP 追问窗口。
+
+---
+
+## ⑥ run_web.py — Web 仪表盘（监控 / 控制 / 门禁 / 历史）
+
+合并自协作组的数据库、Flask 前端和 YOLO 人脸识别三部分，重构为本目录下的 `web/` 包，
+作为 PC_Test 的标准服务之一。浏览器访问 **http://localhost:5000**：
+
+| 页面 | 路由 | 功能 |
+|------|------|------|
+| 仪表盘 | `/` | 实时传感器卡片、门/窗/灯/风扇/空调控制、温湿度曲线 |
+| 门禁管理 | `/access` | 授权人员（人脸/RFID）、识别记录、人脸照片上传识别 |
+| 历史记录 | `/history` | 传感器历史、设备操作日志、图表查询 |
+| 硬件管理 | `/hardware` | 硬件桥状态、可选 Home Assistant 对接配置 |
+
+```powershell
+# 正常启动（自动探测 A/B 串口；也可在 web_config.yaml 写死）
+py -3.13 run_web.py
+
+# 指定端口 / 串口
+py -3.13 run_web.py --host 0.0.0.0 --port 5000 --port-a COM7 --port-b COM6
+
+# 看板模式：不开串口、不拉 MCP 子进程（纯看库里的历史数据，硬件控制返回 503）
+py -3.13 run_web.py --no-serial
+```
+
+**架构（串口安全是重点）**：Web 进程**绝不直接打开 COM 口**。启动时由硬件桥
+（[web/hardware.py](web/hardware.py)）以 stdio 方式拉起 `mcp_home_server.py` 子进程，
+通过 MCP 协议操作硬件：
+
+```text
+浏览器 ──HTTP── Flask(web/ 蓝图) ──MCP stdio── mcp_home_server.py ──USB── A/B 板
+                    │                              （独占串口，8 个工具）
+                    └── 每 2s get_sensor_status 轮询 → data/smart_home.db
+```
+
+- 设备控制（门/窗/灯/风扇）必须先收到 MCP ACK 才写库；MCP 离线返回 **503**，不产生假状态。
+- 传感器快照由后台线程轮询入库（按 timestamp 去重），页面只从 SQLite 读数。
+- MCP 子进程断线自动重连（指数退避 1→30s）；父进程退出后子进程随 stdin EOF 自动退出。
+- 配置在 [web_config.yaml](web_config.yaml)；运行时人脸配置写入 `data/face/face_config.json`（其优先级高于 yaml）。
+- 可选项：在硬件管理页配置 Home Assistant（配置存 `data/ha_config.json`，默认不含任何密钥）。
+
+**串口互斥**：Web 服务与 ⑤ `voice_assistant.py` 不能同时连板（共用同一个 MCP server）。
+单独运行时需要语音先停 Web，反之亦然；两者都只通过 MCP 操作硬件。
+两者（+摄像头流）要同时运行时直接用 ⑦ `start_all.py`——Web 退到 `--no-serial`，
+硬件调用经语音助手 `POST /tool` 转发，不冲突。
+
+### 人脸识别（YOLOv8-face + ArcFace）
+
+当前 `web_config.yaml` 已启用**真实模式**（`face.simulation_mode: false`）：
+
+- 检测：YOLOv8n-face（`models/face/yolov8n-face.pt`，ultralytics 推理，CPU 即可）。
+- 身份识别：ArcFace ONNX（`models/face/recognition.onnx`，~174MB，onnxruntime CPU 推理）。
+- 已注册 `person_01`、`person_02`（`data/face/authorized/`，各 10 张），
+  实测 20/20 检出、20/20 身份正确，相似度 0.61~0.82（阈值 0.5）。
+
+依赖安装（首次启用时）：
+
+```powershell
+py -3.13 -m pip install ultralytics onnxruntime
+```
+
+新增可识别人员：
+
+```powershell
+# 1. 每人 5~10 张不同角度/光线的正脸照放到 data/face/authorized/<姓名>/
+# 2. 重新生成嵌入库
+py -3.13 scripts/enroll_faces.py
+#    零依赖快速回退方案（精度一般）：--method simple_grayscale_cosine
+# 3. 重启 run_web.py；识别 face_id 即目录名
+```
+
+- 已授权人脸识别通过且 `door.open_on_face_grant: true` 时，硬件桥在线即自动开门并记录；
+  门禁页需用相同 face_id（如 `person_01`）添加授权人员。
+- 未识别照片存 `data/face/unauthorized/`；嵌入文件 `data/face/embeddings.pkl`。
+- 运行时人脸设置保存在 `data/face/face_config.json`，**优先级高于 yaml**；
+  改 yaml 不生效时删掉该 json 重启即可（会按 yaml 重建）。
+- YOLO/ArcFace 加载失败（如未装 ultralytics）会自动回退模拟模式并在 `/api/face/status` 标明；
+  想先演示界面可把 `simulation_mode` 改回 `true`（返回 FACE001/002/003）。
+
+运行时数据全部在 `data/`（SQLite、人脸配置、注册照片、嵌入文件，已在 .gitignore 中）；
+模型权重在 `models/face/`（同样不入库，recognition.onnx 可从根目录
+`yolo_face_detection 3.zip` 重新解压获得）。
+
+---
+
+## ⑦ start_all.py — 一键启动「语音 + 人脸识别 + 摄像头流」
+
+语音助手、Web 人脸识别、摄像头视频流三者一起运行的联动栈，一条命令（或双击
+[start_all.bat](start_all.bat)）：
+
+```powershell
+py -3.13 start_all.py                                  # 全部启动
+py -3.13 start_all.py --port-a COM7 --port-b COM6 --cam 0   # 指定串口/摄像头
+py -3.13 start_all.py --camera-mode both               # 摄像头同时弹本地窗口
+py -3.13 start_all.py --no-camera                      # 不起摄像头
+```
+
+启动后：
+
+| 服务 | 地址 | 说明 |
+|------|------|------|
+| Web 仪表盘 / 人脸识别 | http://localhost:5000 | YOLO+ArcFace 真实识别、门禁、历史 |
+| 摄像头 MJPEG 视频流 | http://localhost:8080 | 默认 web 模式（无头可访问；被占用可 `--camera-port` 改） |
+| 语音助手控制台 | http://localhost:8101 | 唤醒/对话，另有 `POST /tool` 硬件直调 |
+| 本地 LLM | http://localhost:8000/v1 | qwen_server.py（`--llm-mode dashscope` 时不启动） |
+
+**串口归属与开门联动（关键设计）**：A/B 串口同一时刻只能一个进程占用，因此联动栈里
+
+- **串口归语音助手**（它独占拉起 `mcp_home_server.py`）；
+- Web 以 `--no-serial` 看板模式运行，**不抢串口**；
+- Web 的设备控制和「识别到授权人脸自动开门」自动转发到语音助手的
+  **`POST /tool`**（如 `{"name":"door","arguments":{"action":"open"}}`），
+  该接口直调 MCP，**不经 LLM、不发语音**——室外摄像头识别通过后门直接开，
+  室内语音助手不会播报。转发地址由启动器以环境变量
+  `SMART_HOME_HW_RELAY=http://127.0.0.1:8101` 注入（也可在 web_config.yaml 的
+  `door.relay_url` 手配）。
+
+```text
+摄像头(室外) ──MJPEG :8080
+浏览器 ──:5000── Web(人脸 YOLO+ArcFace，--no-serial)
+                    │ 识别到授权人脸
+                    └──POST /tool──▶ 语音助手(:8101)──MCP──▶ mcp_home_server ──▶ B板开门
+语音交互(室内) ──────────────────────┘        （独占串口）
+```
+
+生命周期：启动前自动检查 8000/8101/5000/8080 端口占用；四个服务就绪后打印地址；
+窗口 **Ctrl+C** 会 `taskkill /T` 整个进程树（含 mcp_home_server、llama.cpp 子进程），
+无孤儿。各服务日志在 `logs/{qwen,voice,web,camera}.log`（已 gitignore）。
+无摄像头/无板子时对应服务降级提示，不拖垮其它服务。
+
+---
+
+## ⑧ Docker 部署（推荐在香橙派等 Linux 设备上使用）
+
+与 ⑦ 相同的四服务联动栈，但以容器形态交付，换机器只需装 Docker，不再手工配
+Python/依赖。文件：
+
+- [docker-compose.yml](docker-compose.yml)：qwen(:8000) + voice(:8101，独占串口) +
+  web(:5000，--no-serial) + camera(:8080)
+- [docker/](docker/)：4 个 Dockerfile（多阶段）+ 各服务独立 requirements
+- [docker-compose.dashscope.yml](docker-compose.dashscope.yml)：云端 LLM 覆盖文件（不起本地 3B）
+- [docker/.env.example](docker/.env.example)：串口/摄像头/端口等环境变量模板
+
+### 架构（容器间关系与 ⑦ 一致）
+
+```text
+宿主机 /dev/ttyUSB0|1 ──▶ voice 容器（独占串口，内含 mcp_home_server 子进程）
+宿主机 /dev/snd       ──▶ voice 容器（麦克风/扬声器，ALSA）
+宿主机 /dev/video0    ──▶ camera 容器（MJPEG :8080）
+models/  bind mount  ──▶ qwen / voice / web（模型不进镜像，2GB+）
+data/    bind mount  ──▶ web（SQLite、人脸注册照片、embeddings.pkl 持久化）
+web ──SMART_HOME_HW_RELAY=http://voice:8101──▶ voice POST /tool ──▶ MCP ──▶ 板子
+voice ──http://qwen:8000/v1（compose 内网服务发现）──▶ qwen
+```
+
+### 首次部署（香橙派 / 任意 Linux）
+
+```bash
+# 0. 安装 Docker Engine + Compose 插件（官方脚本，arm64 可直接用）
+#    curl -fsSL https://get.docker.com | sudo sh
+#    sudo usermod -aG docker $USER && 重新登录
+
+# 1. 拿到 PC_Test 目录后，先跑自检脚本：查架构/Docker/串口号/摄像头/声卡/模型，
+#    并自动生成 .env（按探测结果填好 SERIAL_PORT_A/B 与 CAMERA_DEVICE）
+cd PC_Test
+bash scripts/deploy_orangepi.sh --install-docker --gen-env
+#    若 Windows 传过来的脚本报 /bin/bash^M 错误： sed -i 's/\r$//' scripts/deploy_orangepi.sh
+#    手动核对： cat .env（串口建议用 /dev/serial/by-id/ 稳定路径，插拔顺序不变）
+
+# 2. 准备模型（模型不打进镜像；约 2.6GB，见下节“如何把代码和模型传到香橙派”）
+#    models/qwen/qwen2.5-3b-instruct-q4_k_m.gguf（2GB，云端 LLM 可不要）
+#    models/sherpa/{kws,asr,tts}/（376MB）、models/face/（172MB）
+#    注册照片放 data/face/authorized/<姓名>/
+
+# 3. 构建并后台启动（本地 LLM：首次很慢，aarch64 编译 llama 约 20~40 分钟）
+sudo docker compose up -d --build
+#    香橙派推荐云端 LLM（免 3B 本地推理，构建也快）：
+#    echo 'DASHSCOPE_API_KEY=sk-xxxx' >> .env
+#    sudo docker compose -f docker-compose.yml -f docker-compose.dashscope.yml up -d --build
+
+# 4. 注册人脸嵌入（在 web 容器里执行；新增人员后重跑+重启 web）
+sudo docker compose exec web python scripts/enroll_faces.py
+sudo docker compose restart web
+```
+
+访问：仪表盘 http://设备IP:5000 ｜ 摄像头流 http://设备IP:8080 ｜
+语音控制台 http://设备IP:8101 。
+
+### 如何把代码和模型传到香橙派（从 Windows）
+
+代码本身不大，但 `models/` 约 2.6GB、不进镜像也不进 git，需要单独传。
+**推荐方式：局域网 scp 直传（Win10/11 自带 scp，无需装软件）**。
+
+先在香橙派上建好目录（假设用户名 `orangepi`，IP 以实际为准，如 192.168.1.50）：
+
+```bash
+ssh orangepi@192.168.1.50 'mkdir -p ~/smart-home'
+```
+
+在 **Windows PowerShell**（PC_Test 目录内）执行：
+
+```powershell
+# 代码 + 配置（不含 .git/虚拟环境，很小）
+scp -r web scripts docker run_web.py voice_assistant.py qwen_server.py `
+  mcp_home_server.py camera_stream.py *.yaml *.yml .dockerignore requirements.txt `
+  orangepi@192.168.1.50:~/smart-home/
+
+# 模型（约 2.6GB，局域网几分钟；vosk 目录是旧 ASR，不用传）
+scp -r models orangepi@192.168.1.50:~/smart-home/
+
+# 已注册的人脸照片 + 嵌入库（也可以到派上重新 enroll，二选一）
+scp -r data orangepi@192.168.1.50:~/smart-home/
+```
+
+> 也可以用 U 盘拷贝，或在派上直接跑 `python3 download_qwen.py`、
+> `download_sherpa_models.py` 现场下载模型（省去传输，但要在派上配 Python 环境）。
+> 用 dashscope 云端 LLM 时 qwen 的 2GB 可完全不传，且不起 qwen 容器。
+
+### 常用命令
+
+```bash
+sudo docker compose logs -f voice web   # 跟日志
+sudo docker compose restart web         # 改 web_config.yaml 后重启（yaml 只读挂载）
+sudo docker compose exec voice python voice_assistant.py --list-mic   # 查麦克风索引
+sudo docker compose up -d --scale camera=0   # 无摄像头主机跳过 camera
+sudo docker compose down                # 停止全部（数据/模型在宿主机不丢）
+```
+
+### 云端 LLM（香橙派跑不动 3B 本地模型时）
+
+```bash
+echo 'DASHSCOPE_API_KEY=sk-xxxx' >> .env
+sudo docker compose -f docker-compose.yml -f docker-compose.dashscope.yml up -d --build
+# 效果：qwen 容器不启动、不占内存，voice 直连百炼（模型 qwen-turbo）
+```
+
+### 注意事项
+
+- **平台**：Dockerfile 基于 `python:3.12-slim`，arm64（香橙派）/x86_64 通用；
+  web 镜像的 torch 走 PyTorch **CPU 专用 index**（不带 CUDA，镜像小 2GB+）。
+  在 x86 机器为香橙派交叉构建：`docker buildx build --platform linux/arm64 ...`
+  （QEMU 较慢，建议直接在香橙派上构建）。
+- **设备透传**：Arduino/摄像头/声卡以 `devices:` 直透容器；设备名与 `.env`
+  不一致时 `compose up` 会直接报错（比运行时才失败好排查）。无界面 Linux
+  上 camera 固定 `--mode web --cam 0`。
+- **无麦克风的纯硬件网关**：给 voice 设环境变量 `SMART_HOME_DISABLE_MIC=1`
+  可跳过音频采集，MCP 硬件工具与 HTTP `/tool`、`/say` 仍正常（适合只做人脸
+  开门联动、不做语音对话的部署）。
+- **依赖固定**：镜像内 `mcp` 固定 1.x（mcp 2.x 移除了 `mcp.server.fastmcp`，
+  全新 pip 解析会装到 2.x 导致 mcp_home_server 崩溃——容器实测已踩过并固定）。
+- Windows/macOS 桌面开发仍建议用 ⑦ `start_all.py`（Docker Desktop 无法透传
+  /dev 串口与 /dev/snd 这类物理外设），Docker 形态面向**设备端部署**。
+  若只想在桌面 Docker 里体验 Web/LLM（不接板子/麦克风/摄像头），可用内置覆盖：
+  `docker compose -f docker-compose.yml -f docker-compose.desktop.yml up -d`
+  （voice 以纯网关模式运行，camera 默认跳过）。
+- 容器内进程以 tini 托管，`docker compose down` 不会留下 mcp_home_server
+  孤儿子进程。
 
 ---
 

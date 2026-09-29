@@ -1,0 +1,8 @@
+# qwen_server.py 镜像专用依赖（本地 LLM；不含语音/web 重依赖）
+# aarch64（香橙派）无预编译 wheel 时会在 builder 阶段源码编译，需 build-essential
+llama-cpp-python>=0.3.0
+fastapi>=0.115
+uvicorn>=0.30
+jinja2>=3.1
+pyyaml>=6.0
+numpy>=1.26

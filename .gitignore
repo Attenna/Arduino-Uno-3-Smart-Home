@@ -30,3 +30,17 @@ PC_Test/_cam_test.py
 PC_Test/models/
 PC_Test/voice_config.local.yaml
 PC_Test/dashscope_key.txt
+
+# Web 仪表盘：运行时数据（SQLite/人脸注册照片/embeddings/HA 密钥配置）
+PC_Test/data/
+
+# 一键联动启动的各服务日志（start_all.py）
+PC_Test/logs/
+
+# docker compose 本机环境变量（可能含 DASHSCOPE_API_KEY）
+PC_Test/.env
+
+# 朋友提供资料的原始压缩包（含 174MB ONNX，超 GitHub 100MB 限制；
+# 内容已解压到 PC_Test/models/face/，模型本身随 PC_Test/models/ 忽略）
+yolo_face_detection*.zip
+

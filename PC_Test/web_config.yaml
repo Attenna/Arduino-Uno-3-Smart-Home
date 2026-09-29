@@ -1,0 +1,43 @@
+# Web 仪表盘服务配置 —— run_web.py / web 包读取
+# 命令行参数（--host/--port/--port-a/--port-b/--no-serial）覆盖本文件。
+
+server:
+  host: "0.0.0.0"     # 局域网可访问；仅本机用 127.0.0.1
+  port: 5000
+
+# 硬件链路：web 不直接开串口，而是拉起 mcp_home_server.py 子进程（MCP stdio）。
+# 串口同一时刻只能被一个进程占用——运行本服务时不要同时运行语音模式。
+serial:
+  enabled: true       # false = 纯看板/演示模式（设备控制接口返回 503）
+  port_a: auto        # Module A 传感器，如 COM7
+  port_b: auto        # Module B 执行器，如 COM6
+
+# 后台轮询 MCP get_sensor_status 的间隔（秒），新快照写入 SQLite
+sensor_poll_interval: 2.0
+
+door:
+  # 香橙派推送人脸识别成功（/api/face/notify）后自动经 MCP 开门
+  open_on_face_grant: true
+  # 串口归语音助手时（start_all.py 联动栈，本服务 --no-serial），
+  # 硬件控制/人脸开门转发到语音助手的 POST /tool（静默，不经语音播报）。
+  # start_all.py 会用环境变量 SMART_HOME_HW_RELAY 自动注入；手动联跑时可在此填写。
+  # relay_url: "http://127.0.0.1:8101"
+
+# ── 人脸识别 ────────────────────────────────────────────────────────────
+# simulation_mode=true：无模型时返回模拟人脸（FACE001/002/003），前端可演示。
+# false：加载 models/face/yolov8n-face.pt 做真实 YOLOv8 人脸检测；
+# embeddings.pkl 由 scripts/enroll_faces.py 生成（ArcFace 高精度嵌入）。
+face:
+  model_path: "models/face/yolov8n-face.pt"
+  confidence_threshold: 0.4
+  iou_threshold: 0.45
+  max_faces: 5
+  simulation_mode: false
+  recognition:
+    enabled: true
+    # arcface_onnx：高精度（需 models/face/recognition.onnx，~174MB，已就位）
+    # simple_grayscale_cosine：零依赖回退方案
+    method: "arcface_onnx"
+    model_path: "models/face/recognition.onnx"
+    similarity_threshold: 0.5
+    image_size: 112

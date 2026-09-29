@@ -1,0 +1,21 @@
+# 大体积/运行时目录不进镜像（模型与数据在香橙派上以 bind mount 挂载）
+models/
+data/
+logs/
+*.log
+
+# Python 缓存/虚拟环境
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# 本机临时/系统文件
+.git/
+.gitignore
+.env
+*.bat
+*.ps1
+_smoke_web.py
+_verify_*.py
+docs/

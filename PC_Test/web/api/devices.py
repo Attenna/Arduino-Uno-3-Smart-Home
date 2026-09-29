@@ -1,0 +1,162 @@
+"""设备控制：门/窗/灯/风扇走 MCP 直连 Arduino；空调为虚拟状态（B 板无空调）。
+
+与别组旧实现的区别：按钮点击不再直接乐观写库，而是先经 MCP 向 Module B 下发
+JSON 命令；只有收到 B 板 ACK 后才更新 system_status 并写历史，保证 UI 状态
+与真实硬件一致。串口离线时返回 503，不产生虚假状态。
+"""
+from flask import Blueprint, jsonify, request
+
+from .. import extensions
+from ..extensions import db
+
+bp = Blueprint("devices", __name__)
+
+
+def _hardware_error(text):
+    return jsonify({"error": "硬件控制失败", "error_en": "Hardware command failed",
+                    "detail": text}), 503
+
+
+# ==================== 门 ====================
+
+@bp.route("/api/door", methods=["GET"])
+def get_door_status():
+    status = db.get_current_status()
+    return jsonify({"door_status": status.get("door_status", "closed")})
+
+
+@bp.route("/api/door", methods=["POST"])
+def control_door():
+    new_status = (request.json or {}).get("status", "closed")
+    if new_status not in ("open", "closed"):
+        return jsonify({"error": "无效状态，只能是 open 或 closed"}), 400
+    ok, msg = extensions.bridge.control_door(new_status)
+    if not ok:
+        return _hardware_error(msg)
+    db.update_status(door_status=new_status)
+    db.add_door_window_event("door", "前门", new_status)
+    action = "opened" if new_status == "open" else "closed"
+    return jsonify({
+        "door_status": new_status,
+        "message": f"门已{'打开' if new_status == 'open' else '关闭'}",
+        "message_en": f"Door {action}",
+    })
+
+
+# ==================== 窗 ====================
+
+@bp.route("/api/window", methods=["GET"])
+def get_window_status():
+    status = db.get_current_status()
+    return jsonify({"window_status": status.get("window_status", "closed")})
+
+
+@bp.route("/api/window", methods=["POST"])
+def control_window():
+    new_status = (request.json or {}).get("status", "closed")
+    if new_status not in ("open", "closed"):
+        return jsonify({"error": "无效状态"}), 400
+    ok, msg = extensions.bridge.control_window(new_status)
+    if not ok:
+        return _hardware_error(msg)
+    db.update_status(window_status=new_status)
+    db.add_door_window_event("window", "客厅窗户", new_status)
+    action = "opened" if new_status == "open" else "closed"
+    return jsonify({
+        "window_status": new_status,
+        "message": f"窗户已{'打开' if new_status == 'open' else '关闭'}",
+        "message_en": f"Window {action}",
+    })
+
+
+@bp.route("/api/door_window/history")
+def get_door_window_history():
+    hours = request.args.get("hours", 24, type=int)
+    return jsonify(db.get_door_window_history(hours))
+
+
+# ==================== 灯 ====================
+
+@bp.route("/api/light", methods=["GET"])
+def get_light_status():
+    status = db.get_current_status()
+    return jsonify({
+        "light_status": status.get("light_status", "off"),
+        "light_brightness": status.get("light_brightness", 0),
+    })
+
+
+@bp.route("/api/light", methods=["POST"])
+def control_light():
+    data = request.json or {}
+    light_status = data.get("status", "off")
+    brightness = max(0, min(100, int(data.get("brightness", 0) or 0)))
+    if light_status == "on" and brightness == 0:
+        brightness = 100
+    ok, msg = extensions.bridge.control_light(light_status, brightness)
+    if not ok:
+        return _hardware_error(msg)
+    db.update_status(light_status=light_status, light_brightness=brightness)
+    db.add_light_event("客厅主灯", light_status, brightness)
+    return jsonify({
+        "light_status": light_status,
+        "light_brightness": brightness,
+        "message": f"灯光已{'打开' if light_status == 'on' else '关闭'}，亮度: {brightness}%",
+        "message_en": (f"Light {'turned on' if light_status == 'on' else 'turned off'}, "
+                       f"brightness: {brightness}%"),
+    })
+
+
+@bp.route("/api/light/history")
+def get_light_history():
+    hours = request.args.get("hours", 24, type=int)
+    return jsonify(db.get_light_history(hours))
+
+
+# ==================== 风扇 ====================
+
+@bp.route("/api/fan", methods=["GET"])
+def get_fan_status():
+    status = db.get_current_status()
+    return jsonify({"fan_speed": status.get("fan_speed", 0)})
+
+
+@bp.route("/api/fan", methods=["POST"])
+def control_fan():
+    speed = max(0, min(100, int((request.json or {}).get("speed", 0) or 0)))
+    ok, msg = extensions.bridge.control_fan(speed)
+    if not ok:
+        return _hardware_error(msg)
+    db.update_status(fan_speed=speed)
+    return jsonify({
+        "fan_speed": speed,
+        "message": f"风扇速度已设为 {speed}%",
+        "message_en": f"Fan speed set to {speed}%",
+    })
+
+
+# ==================== 空调（虚拟设备：Module B 无空调执行器）====================
+
+@bp.route("/api/ac", methods=["GET"])
+def get_ac_status():
+    status = db.get_current_status()
+    return jsonify({
+        "ac_status": status.get("ac_status", "off"),
+        "ac_temperature": status.get("ac_temperature", 26),
+    })
+
+
+@bp.route("/api/ac", methods=["POST"])
+def control_ac():
+    data = request.json or {}
+    ac_status = data.get("status", "off")
+    ac_temp = max(16, min(30, int(data.get("temperature", 26) or 26)))
+    # 空调仅记录期望状态；接入真实空调后可在此改走 HA / 红外 MCP 工具
+    db.update_status(ac_status=ac_status, ac_temperature=ac_temp)
+    return jsonify({
+        "ac_status": ac_status,
+        "ac_temperature": ac_temp,
+        "message": f"空调已{'开启' if ac_status == 'on' else '关闭'}，温度设为 {ac_temp}°C",
+        "message_en": f"AC {'turned on' if ac_status == 'on' else 'turned off'}, "
+                      f"temp set to {ac_temp}°C",
+    })

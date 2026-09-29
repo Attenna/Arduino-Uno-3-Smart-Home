@@ -283,7 +283,10 @@ async def chat_completions(req: Request):
                 name, args_json = parsed
                 tool_calls.append({"id": f"call_{uuid.uuid4().hex[:8]}", "type": "function",
                                    "function": {"name": name, "arguments": args_json}})
-        msg = {"role": "assistant", "content": "".join(content_parts).strip()}
+        # 纯文本部分 = 各 <tool_call> 之前的文本 + 循环结束后剩余的尾部文本；
+        # 普通聊天（无工具标签）时 content_parts 为空、rest 即完整回复
+        msg = {"role": "assistant",
+               "content": ("".join(content_parts) + rest).strip()}
         if tool_calls:
             msg["tool_calls"] = tool_calls
         return {"id": cid, "object": "chat.completion", "created": created,
