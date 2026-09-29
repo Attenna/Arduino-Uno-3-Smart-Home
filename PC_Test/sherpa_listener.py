@@ -58,6 +58,15 @@ class SherpaListener:
             rule3_min_utterance_length=float(s["asr"].get("rule3_utt_len", 20.0)),
             provider=s.get("provider", "cpu"),
         )
+        # 热词（智能家居高频词加权，缺失时静默跳过，不影响启动）
+        # 注意：sherpa 热词仅在 modified_beam_search 解码下生效，greedy 会直接报错
+        hw = s["asr"].get("hotwords_file")
+        if hw:
+            hw_path = _abspath(hw)
+            if os.path.isfile(hw_path):
+                ep["hotwords_file"] = hw_path
+                ep["hotwords_score"] = float(s["asr"].get("hotwords_score", 2.0))
+                ep["decoding_method"] = "modified_beam_search"
         joiner_path = os.path.join(asr_dir, "joiner.onnx")
         if os.path.isfile(joiner_path):
             self.recognizer = sherpa_onnx.OnlineRecognizer.from_transducer(

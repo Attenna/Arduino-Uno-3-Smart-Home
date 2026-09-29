@@ -42,9 +42,9 @@ DEFAULT_CONFIG = {
     "llm": {"mode": "local",
             "base_url": "http://127.0.0.1:8000/v1",
             "api_key": None,
-            "model": "qwen2.5-1.5b-instruct-q4_k_m",
+            "model": "qwen2.5-3b-instruct-q4_k_m",
             "system_prompt": "你是智能家居语音助手。",
-            "local": {"gguf_path": "models/qwen/qwen2.5-1.5b-instruct-q4_k_m.gguf",
+            "local": {"gguf_path": "models/qwen/qwen2.5-3b-instruct-q4_k_m.gguf",
                       "n_ctx": 8192, "n_threads": 0, "n_gpu_layers": 0, "port": 8000}},
     "sherpa": {
         "provider": "cpu",
@@ -53,15 +53,147 @@ DEFAULT_CONFIG = {
                 "keywords_file": "models/sherpa/kws/keywords.txt",
                 "keywords_score": 1.5, "keywords_threshold": 0.25},
         "asr": {"model_dir": "models/sherpa/asr",
-                "rule1_silence": 2.4, "rule2_silence": 1.2, "rule3_utt_len": 20.0},
+                "rule1_silence": 2.4, "rule2_silence": 1.2, "rule3_utt_len": 20.0,
+                "hotwords_file": "models/sherpa/asr/hotwords.txt", "hotwords_score": 2.0},
         "tts": {"model_dir": "models/sherpa/tts", "speaker_id": 0,
                 "speed": 1.0, "num_threads": 2},
     },
     "wake": {"words": ["你邮你邮", "你好你好", "你有你有", "你由你由"],
              "command_timeout": 6.0,
-             "followup_timeout": 8.0, "wake_ack": "在的"},
+             "followup_timeout": 8.0, "wake_ack": "在的",
+             "ack_mode": "chirp",       # chirp=滴声(最快) / voice=说"在的" / both / none
+             "chirp_freq": 880, "chirp_ms": 120},
     "mic": {"device_index": None},
+    # 手动触发对话开始（等价于 KWS 唤醒）：
+    #   keyboard=终端按回车；http=POST/GET http://<host>:<port>/trigger
+    #   香橙派物理按钮可接 GPIO 守护进程 curl 一下，或手机/浏览器开主页点按钮
+    "trigger": {"keyboard": True, "http": True, "host": "0.0.0.0", "port": 8101},
 }
+
+
+# ==================== 手动触发通道（键盘回车 / HTTP / 外部程序）====================
+
+class TriggerBus:
+    """跨线程唤醒信号：任意来源 fire()，音频回调每帧 consume() 一次。"""
+
+    def __init__(self):
+        import threading
+        self._evt = threading.Event()
+        self._source = ""
+
+    def fire(self, source: str = "manual") -> None:
+        self._source = source
+        self._evt.set()
+
+    def consume(self) -> Optional[str]:
+        if self._evt.is_set():
+            self._evt.clear()
+            return self._source
+        return None
+
+
+class TriggerHTTPServer:
+    """标准库 HTTP 触发服务（零额外依赖）。
+
+    GET  /            状态页（含「开始对话」按钮，手机可直接开）
+    GET  /state       当前状态 JSON
+    GET/POST /trigger 触发一次对话（curl/物理按钮/网页均可）
+    """
+
+    def __init__(self, host: str, port: int, bus: TriggerBus, get_state):
+        import http.server
+        import threading
+
+        bus_ref, state_ref = bus, get_state
+
+        class _Handler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass  # 静默，不污染对话日志
+
+            def _json(self, code: int, obj: dict):
+                body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+                self.send_response(code)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def _fire(self):
+                who = self.headers.get("X-Trigger-Source", "http")
+                bus_ref.fire(who)
+                self._json(200, {"ok": True, "state": state_ref()})
+
+            def do_POST(self):
+                if self.path.split("?")[0] == "/trigger":
+                    self._fire()
+                else:
+                    self._json(404, {"ok": False})
+
+            def do_GET(self):
+                path = self.path.split("?")[0]
+                if path == "/trigger":
+                    self._fire()
+                elif path == "/state":
+                    self._json(200, {"state": state_ref()})
+                elif path == "/":
+                    body = _TRIGGER_PAGE.encode("utf-8")
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/html; charset=utf-8")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                else:
+                    self._json(404, {"ok": False})
+
+        self.httpd = http.server.ThreadingHTTPServer((host, port), _Handler)
+        self.httpd.daemon_threads = True
+        self.thread = threading.Thread(target=self.httpd.serve_forever,
+                                       daemon=True, name="trigger-http")
+        self.thread.start()
+        self.host, self.port = host, self.httpd.server_address[1]
+
+    def shutdown(self):
+        try:
+            self.httpd.shutdown()
+            self.httpd.server_close()
+        except Exception:
+            pass
+
+
+_TRIGGER_PAGE = """<!doctype html><html lang="zh"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>语音助手 · 手动触发</title>
+<style>body{font-family:system-ui;margin:0;background:#0f1117;color:#e6e6e6;
+display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh}
+#s{font-size:20px;margin-bottom:28px;opacity:.8}
+button{width:220px;height:220px;border-radius:50%;border:0;font-size:26px;
+background:linear-gradient(145deg,#3b82f6,#1d4ed8);color:#fff;box-shadow:0 12px 40px #1d4ed866}
+button:active{transform:scale(.96)}</style></head>
+<body><div id="s">状态：--</div>
+<button onclick="go()">开 始<br>对 话</button>
+<script>
+async function refresh(){try{const r=await fetch('/state');
+const j=await r.json();document.getElementById('s').textContent='状态：'+j.state}catch(e){}}
+async function go(){await fetch('/trigger');setTimeout(refresh,200);setTimeout(refresh,1200)}
+refresh();setInterval(refresh,1500);
+</script></body></html>"""
+
+
+def _start_keyboard_trigger(bus: TriggerBus) -> None:
+    """终端按回车触发对话（stdin 为 EOF/管道时静默禁用，避免空转误触发）。"""
+    import threading
+
+    def loop():
+        try:
+            while True:
+                line = sys.stdin.readline()
+                if line == "":
+                    return  # EOF：后台运行/输入被重定向，键盘通道自动失效
+                bus.fire("键盘回车")
+        except Exception:
+            return
+
+    threading.Thread(target=loop, daemon=True, name="trigger-keyboard").start()
 
 
 # ==================== 通用 OpenAI 兼容 LLM 客户端（流式 + 工具调用）====================
@@ -179,8 +311,14 @@ class VoiceAssistant:
         self.command_timeout = cfg["wake"]["command_timeout"]
         self.followup_timeout = cfg["wake"].get("followup_timeout", 8.0)
         self.wake_ack = cfg["wake"]["wake_ack"]
+        self.ack_mode = cfg["wake"].get("ack_mode", "chirp")
+        self.chirp_freq = int(cfg["wake"].get("chirp_freq", 880))
+        self.chirp_ms = int(cfg["wake"].get("chirp_ms", 120))
         self._last_state = None         # 状态变化时才打印，避免刷屏
         self.mic_device = cfg["mic"]["device_index"]
+
+        self.trigger = TriggerBus()     # 手动触发（键盘/HTTP/外部程序）
+        self.trigger_http = None
 
         self.listener = None            # sherpa_listener.SherpaListener
         self.stream = None
@@ -219,11 +357,25 @@ class VoiceAssistant:
             elif new_state == "FOLLOWUP":
                 print(f"\n  [💬 追问中] {self.followup_timeout:.0f}s 内可直接说下一句", flush=True)
 
-    def _on_wake(self, keyword: str, now: float):
+    def _ack(self):
+        """唤醒反馈：chirp 滴声零延迟 / voice 说「在的」/ both / none。"""
+        if self.ack_mode in ("chirp", "both"):
+            self.tts.chirp(self.chirp_freq, self.chirp_ms)
+        if self.ack_mode in ("voice", "both") and self.wake_ack:
+            self.tts.speak(self.wake_ack)
+
+    def _on_wake(self, keyword: str, now: float, manual: bool = False):
+        # 手动触发可打断正在播放的回答（barge-in）；语音唤醒受回声抑制约束不会走到这里
+        if manual and self.tts.is_busy():
+            self.tts.stop()
+            print("\n  [✋ 打断] 已停止当前播报", flush=True)
         self.state = "COMMAND"
         self.command_state_start = now
-        self.tts.speak(self.wake_ack)
-        print(f"\n  [⭐ 唤醒成功！] KWS 命中「{keyword}」→ 已切换到指令模式", flush=True)
+        if manual and self.listener:
+            self.listener.reset_asr()   # 手动触发：丢弃触发前录入的半句噪声
+        self._ack()
+        tag = "手动触发" if manual else "KWS 命中"
+        print(f"\n  [⭐ 唤醒成功！] {tag}「{keyword}」→ 已切换到指令模式", flush=True)
         self._emit_state("COMMAND")
 
     def _on_final(self, text: str):
@@ -258,8 +410,13 @@ class VoiceAssistant:
             import numpy as np
             samples = np.frombuffer(indata, dtype=np.float32) \
                 if isinstance(indata, (bytes, bytearray)) else indata[:, 0]
-            events = self.listener.accept(samples)
             now = time.time()
+            # 手动触发（键盘/HTTP/外部程序）：必须在 accept 之前处理，
+            # reset 掉旧 ASR 半句，避免触发前的残句同帧被当成指令提交
+            manual_src = self.trigger.consume()
+            if manual_src:
+                self._on_wake(manual_src, now, manual=True)
+            events = self.listener.accept(samples)
             tts_busy = self.tts.is_busy()
             for kind, text in events:
                 if kind == "wake":
@@ -380,11 +537,29 @@ class VoiceAssistant:
                 print(f"[MCP] 已加载 {len(llm_tools)} 个工具: "
                       f"{[t['function']['name'] for t in llm_tools]}", flush=True)
 
+                # 手动触发通道（键盘回车 + HTTP，配置可关）
+                tcfg = self.cfg.get("trigger", {})
+                if tcfg.get("keyboard", True):
+                    _start_keyboard_trigger(self.trigger)
+                if tcfg.get("http", True):
+                    try:
+                        self.trigger_http = TriggerHTTPServer(
+                            tcfg.get("host", "0.0.0.0"),
+                            int(tcfg.get("port", 8101)),
+                            self.trigger, lambda: self.state)
+                    except Exception as e:
+                        print(f"[触发] HTTP 接口启动失败（不影响语音）: {e}", flush=True)
+
                 self._start_mic()
                 print("=" * 56, flush=True)
-                print("  🎤 语音助手已启动（Sherpa-ONNX 前端）", flush=True)
+                print("  🎤 语音助手已启动（Sherpa-ONNX 前端 + Qwen2.5-3B）", flush=True)
                 print("  麦克风: " + (f"索引 {self.mic_device}" if self.mic_device is not None else "系统默认"), flush=True)
                 print("  唤醒词(KWS): " + " / ".join(self.listener.keywords), flush=True)
+                if tcfg.get("keyboard", True):
+                    print("  ⌨️  手动触发: 终端按回车", flush=True)
+                if self.trigger_http is not None:
+                    print(f"  🌐 手动触发: http://<本机IP>:{self.trigger_http.port}/ （网页按钮 / curl /trigger）",
+                          flush=True)
                 print("=" * 56, flush=True)
                 self._emit_state("IDLE")
                 loop = asyncio.get_running_loop()
@@ -411,6 +586,8 @@ class VoiceAssistant:
             self.stream.stop()
         except Exception:
             pass
+        if self.trigger_http is not None:
+            self.trigger_http.shutdown()
         self.tts.shutdown()
 
 

@@ -25,6 +25,14 @@ _SENTENCE_END = re.compile(r"[。！？!??\n]+")
 _STOP_SENTINEL = object()
 
 
+class _Chirp:
+    """唤醒提示音（队列项）：零合成延迟的正弦短音，比 TTS 说「在的」反馈更快。"""
+
+    def __init__(self, freq: float = 880.0, ms: int = 120):
+        self.freq = freq
+        self.ms = ms
+
+
 def _abspath(p: str) -> str:
     if os.path.isabs(p):
         return p
@@ -104,6 +112,10 @@ class TtsPlayer:
         if text and text.strip():
             self._q.put(text.strip())
 
+    def chirp(self, freq: float = 880.0, ms: int = 120) -> None:
+        """入队一个唤醒提示音（滴声），排在语音前串行播放。"""
+        self._q.put(_Chirp(freq, ms))
+
     def flush(self) -> None:
         """把缓冲里残留的尾巴入队（LLM 结束时调用）。"""
         rest = "".join(self._buf).strip()
@@ -147,12 +159,37 @@ class TtsPlayer:
                 self._q.task_done()
                 break
             try:
-                self._play_sentence(str(item))
+                if isinstance(item, _Chirp):
+                    self._play_chirp(item)
+                else:
+                    self._play_sentence(str(item))
             except Exception as e:
-                print(f"[TTS] 句子失败跳过（{e}）")
+                print(f"[TTS] 播放失败跳过（{e}）")
             finally:
                 self._cancel.clear()
                 self._q.task_done()
+
+    def _play_chirp(self, c: "_Chirp") -> None:
+        import numpy as np
+        if self._cancel.is_set():
+            return
+        rate = 44100
+        n = int(rate * c.ms / 1000)
+        t = np.arange(n, dtype=np.float32) / rate
+        wave = 0.25 * np.sin(2 * np.pi * c.freq * t)
+        # 首尾各 6ms 淡入淡出，避免爆音"啪"声
+        fade = min(int(rate * 0.006), n // 2)
+        if fade > 0:
+            ramp = np.linspace(0.0, 1.0, fade, dtype=np.float32)
+            wave[:fade] *= ramp
+            wave[-fade:] *= ramp[::-1]
+        self._playing.set()
+        try:
+            sd.play(wave, samplerate=rate, blocking=True)
+        except Exception as e:
+            print(f"[TTS] 提示音失败: {e}")
+        finally:
+            self._playing.clear()
 
     def _play_sentence(self, text: str) -> None:
         if self._cancel.is_set():

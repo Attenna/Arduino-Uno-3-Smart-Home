@@ -1,15 +1,12 @@
 """download_qwen.py — 经魔搭社区 ModelScope（阿里巴巴，国内合法渠道）下载 Qwen2.5 量化权重
 
-默认下载 Qwen/Qwen2.5-1.5B-Instruct-GGUF 的 q4_k_m 量化（约 1GB）到 PC_Test/models/qwen/。
-选 1.5B：香橙派 AI Pro 纯 CPU 推理也能流畅跑（3B 留作开发机/有 GPU 时的升级选项）。
-
-许可与合规提示：
-    - Qwen2.5-1.5B 为 Apache-2.0 许可，商业友好
-    - 如需更强理解力（开发机 CPU 够用或有 GPU；3B 为 Qwen Research License）：
-        py -3.13 download_qwen.py --repo Qwen/Qwen2.5-3B-Instruct-GGUF --quant q4_k_m
+默认下载 Qwen/Qwen2.5-3B-Instruct-GGUF 的 q4_k_m 量化（约 2GB）到 PC_Test/models/qwen/。
+选 3B：工具调用（function calling）成功率明显高于 1.5B，香橙派多核 ARM CPU 可接受。
+追求极致低占用可切 1.5B（Apache-2.0）：
+    py -3.13 download_qwen.py --repo Qwen/Qwen2.5-1.5B-Instruct-GGUF --quant q4_k_m
 
 用法：
-    py -3.13 download_qwen.py                    # 默认 1.5B q4_k_m
+    py -3.13 download_qwen.py                    # 默认 3B q4_k_m
     py -3.13 download_qwen.py --repo ... --quant q5_k_m
 """
 import argparse
@@ -22,7 +19,7 @@ PC_TEST_DIR = os.path.dirname(os.path.abspath(__file__))
 
 def main():
     p = argparse.ArgumentParser(description="从 ModelScope（国内渠道）下载 Qwen2.5 GGUF")
-    p.add_argument("--repo", default="Qwen/Qwen2.5-1.5B-Instruct-GGUF",
+    p.add_argument("--repo", default="Qwen/Qwen2.5-3B-Instruct-GGUF",
                    help="ModelScope 仓库 id")
     p.add_argument("--quant", default="q4_k_m", help="量化档位（q4_k_m/q5_k_m/q8_0 等）")
     p.add_argument("--dest", default=os.path.join(PC_TEST_DIR, "models", "qwen"))

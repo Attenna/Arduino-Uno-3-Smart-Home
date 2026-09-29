@@ -57,6 +57,30 @@ n ǐ y óu n ǐ y óu @你邮你邮
 n ǐ h ǎo n ǐ h ǎo @你好你好
 """
 
+# ASR 热词（hotwords）：智能家居控制高频词，按字切分（该 BPE 词表中文以单字为 token）。
+# 作用：在解码时给这些词额外加权，显著提升「开灯/红色/蜂鸣器」等专业词的识别率。
+# 权重在 voice_config.yaml 的 sherpa.asr.hotwords_score 统一配置；可自行增删词组后重启。
+HOTWORDS = [
+    # 灯 / 颜色
+    "开灯", "关灯", "把灯打开", "把灯关了", "打开灯", "关掉灯", "灯光",
+    "红色", "蓝色", "绿色", "白色", "紫色", "黄色", "粉色", "橙色", "彩色",
+    "把灯调成红色", "把灯调成蓝色", "把灯调成绿色", "亮一点", "暗一点",
+    # 门 / 窗 / 窗帘
+    "开门", "关门", "把门打开", "把门关上", "开窗", "关窗", "窗帘",
+    # 风扇
+    "风扇", "开风扇", "关风扇", "风速", "风扇调到", "风大一点", "风小一点",
+    # 蜂鸣器 / 显示
+    "蜂鸣器", "响一下", "数码管", "显示屏",
+    # 传感器查询
+    "温度", "湿度", "现在多少度", "屋里多少度", "现在几度", "人体感应", "有没有人",
+    # 设备 / 场景
+    "空调", "电视", "回家模式", "离家模式", "睡觉模式",
+]
+
+
+def _build_hotwords_txt() -> str:
+    return "\n".join(" ".join(list(w)) for w in HOTWORDS) + "\n"
+
 
 def _download(url: str, dest: str) -> None:
     last_err = None
@@ -154,12 +178,25 @@ def install_pack(key: str, force: bool) -> None:
         missing = [wanted[k][0] for k in wanted if wanted[k][0] not in copied and not k.endswith("/")]
         if missing:
             raise RuntimeError(f"[{key}] 解压后仍缺文件: {missing}")
-    if key == "kws":
-        kw_path = os.path.join(dest_dir, "keywords.txt")
-        with open(kw_path, "w", encoding="utf-8") as f:
-            f.write(KEYWORDS_TXT)
-        print(f"  已写入唤醒词 keywords.txt: 你邮你邮 / 你好你好")
+    write_wordlists()
     print(f"[{key}] 安装完成 → {dest_dir}")
+
+
+def write_wordlists() -> None:
+    """（重）写项目定制词表：KWS 唤醒词 + ASR 热词。
+
+    每次运行都刷新，便于升级脚本后给已下载的模型补词表，无需 --force 重下。
+    """
+    kws_dir = os.path.join(MODELS_ROOT, "kws")
+    if os.path.isdir(kws_dir):
+        with open(os.path.join(kws_dir, "keywords.txt"), "w", encoding="utf-8") as f:
+            f.write(KEYWORDS_TXT)
+        print("  刷新 KWS 唤醒词 keywords.txt: 你邮你邮 / 你好你好")
+    asr_dir = os.path.join(MODELS_ROOT, "asr")
+    if os.path.isdir(asr_dir):
+        with open(os.path.join(asr_dir, "hotwords.txt"), "w", encoding="utf-8") as f:
+            f.write(_build_hotwords_txt())
+        print(f"  刷新 ASR 热词 hotwords.txt: {len(HOTWORDS)} 个智能家居高频词")
 
 
 def main():
@@ -175,6 +212,7 @@ def main():
     for k in ("kws", "asr", "tts"):
         if k in targets:
             install_pack(k, args.force)
+    write_wordlists()   # 模型已存在被跳过时，也能补上新版词表
     print("\n全部模型就绪。")
 
 

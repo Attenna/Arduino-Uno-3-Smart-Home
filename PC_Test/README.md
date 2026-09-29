@@ -236,11 +236,12 @@ KWS 关键词声学唤醒（zipformer-wenetspeech 3.3M）+ 流式 ASR（streamin
 ② 环境变量 `DASHSCOPE_API_KEY`；③ config `llm.api_key`。
 切到 dashscope 模式只需改 `llm.mode: "dashscope"`——端点和模型名会自动纠正，无需改 base_url。
 
-**模型选择（面向香橙派 AI Pro 纯 CPU）**：默认 `Qwen2.5-1.5B-Instruct`（q4_k_m 量化，~1GB，
-**Apache-2.0** 许可、商业友好），在香橙派多核 ARM 上 CPU 推理足够流畅；
-开发机想要更强理解力可换 3B（Qwen Research License，限非商业）：
-`py -3.13 download_qwen.py --repo Qwen/Qwen2.5-3B-Instruct-GGUF --quant q4_k_m`，
-并同步改 `voice_config.yaml` 的 `llm.model` / `llm.local.gguf_path`。
+**模型选择（面向香橙派 AI Pro 纯 CPU）**：默认 `Qwen2.5-3B-Instruct`（q4_k_m 量化，~2GB，
+工具调用成功率显著更高，见下方压测表）；香橙派多核 ARM CPU 可跑，首字延迟略高于小模型。
+追求极致低占用可换 **Apache-2.0**（商业友好）的 1.5B：
+`py -3.13 download_qwen.py --repo Qwen/Qwen2.5-1.5B-Instruct-GGUF --quant q4_k_m`，
+并同步改 `voice_config.yaml` 的 `llm.model` / `llm.local.gguf_path`；
+要更强理解力且不在意云端，直接切 `dashscope` 模式用 qwen2.5-7b/14b。
 
 ### 环境准备
 
@@ -270,10 +271,10 @@ py -3.13 -m pip install -r requirements.txt -i https://mirrors.aliyun.com/pypi/s
 py -3.13 download_sherpa_models.py   # → models/sherpa/{kws,asr,tts}/（国内镜像加速）
 ```
 
-**② 下载 Qwen2.5 权重**（ModelScope 国内渠道，1.5B q4_k_m ~1GB）：
+**② 下载 Qwen2.5 权重**（ModelScope 国内渠道，默认 3B q4_k_m ~2GB）：
 
 ```powershell
-py -3.13 download_qwen.py     # Qwen/Qwen2.5-1.5B-Instruct-GGUF q4_k_m（~1GB）→ models/qwen/
+py -3.13 download_qwen.py     # Qwen/Qwen2.5-3B-Instruct-GGUF q4_k_m（~2GB）→ models/qwen/
 ```
 
 **③ 启动本地 Qwen 服务**（每次使用前，或交给 start_voice.bat 自动拉起）：
@@ -285,7 +286,7 @@ py -3.13 qwen_server.py       # 监听 http://127.0.0.1:8000/v1，加载约 10~3
 > 提示：
 > - **纯 CPU 推理（默认，与香橙派一致）**：`voice_config.yaml` 的 `llm.local.n_gpu_layers: 0`。
 >   目标机香橙派 AI Pro 的昇腾 NPU 目前 llama.cpp / Sherpa-ONNX 均无可用后端（Sherpa ACL 面向 Ascend 910），
->   CPU + 1.5B-Q4 + ASR INT8 已满足实时链路；NPU 加速属后期优化（交叉编译 + ACL 上下文绑定）。
+>   CPU + 3B-Q4 + ASR INT8 已满足实时链路；NPU 加速属后期优化（交叉编译 + ACL 上下文绑定）。
 > - Windows/Py3.13 若无预编译轮子会自动源码编译 CPU 版（需 VS Build Tools / VS2022 C++，约 3~10 分钟）。
 > - 引擎可用 `py -3.13 qwen_server.py --smoke` 做冒烟验证（输出 `[SMOKE_OK] device=CPU`）。
 > - 不想本地跑就切 `llm.mode: dashscope`（零本地算力，阿里云百炼国内云）。
@@ -318,7 +319,7 @@ py -3.13 voice_assistant.py --kws-repl
 py -3.13 voice_assistant.py
 
 # 手动指定串口 / 模式 / 模型 / 音色
-py -3.13 voice_assistant.py --port-a COM7 --port-b COM6 --llm-mode local --model qwen2.5-1.5b-instruct-q4_k_m
+py -3.13 voice_assistant.py --port-a COM7 --port-b COM6 --llm-mode local --model qwen2.5-3b-instruct-q4_k_m
 ```
 
 > ⚠️ **串口互斥**：语音模式运行期间，COM 口被 mcp_home_server 子进程独占，
@@ -354,37 +355,65 @@ mcp dev mcp_home_server.py --port-a COM7 --port-b COM6
 语音链路已全离线境内化：Sherpa-ONNX（KWS/ASR/TTS）+ Qwen2.5（ModelScope / 百炼），
 不再依赖 edge-tts（微软）与 Vosk 等境外服务；模型下载走 ghfast.top 国内镜像。
 
-### 已知局限（Qwen2.5-1.5B 工具调用）
+### 手动触发对话（不喊唤醒词也能开始）
 
-2026-09-29 流式工具调用压测（temperature=0.3，4 条典型指令）：
+除了 KWS 语音唤醒，助手内置两条等价的手动触发通道（`voice_config.yaml` 的 `trigger` 段）：
 
-| 指令 | 结果 | 解析出的调用 |
-|------|------|-------------|
-| 把灯调成红色 | ✅ | `light({"action":"red"})` |
-| 风扇调到150 | ✅ | `fan({"speed":150})` |
-| 帮我开一下门 | ⚠️ 失败 | 仅回文本「开门操作。」，未调 `door` |
-| 现在屋里多少度 | ⚠️ 失败 | 表示要查但未调 `get_sensor_status` |
+- **键盘**：终端运行时直接按回车。
+- **HTTP**（默认 `http://0.0.0.0:8101`）：
+  - 手机/浏览器开 `http://<香橙派IP>:8101/`，页面上有大按钮；
+  - 命令行：`curl http://<香橙派IP>:8101/trigger`（POST 亦可，可用请求头
+    `X-Trigger-Source: gpio-button` 标记来源）；
+  - 香橙派物理按键：GPIO 守护进程检测到按下时 `curl` 一下 `/trigger` 即可接入；
+  - `GET /state` 查当前状态（IDLE/COMMAND/THINKING/FOLLOWUP）。
 
-1.5B 对"动作类 + 参数明确"的指令（灯/风扇）命中率可以，但对**隐式动作**（开门）和
-**查询类**（读传感器）倾向于只用自然语言答应而不发起调用。已在 `qwen_server.py` 做了三层兜底：
+手动触发会立即打断正在播放的回答（barge-in）并丢弃触发前的半句录音，响一声提示音后进入听指令状态。
+stdin 被重定向（后台运行）时键盘通道自动禁用，不会误触发。
 
-1. system 消息注入带具体示例的工具调用规则（强制单层括号 + `light/red` 范例）；
-2. 支持 `<tool_call>` 标签、裸 JSON、`{{...}}` 双括号变体；
-3. 流式收尾从全部已输出文本中扫描合法工具 JSON（`_extract_tool_anywhere`）。
+### ASR 热词（智能家居词汇提准）
 
-后续升级方向（按代价排序）：① 换 3B（已验证下载链路，`download_qwen.py --repo Qwen/Qwen2.5-3B-Instruct-GGUF`，
-限非商业许可，香橙派 CPU 首字延迟会升高）；② 7B-Q4 走百炼云端 `dashscope` 模式；
-③ 在 system prompt 里为 door/get_sensor_status 各补一条填好的调用范例。
+`models/sherpa/asr/hotwords.txt` 内置 51 个高频词（开灯/关灯/红色/蓝色/开门/风扇调到/
+蜂鸣器/现在多少度/回家模式…），解码时自动加权（配合 `modified_beam_search`）。
+想加自家设备的叫法（如"小爱""客厅灯"），直接按"字 空格 分 隔"每行一个编辑该文件，重启生效；
+权重在 `sherpa.asr.hotwords_score`（1.5~3，过大会误识）。
+
+### 工具调用能力（Qwen2.5-3B 压测）
+
+2026-09-29 流式工具调用压测（temperature=0.3，本地 CPU，3B q4_k_m）：
+
+| 指令 | 1.5B | 3B | 解析出的调用 |
+|------|------|----|-------------|
+| 把灯调成红色 | ✅ | ✅（连测 4/4） | `light({"action":"red"})` |
+| 风扇调到150 | ✅ | ✅ | `fan({"speed":150})` |
+| 帮我开一下门 | ❌ 只回文本 | ✅ | `door({"action":"open"})` |
+| 现在屋里多少度 | ❌ 只回文本 | ✅ | `get_sensor_status({})` |
+| 把窗户打开 | — | ✅ | `window({"action":"open"})` |
+| 蜂鸣器响一下 | — | ✅ | `buzzer({"action":"on"})` |
+
+3B 修复了 1.5B 在**隐式动作**和**查询类**指令上的短板，故作为默认模型。
+`qwen_server.py` 仍保留三层工具解析兜底：① system 注入带示例的调用规则；
+② 支持 `<tool_call>` 标签 / 裸 JSON / `{{...}}` 双括号变体；③ 流式收尾全文扫描合法 JSON。
+小模型偶发采样出半截 JSON 时，助手会以自然语言提示，重说一次即可。
+
+模型档位自由切换（GGUF 同协议，改配置即可）：
+- 追求低占用：`py -3.13 download_qwen.py --repo Qwen/Qwen2.5-1.5B-Instruct-GGUF --quant q4_k_m`
+- 想要更强（香橙派 CPU 偏慢，建议走云）：`llm.mode: dashscope` + `dashscope_key.txt`，
+  可用 qwen2.5-7b/14b-instruct 等，零本地算力。
 
 ### 更新记录
 
+- **2026-09-29（晚）**：3B 模型 + 交互体验迭代。
+  - LLM 默认升为 **Qwen2.5-3B-Instruct q4_k_m**（~2GB）：隐式动作/查询类工具调用修复，六指令压测全过。
+  - **手动触发接口**：终端回车 + HTTP（`/trigger`、`/state`、手机网页大按钮），
+    供香橙派 GPIO 实体按键/外部系统接入；手动触发可打断 TTS 播报。
+  - **ASR 热词**：51 个智能家居高频词加权（自动切 modified_beam_search），热词文件可自行增删。
+  - **唤醒提示音**：默认改为零延迟"滴"声（`wake.ack_mode: chirp/voice/both/none` 可配），
+    不再等"在的"合成；修复 stdin EOF 时键盘触发空转误唤醒。
 - **2026-09-29**：面向香橙派 AI Pro（昇腾 NPU）落地纯 CPU 链路。
-  - LLM：3B → **Qwen2.5-1.5B-Instruct q4_k_m**（~1GB，Apache-2.0），`n_gpu_layers=0`；
-    移除 CUDA 编译/检测逻辑，llama-cpp-python 统一 CPU 版；`qwen_server.py` 增强小模型工具调用兜底。
-  - ASR：Paraformer fp32 → **streaming Zipformer 中英双语 INT8 三件套**（encoder/decoder/joiner），
-    `sherpa_listener.py` 按 `joiner.onnx` 有无自动分派 transducer/paraformer。
-  - 语音前端整体由 Vosk + edge-tts 切换为 **Sherpa-ONNX**（KWS 声学唤醒 + 流式 ASR + 本地 VITS TTS），
-    模型由 `download_sherpa_models.py` 一键下载（ghfast.top 镜像）。
+  - 语音前端由 Vosk + edge-tts 切换为 **Sherpa-ONNX**（KWS 声学唤醒 + 流式 Zipformer 中英双语
+    INT8 ASR + 本地 VITS TTS），模型由 `download_sherpa_models.py` 一键下载（ghfast.top 镜像）。
+  - 移除 CUDA 编译/检测逻辑，llama-cpp-python 统一 CPU 版；`sherpa_listener.py` 按
+    `joiner.onnx` 有无自动分派 transducer/paraformer。
   - JSON 板子交互链路（MCP 8 工具独占串口）保持不变。
 - 更早：Qwen2.5（ModelScope 国内渠道）替换 Ollama/Gemma；MCP 工具调用 3 轮上限；
   TTS 播放期间跳过唤醒检测；8 秒 FOLLOWUP 追问窗口。

@@ -9,7 +9,7 @@
 
 启动：
     py -3.13 qwen_server.py                       # 模型路径取 voice_config.yaml llm.local
-    py -3.13 qwen_server.py --model models/qwen/qwen2.5-1.5b-instruct-q4_k_m.gguf --port 8000
+    py -3.13 qwen_server.py --model models/qwen/qwen2.5-3b-instruct-q4_k_m.gguf --port 8000
 """
 import argparse
 import datetime
@@ -57,7 +57,7 @@ except ImportError:
 PC_TEST_DIR = os.path.dirname(os.path.abspath(__file__))
 
 _llm = None
-_MODEL_ID = "qwen2.5-1.5b-instruct-q4_k_m"
+_MODEL_ID = "qwen2.5-3b-instruct-q4_k_m"
 _TPL = None
 
 TAG_OPEN = "<tool_call>"
@@ -426,7 +426,7 @@ def main():
     default_model = local_cfg.get(
         "gguf_path",
         os.path.join(PC_TEST_DIR, "models", "qwen",
-                     "qwen2.5-1.5b-instruct-q4_k_m.gguf"))
+                     "qwen2.5-3b-instruct-q4_k_m.gguf"))
     if not os.path.isabs(default_model):
         default_model = os.path.join(PC_TEST_DIR, default_model)
 
