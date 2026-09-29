@@ -11,6 +11,17 @@
 // ---- 串口通信 ----
 #define SERIAL_BAUD         115200
 
+// ============================================
+// 硬件裁剪开关（硬件小组 2026-09 正式版会议决定）
+// 只做编译期裁剪，驱动文件保留；0=该位置空、固件不初始化不读取（引脚保持高阻）
+// ============================================
+#define ENABLE_ULTRASONIC   0   // HC-SR04 超声波已移除 → A0/A1 悬空
+#define ENABLE_SOIL         0   // 土壤湿度已移除 → D4/A4 改接矩阵键盘
+#define ENABLE_KEYPAD       1   // 矩阵键盘（现仅接第 1 横列 D4 + 第 1 纵列 A4 = 按键 "1"）
+#define ENABLE_IR_RECV      1   // 红外遥控接收（D3）保留
+#define ENABLE_PIR          1   // PIR 人体红外（D8）保留
+#define ENABLE_RFID         1   // RC522 保留
+
 // ---- DHT11 温湿度 ----
 #define DHT_PIN             7
 #define DHT_TYPE            DHT11
@@ -42,8 +53,15 @@
 #define PIR_PIN             8
 
 // ---- 土壤湿度（数字 + 模拟，兼容 YL-69/FC-28）----
+// 已移除（ENABLE_SOIL=0）；D4/A4 复用为矩阵键盘的第 1 行/第 1 列
 #define SOIL_DIGITAL_PIN    4
 #define SOIL_ANALOG_PIN     A4
+
+// ---- 矩阵键盘（当前硬件：1 行 x 1 列，仅按键 "1"；开门密码 1111 在香橙派 MCP 侧校验）----
+#define KEYPAD_ROW_PIN      4       // D4  → 键盘第一横列（行驱动，持续输出 LOW）
+#define KEYPAD_COL_PIN      A4      // A4  → 键盘第一纵列（列读取，INPUT_PULLUP）
+#define KEYPAD_DEBOUNCE_MS  40      // 按下/松开防抖
+#define KEYPAD_RELEASE_MS   120     // 两次按键间要求的松开保持时间，防一次按压连发
 
 // ---- 红外遥控接收 ----
 #define IR_RECV_PIN         3
@@ -67,6 +85,6 @@
 // ---- 设备标识 ----
 #define BOARD_TYPE          "MODULE_A"
 #define BOARD_ROLE          "SENSOR_NODE"
-#define FW_VERSION          "V2.0"
+#define FW_VERSION          "V2.1"  // 正式版：移除超声波/土壤，新增矩阵键盘；红外全保留
 
 #endif // CONFIG_A_H

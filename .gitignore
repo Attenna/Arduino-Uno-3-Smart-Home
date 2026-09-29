@@ -44,3 +44,6 @@ PC_Test/.env
 # 内容已解压到 PC_Test/models/face/，模型本身随 PC_Test/models/ 忽略）
 yolo_face_detection*.zip
 
+# 香橙派部署的本机暂存（.env、daemon.json、临时探测脚本，仅部署用）
+pi-staging/
+

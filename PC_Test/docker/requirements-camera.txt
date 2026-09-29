@@ -1,4 +1,5 @@
 # camera_stream.py 镜像专用依赖（轻量；headless 版无需 X11/libGL）
 flask>=3.0
 numpy>=1.26
-opencv-python-headless>=4.8
+# 锁 4.x：OpenCV 5 移除了顶层 cv2.CascadeClassifier（camera_stream.py 使用 4.x API）
+opencv-python-headless>=4.10,<5

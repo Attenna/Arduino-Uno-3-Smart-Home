@@ -69,7 +69,16 @@ class McpHardwareBridge:
 
     def start(self) -> None:
         if not self.enabled:
-            logger.info("[硬件桥] serial.enabled=false，不拉 MCP 子进程（看板模式）")
+            if self.relay_url:
+                # 串口归语音进程（Docker 联动/start_all 模式）：不拉 MCP 子进程，
+                # 改由独立线程经 relay HTTP 周期拉取 A 板快照并入库 + 转发控制。
+                self._thread = threading.Thread(target=self._relay_poll_loop,
+                                                name="hw-relay-poll", daemon=True)
+                self._thread.start()
+                logger.info("[硬件桥] relay 轮询模式: %s（每 %.0fs）",
+                            self.relay_url, self.poll_interval)
+            else:
+                logger.info("[硬件桥] serial.enabled=false，不拉 MCP 子进程（看板模式）")
             return
         self._thread = threading.Thread(target=self._thread_main,
                                         name="mcp-hardware-bridge", daemon=True)
@@ -158,6 +167,31 @@ class McpHardwareBridge:
             self._ingest_snapshot(payload.get("data") or {})
             for event in payload.get("recent_events", []):
                 self._ingest_event(event)
+
+    def _relay_poll_loop(self) -> None:
+        """relay 模式：串口在语音进程，本线程只做 HTTP 周期轮询 + 入库。
+
+        控制指令走 call_tool → _relay_call（Flask 请求线程同步调用），
+        本线程负责把 A 板传感器快照/事件持续写进 SQLite，供仪表盘展示。
+        """
+        while not self._stopping:
+            ok, text = self._relay_call("get_sensor_status", {}, timeout=15)
+            if ok:
+                self._set_online(True)
+                try:
+                    payload = json.loads(text)
+                    self._ingest_snapshot(payload.get("data") or {})
+                    for event in payload.get("recent_events", []):
+                        self._ingest_event(event)
+                except json.JSONDecodeError:
+                    pass
+            else:
+                self._set_online(False, text)
+            # 可中断的间隔睡眠（stop() 时最多 0.2s 退出）
+            waited = 0.0
+            while not self._stopping and waited < self.poll_interval:
+                time.sleep(0.2)
+                waited += 0.2
 
     def _ingest_snapshot(self, snap: dict) -> None:
         ts = snap.get("timestamp")

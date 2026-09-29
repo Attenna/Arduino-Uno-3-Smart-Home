@@ -55,18 +55,24 @@ void Protocol::sendReport(const SensorManager& s) {
     printBool(s.smoke());
     Serial.print(F(",\"rain\":"));
     printBool(s.rain());
+#if ENABLE_ULTRASONIC
     Serial.print(F(",\"distance\":"));
     int d = s.distance();
     if (d < 0) Serial.print(F("null"));
     else Serial.print(d);
+#endif
     Serial.print(F(",\"touch\":"));
     printBool(s.touch());
+#if ENABLE_PIR
     Serial.print(F(",\"motion\":"));
     printBool(s.motion());
+#endif
+#if ENABLE_SOIL
     Serial.print(F(",\"soil_moisture\":"));
     Serial.print(s.soilMoisture());
     Serial.print(F(",\"soil_dry\":"));
     printBool(s.soilDry());
+#endif
     Serial.println(F("}}"));
 }
 
@@ -91,24 +97,31 @@ void Protocol::sendEvent(const Event& e) {
             Serial.print(F("\",\"state\":"));
             printBool(e.state);
             break;
+#if ENABLE_PIR
         case EVT_PIR_MOTION:
         case EVT_PIR_CLEAR:
             Serial.print(F("motion"));
             Serial.print(F("\",\"state\":"));
             printBool(e.state);
             break;
+#endif
+#if ENABLE_SOIL
         case EVT_SOIL_DRY:
         case EVT_SOIL_WET:
             Serial.print(F("soil"));
             Serial.print(F("\",\"state\":"));
             printBool(e.state);
             break;
+#endif
+#if ENABLE_RFID
         case EVT_RFID:
             Serial.print(F("rfid"));
             Serial.print(F("\",\"uid\":\""));
             Serial.print(e.uid);
             Serial.print(F("\""));
             break;
+#endif
+#if ENABLE_IR_RECV
         case EVT_IR:
             Serial.print(F("ir"));
             Serial.print(F("\",\"protocol\":"));
@@ -118,6 +131,15 @@ void Protocol::sendEvent(const Event& e) {
             Serial.print(F(",\"command\":"));
             Serial.print(e.irCommand);
             break;
+#endif
+#if ENABLE_KEYPAD
+        case EVT_KEYPAD:
+            Serial.print(F("keypad"));
+            Serial.print(F("\",\"key\":\""));
+            Serial.print(e.key);
+            Serial.print(F("\""));
+            break;
+#endif
         default:
             Serial.print(F("unknown"));
             break;

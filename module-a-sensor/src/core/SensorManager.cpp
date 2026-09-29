@@ -3,48 +3,86 @@
 
 void SensorManager::begin() {
     _dht.begin();
+#if ENABLE_ULTRASONIC
     _ultrasonic.begin();
+#endif
     _touch.begin();
     _light.begin();
     _smoke.begin();
     _rain.begin();
+#if ENABLE_IR_RECV
     _ir.begin();
+#endif
+#if ENABLE_RFID
     _rfid.begin();
+#endif
+#if ENABLE_PIR
     _pir.begin();
+#endif
+#if ENABLE_SOIL
     _soil.begin();
+#endif
+#if ENABLE_KEYPAD
+    _keypad.begin();
+#endif
 
     _baselineReady = false;
     _prevTouch = false;
     _prevSmoke = false;
     _prevRain = false;
+#if ENABLE_PIR
     _prevPir = false;
+#endif
+#if ENABLE_SOIL
     _prevSoil = false;
+#endif
     _lastTouchPush = 0;
     _lastSmokePush = 0;
     _lastRainPush = 0;
+#if ENABLE_PIR
     _lastPirPush = 0;
+#endif
+#if ENABLE_SOIL
     _lastSoilPush = 0;
+#endif
 }
 
 void SensorManager::readAll() {
     _dht.read();
+#if ENABLE_ULTRASONIC
     _ultrasonic.read();
+#endif
     _touch.read();
     _light.read();
     _smoke.read();
     _rain.read();
+#if ENABLE_IR_RECV
     _ir.read();
+#endif
+#if ENABLE_RFID
     _rfid.read();
+#endif
+#if ENABLE_PIR
     _pir.read();
+#endif
+#if ENABLE_SOIL
     _soil.read();
+#endif
+#if ENABLE_KEYPAD
+    _keypad.read();
+#endif
 
     // 首次读取后建立边沿检测基线，避免上电误报
     if (!_baselineReady) {
         _prevTouch = _touch.isPressed();
         _prevSmoke = _smoke.isAlarm();
         _prevRain  = _rain.isRaining();
+#if ENABLE_PIR
         _prevPir   = _pir.isMotion();
+#endif
+#if ENABLE_SOIL
         _prevSoil  = _soil.isDry();
+#endif
         _baselineReady = true;
     }
 }
@@ -55,15 +93,21 @@ int   SensorManager::light() const       { return _light.getRaw(); }
 bool  SensorManager::smoke() const       { return _smoke.isAlarm(); }
 bool  SensorManager::rain() const        { return _rain.isRaining(); }
 bool  SensorManager::touch() const       { return _touch.isPressed(); }
+#if ENABLE_PIR
 bool  SensorManager::motion() const      { return _pir.isMotion(); }
+#endif
+#if ENABLE_SOIL
 bool  SensorManager::soilDry() const     { return _soil.isDry(); }
 int   SensorManager::soilMoisture() const{ return _soil.getMoisture(); }
+#endif
 
+#if ENABLE_ULTRASONIC
 int SensorManager::distance() const {
     float d = _ultrasonic.getDistanceCm();
     if (d < 0) return -1;
     return (int)(d + 0.5f);
 }
+#endif
 
 bool SensorManager::pollEvent(Event& ev) {
     ev.type = EVT_NONE;
@@ -104,6 +148,7 @@ bool SensorManager::pollEvent(Event& ev) {
         }
     }
 
+#if ENABLE_PIR
     // ---- PIR 人体红外 ----
     bool m = _pir.isMotion();
     if (m != _prevPir) {
@@ -115,7 +160,9 @@ bool SensorManager::pollEvent(Event& ev) {
             return true;
         }
     }
+#endif
 
+#if ENABLE_SOIL
     // ---- 土壤湿度 ----
     bool sd = _soil.isDry();
     if (sd != _prevSoil) {
@@ -127,7 +174,9 @@ bool SensorManager::pollEvent(Event& ev) {
             return true;
         }
     }
+#endif
 
+#if ENABLE_RFID
     // ---- RFID ----
     if (_rfid.hasCard()) {
         strncpy(ev.uid, _rfid.getUidHex(), sizeof(ev.uid) - 1);
@@ -136,8 +185,10 @@ bool SensorManager::pollEvent(Event& ev) {
         ev.type = EVT_RFID;
         return true;
     }
+#endif
 
-    // ---- IR ----
+#if ENABLE_IR_RECV
+    // ---- 红外遥控接收 ----
     if (_ir.hasCode()) {
         ev.irProtocol = _ir.getProtocol();
         ev.irAddress  = _ir.getAddress();
@@ -146,6 +197,17 @@ bool SensorManager::pollEvent(Event& ev) {
         ev.type = EVT_IR;
         return true;
     }
+#endif
+
+#if ENABLE_KEYPAD
+    // ---- 矩阵键盘（read 只锁存，takePress 才取事件，避免被 readAll 吞掉）----
+    _keypad.read();
+    if (_keypad.takePress()) {
+        ev.type = EVT_KEYPAD;
+        ev.key  = _keypad.key();
+        return true;
+    }
+#endif
 
     return false;
 }

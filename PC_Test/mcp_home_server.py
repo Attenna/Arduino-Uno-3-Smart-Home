@@ -30,6 +30,11 @@ import serial.tools.list_ports
 
 BAUD = 115200
 
+# ---- 矩阵键盘开门密码（正式版硬件：仅 "1" 键，密码 1111 = 连按 4 次）----
+KEYPAD_CODE = "1111"          # 开门密码
+KEYPAD_WINDOW_S = 10.0        # 全部按键必须在该时间窗口内完成，超时清空
+KEYPAD_OPEN_HOLD_S = 3.0      # 触发后开门保持秒数，到时自动关门
+
 
 # ==================== 串口探测 / 连接（移植自 link_server.py）====================
 
@@ -88,6 +93,7 @@ class HomeController:
         self._snapshot: dict = {}
         self._events: deque = deque(maxlen=50)
         self._ready: dict = {}
+        self._keypad_buf: list = []   # [(ts, key), ...] 键盘密码缓冲
         self._a_thread: Optional[threading.Thread] = None
         if self.ser_a is not None:
             self._a_thread = threading.Thread(
@@ -117,16 +123,57 @@ class HomeController:
                         self._snapshot = msg.get("data", {})
                         self._snapshot["timestamp"] = msg.get("timestamp")
                 elif mtype == "event":
+                    ev_name = msg.get("event")
                     with self._snapshot_lock:
                         self._events.append({
-                            "event": msg.get("event"),
+                            "event": ev_name,
                             **{k: v for k, v in msg.items()
                                if k not in ("module", "type")},
                         })
+                    if ev_name == "keypad":
+                        self._handle_keypad(msg.get("key", ""))
                 # response / who 忽略
             except Exception as e:
                 print(f"[A] 读线程异常: {e}", file=sys.stderr)
                 time.sleep(0.5)
+
+    # ── 矩阵键盘：密码聚合开门 ──
+    def _handle_keypad(self, key: str):
+        """A 板矩阵键盘按键事件 → 在时间窗内聚合成密码 → 1111 正确则开门。"""
+        if not key:
+            return
+        now = time.time()
+        with self._snapshot_lock:
+            self._keypad_buf.append((now, key))
+            self._keypad_buf[:] = [(t, k) for t, k in self._keypad_buf
+                                   if now - t <= KEYPAD_WINDOW_S]
+            seq = "".join(k for _, k in self._keypad_buf)
+            # 序列不再是密码前缀 → 以当前键重新起序列
+            if not KEYPAD_CODE.startswith(seq):
+                self._keypad_buf = [(now, key)] if key == KEYPAD_CODE[0] else []
+                seq = key if key == KEYPAD_CODE[0] else ""
+            granted = seq == KEYPAD_CODE
+            if granted:
+                self._keypad_buf.clear()
+
+        if granted:
+            print(f"[键盘] 密码 {KEYPAD_CODE} 正确，执行静默开门",
+                  file=sys.stderr)
+            threading.Thread(target=self._open_door_by_keypad,
+                             daemon=True, name="keypad-door").start()
+        else:
+            print(f"[键盘] 按键 {key!r}，当前序列 {seq!r}"
+                  f"（{len(seq)}/{len(KEYPAD_CODE)}）", file=sys.stderr)
+
+    def _open_door_by_keypad(self):
+        """键盘密码开门：蜂鸣 2 短声提示 → 开门 → 延时自动关门。"""
+        self.handle_buzzer("beep", count=2, on_ms=80, off_ms=80)
+        r = self.handle_door("open")
+        print(f"[键盘] 开门指令 → Module B：{r}", file=sys.stderr)
+        time.sleep(KEYPAD_OPEN_HOLD_S)
+        r2 = self.handle_door("close")
+        print(f"[键盘] {KEYPAD_OPEN_HOLD_S}s 后自动关门 → Module B：{r2}",
+              file=sys.stderr)
 
     # ── B 板发命令 + 收响应 ──
     def _send_b(self, cmd: dict) -> str:

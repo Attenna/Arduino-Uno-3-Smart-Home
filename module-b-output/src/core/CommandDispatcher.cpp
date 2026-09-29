@@ -7,9 +7,13 @@ void CommandDispatcher::begin() {
     _fan.begin();
     _light.begin();
     _buzzer.begin();
+#if ENABLE_TM1637
     _display.begin();
+#endif
     _oled.begin();
+#if ENABLE_IR_TX
     _ir.begin();
+#endif
 }
 
 bool CommandDispatcher::dispatch(const Command& cmd) {
@@ -48,19 +52,23 @@ bool CommandDispatcher::dispatch(const Command& cmd) {
             return true;
         }
     }
+#if ENABLE_TM1637
     else if (strcmp(cmd.device, "display") == 0) {
         if (strcmp(cmd.action, "show_time") == 0)   { _display.showTime((byte)cmd.hour, (byte)cmd.minute); return true; }
         if (strcmp(cmd.action, "show_number") == 0) { _display.showNumber((int)cmd.value); return true; }
         if (strcmp(cmd.action, "clear") == 0)       { _display.clear(); return true; }
     }
+#endif
     else if (strcmp(cmd.device, "oled") == 0) {
         if (strcmp(cmd.action, "show_text") == 0) { _oled.showText((byte)cmd.line, cmd.text); return true; }
         if (strcmp(cmd.action, "clear") == 0)    { _oled.clear(); return true; }
     }
+#if ENABLE_IR_TX
     else if (strcmp(cmd.device, "ir") == 0) {
         if (strcmp(cmd.action, "send_nec") == 0) { _ir.sendNEC(cmd.code); return true; }
         if (strcmp(cmd.action, "repeat") == 0)  { _ir.sendNECRepeat();  return true; }
     }
+#endif
 
     return false;
 }
@@ -69,7 +77,9 @@ void CommandDispatcher::update() {
     _door.update();
     _window.update();
     _buzzer.update();
+#if ENABLE_TM1637
     _display.update();
+#endif
 }
 
 void CommandDispatcher::buildStatus(char* buf, size_t len) {

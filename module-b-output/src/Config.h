@@ -11,6 +11,12 @@
 // ---- 串口通信 ----
 #define SERIAL_BAUD         115200
 
+// ============================================
+// 硬件裁剪开关（硬件小组 2026-09 正式版会议决定）
+// ============================================
+#define ENABLE_TM1637       0   // 四位数码管时钟单元已移除 → D5/D6 悬空（保持高阻）
+#define ENABLE_IR_TX        1   // 红外发射（D12，NEC 38kHz）保留
+
 // ---- 舵机 ----
 #define DOOR_SERVO_PIN      2
 #define WINDOW_SERVO_PIN    3
@@ -54,6 +60,6 @@
 // ---- 设备标识 ----
 #define BOARD_TYPE          "MODULE_B"
 #define BOARD_ROLE          "OUTPUT_NODE"
-#define FW_VERSION          "V2.0"
+#define FW_VERSION          "V2.1"  // 正式版：移除 TM1637 时钟单元；红外发射保留
 
 #endif // CONFIG_B_H
