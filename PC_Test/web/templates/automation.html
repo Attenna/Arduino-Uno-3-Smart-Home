@@ -13,13 +13,78 @@
         }
     </script>
     <style>
-        .auto-layout { display: grid; grid-template-columns: 1fr 360px; gap: 16px; align-items: start; }
-        .auto-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
-        .auto-toolbar h3 { margin: 0; flex: 1 1 auto; }
-        .auto-toolbar .hint { width: 100%; color: var(--text-secondary); font-size: 13px; }
-        #blocklyArea { width: 100%; height: 72vh; min-height: 520px; border-radius: var(--radius-sm);
-                       overflow: hidden; border: 1px solid var(--border-color); background: #0f1923; position: relative; }
+        /* ==================== 视图切换 ==================== */
+        .auto-layout { display: grid; grid-template-columns: 1fr 320px; gap: 16px; align-items: start; }
+        .auto-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+        .auto-toolbar h3 { margin: 0; font-size: 16px; }
+        .auto-toolbar .spacer { flex: 1 1 auto; }
+        .rule-count { font-size: 12px; color: var(--text-secondary); }
+
+        /* ==================== 规则卡片（iOS 快捷指令风）==================== */
+        .rule-grid { display: grid; gap: 10px; }
+        .rule-card { display: flex; align-items: center; gap: 12px; padding: 12px 14px;
+                     border: 1px solid var(--border-color); border-radius: 12px;
+                     background: var(--bg-secondary); cursor: pointer; transition: .15s; }
+        .rule-card:hover { border-color: rgba(0,229,255,.45); background: rgba(0,229,255,.05); }
+        .rule-card.disabled { opacity: .5; }
+        .rc-icon { width: 42px; height: 42px; flex: 0 0 42px; border-radius: 10px;
+                   display: flex; align-items: center; justify-content: center; font-size: 20px;
+                   background: rgba(147,112,255,.16); }
+        .rc-icon.evt { background: rgba(255,145,0,.16); }
+        .rc-icon.time { background: rgba(0,229,255,.16); }
+        .rc-main { flex: 1 1 auto; min-width: 0; }
+        .rc-name { font-weight: 600; font-size: 14px; white-space: nowrap;
+                   overflow: hidden; text-overflow: ellipsis; }
+        .rc-sub { font-size: 12.5px; color: var(--text-secondary); margin-top: 2px;
+                  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .rc-meta { font-size: 11.5px; color: var(--text-muted); margin-top: 5px;
+                   display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+        .rc-actions { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; }
+        .icon-btn { width: 32px; height: 32px; border-radius: 8px; border: 1px solid transparent;
+                    background: transparent; color: var(--text-secondary); font-size: 15px;
+                    cursor: pointer; display: flex; align-items: center; justify-content: center; }
+        .icon-btn:hover { background: rgba(255,255,255,.08); color: var(--accent-cyan); }
+        .rc-name-input { font: inherit; font-weight: 600; font-size: 14px; width: 100%;
+                         background: var(--bg-card); color: var(--text-primary);
+                         border: 1px solid var(--accent-cyan); border-radius: 6px; padding: 2px 6px; }
+        .empty-rules { color: var(--text-secondary); font-size: 13px; padding: 28px; text-align: center; }
+
+        /* 卡片 ⋮ 菜单 */
+        .card-menu { position: fixed; z-index: 60; min-width: 172px; padding: 6px;
+                     background: #1b2836; border: 1px solid var(--border-color);
+                     border-radius: 10px; box-shadow: 0 12px 32px rgba(0,0,0,.5); }
+        .card-menu button { display: flex; width: 100%; align-items: center; gap: 8px;
+                            padding: 8px 10px; border: 0; border-radius: 7px; background: transparent;
+                            color: var(--text-primary); font-size: 13.5px; text-align: left; cursor: pointer; }
+        .card-menu button:hover { background: rgba(0,229,255,.14); }
+        .card-menu button:disabled { opacity: .4; cursor: default; }
+        .card-menu button.danger { color: var(--accent-red); }
+        .card-menu .sep { height: 1px; margin: 5px 6px; background: var(--border-color); }
+
+        /* ==================== 单条规则编辑器 ==================== */
+        .editor-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+        .editor-name { flex: 1 1 200px; min-width: 140px; font-size: 14px; font-weight: 600;
+                       padding: 7px 10px; border-radius: 8px; border: 1px solid var(--border-color);
+                       background: var(--bg-secondary); color: var(--text-primary); }
+        .editor-toggle { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+        #blocklyArea { width: 100%; height: calc(100vh - 215px); min-height: 440px;
+                       border-radius: var(--radius-sm); overflow: hidden;
+                       border: 1px solid var(--border-color); background: #0f1923; position: relative; }
         #blocklyDiv { position: absolute; inset: 0; }
+        /* 工具箱：窄分类栏 */
+        .blocklyToolboxDiv { width: 96px !important; }
+        .blocklyToolboxContents { padding: 4px 0; }
+        .blocklyTreeRow { border-radius: 8px; margin: 2px 6px; min-height: 34px; padding: 4px 6px; }
+        .blocklyTreeRow:not(.blocklyTreeSelected):hover { background: rgba(255,255,255,.06); }
+        .blocklyTreeLabel { font-size: 13px; }
+        .blocklyMainBackground { stroke: none !important; }
+        .fit-btn { position: absolute; top: 10px; right: 10px; z-index: 20; width: 34px; height: 34px;
+                   border-radius: 8px; border: 1px solid var(--border-color);
+                   background: rgba(22,34,49,.92); color: #cfe3f2; font-size: 16px;
+                   cursor: pointer; display: flex; align-items: center; justify-content: center; }
+        .fit-btn:hover { background: rgba(0,229,255,.18); color: #00e5ff; }
+
+        /* ==================== 侧栏 ==================== */
         .badge { font-size: 11px; padding: 2px 8px; border-radius: 999px; }
         .badge.on { background: rgba(0,230,118,.15); color: var(--accent-green); }
         .badge.off { background: rgba(255,23,68,.12); color: var(--accent-red); }
@@ -34,22 +99,16 @@
                       background: rgba(255,145,0,.14); color: var(--accent-orange); }
         .grace-chip.empty { background: rgba(0,230,118,.10); color: var(--accent-green); }
         .mode-hint { font-size: 12px; color: var(--text-secondary); line-height: 1.7; }
-        .preview-list { display: flex; flex-direction: column; gap: 10px; max-height: 300px; overflow-y: auto; }
-        .preview-item { border: 1px solid var(--border-color); border-radius: var(--radius-sm);
-                        padding: 10px 12px; background: var(--bg-secondary); }
-        .preview-item .pv-title { display: flex; align-items: center; gap: 8px; font-weight: 600; }
-        .preview-item .pv-name { flex: 1 1 auto; }
-        .pv-conds { margin-top: 6px; font-size: 12px; color: var(--text-secondary); display: flex; flex-direction: column; gap: 2px; }
-        .pv-conds .yes { color: var(--accent-green); }
-        .pv-conds .no { color: var(--accent-red); }
         .auto-log { width: 100%; font-size: 12px; border-collapse: collapse; }
-        .auto-log th, .auto-log td { padding: 6px 8px; border-bottom: 1px solid var(--border-color); text-align: left; vertical-align: top; }
+        .auto-log th, .auto-log td { padding: 6px 8px; border-bottom: 1px solid var(--border-color);
+                                     text-align: left; vertical-align: top; }
         .auto-log th { color: var(--text-secondary); font-weight: 500; }
-        .log-wrap { max-height: 300px; overflow-y: auto; }
+        .log-wrap { max-height: 320px; overflow-y: auto; }
         .mini-btn { font-size: 12px; padding: 4px 10px; }
-        .missing-box { position: absolute; inset: 20px; z-index: 5; display: flex; align-items: center; justify-content: center;
-                       background: var(--bg-card); border: 1px dashed var(--accent-orange);
-                       color: var(--accent-orange); border-radius: var(--radius-sm); text-align: center; padding: 20px; }
+        .missing-box { position: absolute; inset: 20px; z-index: 5; display: flex; align-items: center;
+                       justify-content: center; background: var(--bg-card);
+                       border: 1px dashed var(--accent-orange); color: var(--accent-orange);
+                       border-radius: var(--radius-sm); text-align: center; padding: 20px; }
         @media (max-width: 1100px) { .auto-layout { grid-template-columns: 1fr; } }
     </style>
 </head>
@@ -87,101 +146,101 @@
 
     <div id="notification" class="notification hidden"></div>
 
+    <!-- 卡片 ⋮ 菜单（全局唯一，按需定位） -->
+    <div id="cardMenu" class="card-menu hidden"></div>
+
     <main class="main-content">
-        <div class="card" style="margin-bottom:16px">
-            <div class="card-body auto-toolbar">
-                <h3>🧩 积木式自动化（当触发 → 如果条件 → 执行动作 / 否则切换状态）</h3>
-                <button class="btn" onclick="addRuleBlock()">＋ 新建规则</button>
-                <button class="btn btn-primary" onclick="saveAll()">💾 保存全部规则</button>
-                <button class="btn" onclick="refreshPreview()">🔄 刷新实时状态</button>
-                <button class="btn" onclick="restorePresets()">♻️ 恢复内置规则</button>
-                <div class="hint">
-                    从左侧工具箱拖积木：紫色「规则」块每个代表一条规则，槽位依次放 <b>触发块（橙色）</b>、
-                    <b>条件块（蓝色，可叠多个）</b>、<b>执行块（绿色，从上往下依次执行）</b>；
-                    「否则」槽可放状态切换动作（如雨停恢复 45°），也可留空。改完点「保存全部规则」立即生效。
-                    内置联动（温度控风扇、光敏调光、雨水关窗、烟雾报警、门禁自动关门、触摸/按键切换等）
-                    已全部变成下面的<span style="color:#00e5ff">默认规则积木</span>，可改名/改阈值/停用/删除；
-                    误删用「恢复内置规则」找回。<b>手动优先</b>：你在面板/语音手动操作某设备后，
-                    该设备进入「手动冷却窗口」，期间自动规则与档位覆盖自动让位，绝不把你要的状态改回去。
+        <!-- ==================== 视图一：规则列表 ==================== -->
+        <div id="listView">
+            <div class="card" style="margin-bottom:12px">
+                <div class="card-body auto-toolbar">
+                    <h3>🧩 自动化</h3>
+                    <span id="ruleCount" class="rule-count"></span>
+                    <span class="spacer"></span>
+                    <button class="btn btn-primary" onclick="createRule()">＋ 新建规则</button>
+                    <button class="btn" onclick="restorePresets()">♻️ 恢复内置</button>
+                    <button class="btn mini-btn" onclick="refreshPreview()">🔄</button>
+                </div>
+            </div>
+            <div class="auto-layout">
+                <div id="ruleGrid" class="rule-grid"></div>
+
+                <div style="display:flex;flex-direction:column;gap:16px">
+                    <div class="card">
+                        <div class="card-header"><h3>🏠 全屋模式</h3></div>
+                        <div class="card-body" style="display:flex;flex-direction:column;gap:10px">
+                            <div id="homeModeBadge" class="mode-badge">当前模式：--</div>
+                            <div style="display:flex;gap:8px;flex-wrap:wrap">
+                                <button class="btn mini-btn" onclick="setHomeMode('auto')">🤖 自动</button>
+                                <button class="btn mini-btn" onclick="setHomeMode('manual')">✋ 手动</button>
+                                <button class="btn mini-btn" onclick="setHomeMode('away')">🚪 离家</button>
+                            </div>
+                            <div style="display:flex;gap:8px;flex-wrap:wrap">
+                                <button class="btn mini-btn" id="fanOverrideBtn"
+                                        onclick="cycleFanOverride()">🌀 风扇：--</button>
+                                <button class="btn mini-btn" id="lightLevelBtn"
+                                        onclick="cycleLightLevel()">💡 灯光：--</button>
+                            </div>
+                            <div>
+                                <div style="font-size:12px;color:var(--text-secondary);margin-bottom:4px">手动优先</div>
+                                <div id="manualGraceChips" class="manual-grace">
+                                    <span class="grace-chip empty">无</span>
+                                </div>
+                            </div>
+                            <span id="homeModeDetail" class="mode-hint"></span>
+                            <span class="mode-hint">手动操作后该设备 30 秒内不被自动规则改动；离家关闭全屋设备。</span>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header"><h3>🖥️ OLED 轮播</h3></div>
+                        <div class="card-body" style="display:flex;flex-direction:column;gap:10px">
+                            <label style="display:flex;align-items:center;gap:8px;font-size:14px">
+                                <input type="checkbox" id="oledEnabled"> 启用轮播
+                            </label>
+                            <label style="display:flex;align-items:center;gap:8px;font-size:14px">
+                                每
+                                <input type="number" id="oledInterval" value="5" min="1" max="3600" step="1"
+                                       style="width:70px"> 秒切页
+                            </label>
+                            <span style="font-size:12px;color:var(--text-secondary)">仅英文/数字，每行 16 字符</span>
+                            <button class="btn btn-primary" onclick="saveOledConfig()">💾 保存设置</button>
+                            <span id="oledStatus" style="font-size:12px;color:var(--text-secondary)"></span>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header"><h3>📜 执行记录</h3></div>
+                        <div class="card-body log-wrap">
+                            <table class="auto-log">
+                                <thead><tr><th>时间</th><th>规则</th><th>结果</th></tr></thead>
+                                <tbody id="autoLogBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
 
-        <div class="auto-layout">
+        <!-- ==================== 视图二：单条规则编辑器 ==================== -->
+        <div id="editorView" class="hidden">
             <div class="card">
+                <div class="card-body editor-bar">
+                    <button class="btn" onclick="closeEditor()">← 返回</button>
+                    <input id="editorName" class="editor-name" type="text" placeholder="规则名称">
+                    <label class="editor-toggle">
+                        <input type="checkbox" id="editorEnabled"> 启用
+                    </label>
+                    <button class="btn" onclick="runEditing()">▶ 运行一次</button>
+                    <button class="btn btn-primary" onclick="saveEditor()">💾 保存</button>
+                </div>
+            </div>
+            <div class="card" style="margin-top:12px">
                 <div class="card-body">
                     <div id="blocklyArea">
                         <div id="blocklyDiv"></div>
+                        <button id="fitViewBtn" class="fit-btn" title="适应屏幕" type="button">⛶</button>
                         <div id="blocklyMissing" class="missing-box hidden">
-                            积木引擎（Blockly）未能加载，请按 Ctrl+F5 强制刷新；若仍失败，请确认 web 容器已包含本地积木资源（static/vendor/blockly）。
+                            积木引擎加载失败，请 Ctrl+F5 强制刷新。
                         </div>
-                    </div>
-                </div>
-            </div>
-
-            <div style="display:flex;flex-direction:column;gap:16px">
-                <div class="card">
-                    <div class="card-header"><h3>🏠 全屋模式</h3></div>
-                    <div class="card-body" style="display:flex;flex-direction:column;gap:10px">
-                        <div id="homeModeBadge" class="mode-badge">当前模式：--</div>
-                        <div style="display:flex;gap:8px;flex-wrap:wrap">
-                            <button class="btn mini-btn" onclick="setHomeMode('auto')">🤖 自动</button>
-                            <button class="btn mini-btn" onclick="setHomeMode('manual')">✋ 手动</button>
-                            <button class="btn mini-btn" onclick="setHomeMode('away')">🚪 离家</button>
-                        </div>
-                        <div style="display:flex;gap:8px;flex-wrap:wrap">
-                            <button class="btn mini-btn" id="fanOverrideBtn"
-                                    onclick="cycleFanOverride()">🌀 风扇：--</button>
-                            <button class="btn mini-btn" id="lightLevelBtn"
-                                    onclick="cycleLightLevel()">💡 灯光：--</button>
-                        </div>
-                        <div>
-                            <div style="font-size:12px;color:var(--text-secondary);margin-bottom:4px">
-                                手动优先（自动让位中的设备）：
-                            </div>
-                            <div id="manualGraceChips" class="manual-grace">
-                                <span class="grace-chip empty">暂无（自动可正常起作用）</span>
-                            </div>
-                        </div>
-                        <span id="homeModeDetail" class="mode-hint"></span>
-                        <span class="mode-hint">
-                            手动模式 = 自动联动（温度/光照/雨水/烟雾等）全部让位给用户；离家模式 = 关闭灯光/风扇/窗户。
-                            你在面板/语音手动操作某设备后，该设备约 30 秒内处于「手动优先」，自动规则与档位覆盖都不会再动它，
-                            从根上避免「我开了灯/风扇，结果又被自动逻辑改回去」。真正离家请用「🚪 离家」。
-                        </span>
-                    </div>
-                </div>
-                <div class="card">
-                    <div class="card-header"><h3>🖥️ OLED 轮播设置</h3></div>
-                    <div class="card-body" style="display:flex;flex-direction:column;gap:10px">
-                        <label style="display:flex;align-items:center;gap:8px;font-size:14px">
-                            <input type="checkbox" id="oledEnabled"> 启用 OLED 轮播显示
-                        </label>
-                        <label style="display:flex;align-items:center;gap:8px;font-size:14px">
-                            每
-                            <input type="number" id="oledInterval" value="5" min="1" max="3600" step="1"
-                                   style="width:70px"> 秒切一页
-                        </label>
-                        <span style="font-size:12px;color:var(--text-secondary)">
-                            B 板 OLED 字库只有 ASCII：文案请用英文/数字，每行最多 16 个字符（汉字会上屏成乱码）
-                        </span>
-                        <button class="btn btn-primary" onclick="saveOledConfig()">💾 保存 OLED 设置</button>
-                        <span id="oledStatus" style="font-size:12px;color:var(--text-secondary)"></span>
-                    </div>
-                </div>
-                <div class="card">
-                    <div class="card-header"><h3>📡 实时状态（不执行动作）</h3></div>
-                    <div class="card-body"><div id="previewList" class="preview-list">
-                        <span style="color:var(--text-secondary);font-size:13px">点「刷新实时状态」查看各规则当前是否满足。</span>
-                    </div></div>
-                </div>
-                <div class="card">
-                    <div class="card-header"><h3>📜 执行记录</h3></div>
-                    <div class="card-body log-wrap">
-                        <table class="auto-log">
-                            <thead><tr><th>时间</th><th>规则</th><th>触发原因 / 结果</th></tr></thead>
-                            <tbody id="autoLogBody"></tbody>
-                        </table>
                     </div>
                 </div>
             </div>
@@ -189,6 +248,6 @@
     </main>
 
     <script src="{{ url_for('static', filename='js/lang.js') }}?v=20261001"></script>
-    <script src="{{ url_for('static', filename='js/automation.js') }}?v=20261001a"></script>
+    <script src="{{ url_for('static', filename='js/automation.js') }}?v=20261002a"></script>
 </body>
 </html>
