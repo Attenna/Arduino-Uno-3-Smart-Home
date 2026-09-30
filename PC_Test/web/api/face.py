@@ -124,6 +124,14 @@ def face_notify():
             ok, msg = bridge.control_door("open")
             if ok:
                 command_status = msg
+                # 刷脸开门也要落到仪表盘：门状态 + 历史。人脸链路走 relay 不经
+                # devices 路由，这里补上。不切「手动」——刷脸是门禁自动联动，
+                # 而非用户在面板上的手动操作。
+                try:
+                    db.update_status(door_status="open")
+                    db.add_door_window_event("door", "前门(人脸授权)", "open")
+                except Exception:                    # noqa: BLE001
+                    pass
             else:
                 door_failure = msg
         db.add_access_log(matched["name"], "face", "granted",
