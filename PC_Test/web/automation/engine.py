@@ -39,6 +39,8 @@ from .home_mode import (FAN_LABELS, FAN_LABELS_EN, LIGHT_LABELS,
 from .oled_carousel import (DEFAULT_PAGES, PAGES_VERSION, OledCarousel,
                             is_legacy_default_pages)
 from .schema import validate_rules
+# RFID 卡号归一化：规则里存的与事件里带的两侧都归一后再比
+from ..database import normalize_uid
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +67,10 @@ class AutomationEngine:
         self._last_interval: dict[str, float] = {}
         self._last_time_key: dict[str, str] = {}
         self._action_locks: dict[str, threading.Lock] = {}
+        # 红外自发射回声抑制：(address, command) -> 抑制截止时刻。
+        # B 板发的 NEC 码会被 A 板接收头当成「有人按了遥控器」，上报的 ir 事件
+        # 没有任何来源标记，若不抑制，「发码 X → 收到 X → 再发 X」会永不停止。
+        self._ir_echo_until: dict[tuple[int, int], float] = {}
         self._stopping = False
         self._tick_thread: threading.Thread | None = None
         # 已注入过的内置默认规则（preset id）；用户删掉的不会再被强行加回来
@@ -204,6 +210,9 @@ class AutomationEngine:
     def on_event(self, event: dict) -> None:
         """离散事件：A 板 motion/keypad/ir 或人脸授权。线程安全。"""
         try:
+            # 红外回声抑制必须在入队/求值之前：否则「发码→收到码→再发码」会自激
+            if event.get("event") == "ir" and self._is_ir_echo(event):
+                return
             self._event_seq += 1
             seq = self._event_seq
             self._events.append((seq, dict(event or {})))
@@ -214,6 +223,43 @@ class AutomationEngine:
                     self._evaluate_event_rule(rule, seq, event)
         except Exception as e:                       # noqa: BLE001
             logger.debug("[自动化] 事件求值异常: %s", e)
+
+    # ==================== 红外自发射回声抑制 ====================
+
+    @staticmethod
+    def _ir_key(action: dict) -> tuple[int, int] | None:
+        """从红外动作里解出 (address, command)，用于回声比对。
+
+        A 板上报的 ir 事件只带 protocol/address/command（没有 32 位整码），
+        所以抑制窗口必须按 (address, command) 记；只给 code 时按 NEC 帧序反解。
+        """
+        addr, cmd = action.get("address"), action.get("command")
+        if addr is None or cmd is None:
+            code = action.get("code")
+            if code is None:
+                return None
+            code = int(code) & 0xFFFFFFFF
+            addr = (code >> 24) & 0xFF
+            cmd = (code >> 8) & 0xFF
+        return int(addr) & 0xFF, int(cmd) & 0xFF
+
+    def _is_ir_echo(self, event: dict) -> bool:
+        """刚由本引擎发射出去的红外码又被打回，直接丢弃并记一条日志。"""
+        try:
+            key = (int(event.get("address", -1)) & 0xFF,
+                   int(event.get("command", -1)) & 0xFF)
+        except (TypeError, ValueError):
+            return False
+        now = time.time()
+        with self._lock:
+            until = self._ir_echo_until.get(key)
+            if not until:
+                return False
+            if until <= now:
+                self._ir_echo_until.pop(key, None)   # 顺手清理，避免无限增长
+                return False
+        logger.info("[自动化] 忽略自发射红外回声 addr=0x%02X cmd=0x%02X", key[0], key[1])
+        return True
 
     # ==================== 周期/定时触发 ====================
 
@@ -383,13 +429,22 @@ class AutomationEngine:
         """传感器快照 + SQLite 中的执行器当前状态 + 全屋模式/人在家判定。"""
         ctx = dict(self._snapshot)
         try:
-            ctx["home_mode"] = self.home_mode.cfg["mode"]
+            cfg = self.home_mode.cfg
+            ctx["home_mode"] = cfg["mode"]
+            ctx["home_enabled"] = bool(cfg.get("enabled", True))
+            # 配置里风扇档位用 None 表示「自动」，规则侧统一用 "auto"，否则
+            # 「全屋风扇档位 = 自动」永远不成立（None 参与比较恒为假）
+            fan_override = cfg.get("fan_override")
+            ctx["home_fan"] = "auto" if fan_override is None else fan_override
+            ctx["home_light"] = cfg.get("light_level", "auto")
             ctx["person_present"] = self.home_mode.person_present()
         except Exception:                            # noqa: BLE001
             pass
         try:
             status = self.db.get_current_status()
-            for key in ("door_status", "window_status", "light_status", "fan_speed"):
+            for key in ("door_status", "window_status", "light_status",
+                        "light_brightness", "fan_speed",
+                        "sensor_online", "output_online"):
                 if status.get(key) is not None:
                     ctx[key] = status[key]
         except Exception:                           # noqa: BLE001
@@ -482,6 +537,13 @@ class AutomationEngine:
                         return
                 except (TypeError, ValueError):
                     return
+            # RFID 卡号过滤：两侧都归一化成 "AA BB CC DD" 再比
+            if trig.get("uid"):
+                try:
+                    if normalize_uid(event.get("uid")) != trig["uid"]:
+                        return
+                except ValueError:
+                    return
             label = EVENT_TRIGGERS[trig["event"]]["label"]
             self._fire(rule, reason=label)
 
@@ -555,6 +617,13 @@ class AutomationEngine:
                 light = self.home_mode.next_light_level()
             if light:
                 kw["light_level"] = light
+            # 状态机自身参数（原先只能在代码里改）
+            if "enabled" in action and action.get("enabled") is not None:
+                kw["enabled"] = bool(action["enabled"])
+            if action.get("presence_hold_sec") is not None:
+                kw["presence_hold_sec"] = float(action["presence_hold_sec"])
+            if action.get("manual_grace_s") is not None:
+                kw["manual_grace_s"] = float(action["manual_grace_s"])
             self.home_mode.configure(reason="积木规则", **kw)
             parts = []
             if "mode" in kw:
@@ -563,6 +632,12 @@ class AutomationEngine:
                 parts.append(f"风扇={FAN_LABELS.get(kw['fan_override'], kw['fan_override'])}")
             if "light_level" in kw:
                 parts.append(f"灯光={LIGHT_LABELS.get(kw['light_level'], kw['light_level'])}")
+            if "enabled" in kw:
+                parts.append(f"自动调节={'开' if kw['enabled'] else '关'}")
+            if "presence_hold_sec" in kw:
+                parts.append(f"存在判定保持={kw['presence_hold_sec']:g}s")
+            if "manual_grace_s" in kw:
+                parts.append(f"手动冷却={kw['manual_grace_s']:g}s")
             return True, "全屋模式：" + "，".join(parts)
         if device == "voice":
             # 语音助手自带 HTTP 触发口：wake 免唤醒词进入指令模式（遥控器按键 1
@@ -597,10 +672,26 @@ class AutomationEngine:
         if device == "light":
             status = action["status"]
             brightness = action["brightness"] if status == "on" else 0
-            ok, msg = self.bridge.control_light(status, brightness)
+            color = action.get("color") if status == "on" else None
+            if color:
+                ok, msg = self.bridge.control_light_color(
+                    color, action.get("r"), action.get("g"), action.get("b"))
+                # 颜色没有亮度通道，按「等效亮度」写库与去重缓存：
+                # 白光用 value(0-255)，RGB 取三分量最大值，彩色预设按全亮
+                if color == "white":
+                    brightness = max(1, min(100, round(int(action.get("value", 255)) * 100 / 255)))
+                elif color == "rgb":
+                    peak = max(int(action.get("r") or 0), int(action.get("g") or 0),
+                               int(action.get("b") or 0))
+                    brightness = max(1, min(100, round(peak * 100 / 255)))
+                else:
+                    brightness = 100
+            else:
+                ok, msg = self.bridge.control_light(status, brightness)
             if ok:
                 self.db.update_status(light_status=status, light_brightness=brightness)
                 self.db.add_light_event("客厅主灯(自动化)", status, brightness)
+                # 同步去重缓存并清掉档位覆盖，否则下一秒 tick 会用白光顶掉颜色
                 self.home_mode.note_rule_action("light", status=status,
                                                 brightness=brightness)
             return ok, msg
@@ -612,9 +703,28 @@ class AutomationEngine:
                 self.home_mode.note_rule_action("fan", speed=speed)
             return ok, msg
         if device == "buzzer":
+            # mode: beep(间歇，默认) / on(持续响) / off(停)
+            mode = action.get("mode", "beep")
+            if mode in ("on", "off"):
+                return self.bridge.call_tool("buzzer", {"action": mode})
             return self.bridge.call_tool("buzzer", {
                 "action": "beep", "count": action["count"],
                 "on_ms": action["on_ms"], "off_ms": action["off_ms"]})
+        if device == "ir":
+            # 红外发射：先登记回声抑制窗口再下发（发射发生在调用内部，
+            # 轮询线程可能在同一时刻抓到被 A 板接收头捡回来的码）
+            key = self._ir_key(action)
+            if key is None:
+                return False, "红外发射需要 code，或 address + command"
+            window = max(3.0, float(getattr(self.bridge, "poll_interval", 2.0) or 2.0) + 1.0)
+            with self._lock:
+                self._ir_echo_until[key] = time.time() + window
+            ok, msg = self.bridge.control_ir(
+                code=action.get("code"),
+                address=action.get("address"), command=action.get("command"))
+            if ok:
+                return True, f"红外已发射 addr=0x{key[0]:02X} cmd=0x{key[1]:02X}"
+            return False, msg
         if device == "oled":
             # 清屏比分快且不依赖占位符
             if action.get("clear"):
@@ -622,7 +732,15 @@ class AutomationEngine:
             text = self._oled_format(action.get("text", ""))
             if not text.strip():
                 return False, "OLED 文本为空"
-            # 支持按换行拆到 line 0..7
+            # 指定行：一行只能放一行文本，取第一个非空行直发
+            fixed = action.get("line")
+            if fixed is not None:
+                block = next((b.strip() for b in text.split("\n") if b.strip()), "")
+                if not block:
+                    return False, "OLED 文本为空"
+                return self.bridge.call_tool(
+                    "oled", {"action": "show_text", "line": int(fixed), "text": block})
+            # 未指定：支持按换行拆到 line 0..7
             lines = [blk.strip() for blk in text.split("\n")[:8] if blk.strip()]
             if not lines:
                 return False, "OLED 文本为空"

@@ -288,7 +288,7 @@ class McpHardwareBridge:
         if _looks_like_error(text):
             return False, text
         # B 板不自报状态：任何执行器工具成功 ACK 都视为输出板在线
-        if name in ("door", "window", "light", "fan", "buzzer") and self.command_ack_listener:
+        if name in ("door", "window", "light", "fan", "buzzer", "ir") and self.command_ack_listener:
             try:
                 self.command_ack_listener(name, args or {})
             except Exception:
@@ -351,7 +351,7 @@ class McpHardwareBridge:
         text = str(body.get("result") or "ok")
         if _looks_like_error(text):
             return False, text
-        if name in ("door", "window", "light", "fan", "buzzer") and self.command_ack_listener:
+        if name in ("door", "window", "light", "fan", "buzzer", "ir") and self.command_ack_listener:
             try:
                 self.command_ack_listener(name, args or {})
             except Exception:
@@ -380,3 +380,30 @@ class McpHardwareBridge:
             return self.call_tool("fan", {"action": "off"})
         value = max(1, min(255, round(speed_pct * 255 / 100)))
         return self.call_tool("fan", {"action": "set_speed", "value": value})
+
+    def control_light_color(self, color: str, r=None, g=None, b=None) -> tuple[bool, str]:
+        """灯颜色：MCP 工具名仍是 light（复用 ACK 心跳与 output_online）。
+
+        color: white/red/green/blue/yellow/purple/cyan/rgb；rgb 需 r/g/b(0-255)。
+        彩色预设不接受亮度参数（B 板只有 white 用 value）。
+        """
+        args = {"action": color}
+        if color == "rgb":
+            if None in (r, g, b):
+                return False, "RGB 需要 r/g/b 三个值(0~255)"
+            args.update({"r": int(r), "g": int(g), "b": int(b)})
+        return self.call_tool("light", args)
+
+    def control_ir(self, code=None, address=None, command=None) -> tuple[bool, str]:
+        """红外发射（NEC）。给 address+command 或直接给十进制 32 位 code。
+
+        码的拼装由 MCP 侧的 nec_code() 统一完成，这里只负责转发。
+        """
+        args: dict = {}
+        if address is not None and command is not None:
+            args.update({"address": int(address), "command": int(command)})
+        elif code is not None:
+            args["code"] = int(code)
+        else:
+            return False, "红外发射需要 code，或 address + command"
+        return self.call_tool("ir", args)

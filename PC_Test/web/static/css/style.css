@@ -741,7 +741,6 @@ body {
 
 .slider-fan::-webkit-slider-thumb { background: var(--accent-blue); box-shadow: 0 0 10px rgba(0, 180, 216, 0.4); }
 .slider-light::-webkit-slider-thumb { background: var(--accent-yellow); box-shadow: 0 0 10px rgba(255, 234, 0, 0.4); }
-.slider-ac::-webkit-slider-thumb { background: var(--accent-purple); box-shadow: 0 0 10px rgba(124, 77, 255, 0.4); }
 
 .slider-value {
     font-size: 13px;
@@ -806,88 +805,10 @@ body {
     flex-wrap: wrap;
 }
 
-/* ==================== 空调控制 ==================== */
-.ac-display {
-    text-align: center;
-    padding: 20px 0;
-}
-
-.ac-temp-value {
-    font-size: 64px;
-    font-weight: 700;
-    font-family: 'Courier New', monospace;
-    color: var(--accent-purple);
-}
-
-.ac-temp-unit {
-    font-size: 20px;
-    color: var(--text-secondary);
-}
-
-.ac-status-badge {
-    padding: 3px 10px;
-    border-radius: 20px;
-    font-size: 11px;
-    font-weight: 600;
-    background: rgba(42, 74, 94, 0.5);
-    color: var(--text-muted);
-}
-
-.ac-status-badge.on {
-    background: rgba(124, 77, 255, 0.15);
-    color: var(--accent-purple);
-    border: 1px solid rgba(124, 77, 255, 0.3);
-}
-
-.ac-controls {
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    gap: 20px;
-}
-
-.btn-ac {
-    width: 48px;
-    height: 48px;
-    border-radius: 12px;
-    border: 1px solid var(--border-color);
-    background: var(--bg-secondary);
-    color: var(--text-primary);
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: var(--transition);
-}
-
-.btn-ac:hover {
-    border-color: var(--accent-purple);
-    color: var(--accent-purple);
-    background: rgba(124, 77, 255, 0.1);
-}
-
-.btn-ac svg {
-    width: 20px;
-    height: 20px;
-}
-
-.btn-power {
-    width: 56px;
-    height: 56px;
-    border-radius: 50%;
-    border-color: var(--accent-purple);
-    color: var(--accent-purple);
-}
-
-.btn-power.active {
-    background: var(--accent-purple);
-    color: white;
-}
-
 /* ==================== 远程控制面板 ==================== */
 .remote-grid {
     display: grid;
-    grid-template-columns: repeat(8, 1fr);
+    grid-template-columns: repeat(6, 1fr);
     gap: 12px;
 }
 
@@ -1260,7 +1181,7 @@ body {
         grid-template-columns: repeat(2, 1fr);
     }
     .remote-grid {
-        grid-template-columns: repeat(4, 1fr);
+        grid-template-columns: repeat(3, 1fr);
     }
 }
 
@@ -1289,7 +1210,7 @@ body {
         grid-template-columns: 1fr;
     }
     .remote-grid {
-        grid-template-columns: repeat(4, 1fr);
+        grid-template-columns: repeat(3, 1fr);
     }
     .filter-row {
         flex-direction: column;

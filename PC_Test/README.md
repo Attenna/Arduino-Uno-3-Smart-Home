@@ -24,7 +24,7 @@ PC_Test/
 ├── voice_assistant.py      # ⑤ 语音交互模式（唤醒词 → Qwen2.5 → MCP 控硬件 → 流式 TTS）
 ├── qwen_server.py          #    本地 Qwen2.5 OpenAI 兼容服务（llama.cpp 后端 + 工具调用）
 ├── download_qwen.py        #    Qwen2.5 权重下载器（ModelScope 国内渠道）
-├── mcp_home_server.py      #    智能家居 MCP server（独占串口，暴露 8 个工具；⑤⑥共用）
+├── mcp_home_server.py      # 智能家居 MCP server（独占串口，暴露 9 个工具；⑤⑥共用）
 ├── tts_player.py           #    流式 TTS 播放器（Sherpa-ONNX VITS 本地合成）
 ├── sherpa_listener.py      #    Sherpa-ONNX KWS/ASR 前端封装
 ├── voice_config.yaml       #    语音模式配置（串口/LLM 引擎/唤醒词/TTS 音色）
@@ -195,8 +195,9 @@ KWS 关键词声学唤醒（zipformer-wenetspeech 3.3M）+ 流式 ASR（streamin
 自带端点检测）+ 本地 VITS 语音合成（vits-melo-tts-zh_en）。
 模型一键下载：`py -3.13 download_sherpa_models.py`（KWS ~31MB / ASR ~1GB / TTS ~160MB，国内镜像加速）。
 
-`mcp_home_server.py` 作为子进程独占 A/B 两串口，暴露 8 个工具：
-`light / door / window / fan / buzzer / oled / display / get_sensor_status`。
+`mcp_home_server.py` 作为子进程独占 A/B 两串口，暴露 9 个工具：
+`light / door / window / fan / buzzer / oled / display / ir / get_sensor_status`。
+（`ir` 为红外发射，发 NEC 码控家电；`display` 对应已移除的 TM1637 数码管，属保留接口。）
 `voice_assistant.py` 不直接碰串口，所有硬件操作经 MCP `call_tool`。
 
 ### LLM 引擎：Qwen2.5（国内合规）
@@ -423,7 +424,7 @@ h ēi b ō t ǎ @Hey_Bota
     INT8 ASR + 本地 VITS TTS），模型由 `download_sherpa_models.py` 一键下载（ghfast.top 镜像）。
   - 移除 CUDA 编译/检测逻辑，llama-cpp-python 统一 CPU 版；`sherpa_listener.py` 按
     `joiner.onnx` 有无自动分派 transducer/paraformer。
-  - JSON 板子交互链路（MCP 8 工具独占串口）保持不变。
+  - JSON 板子交互链路（MCP 9 工具独占串口）保持不变。
 - 更早：Qwen2.5（ModelScope 国内渠道）替换 Ollama/Gemma；MCP 工具调用 3 轮上限；
   TTS 播放期间跳过唤醒检测；8 秒 FOLLOWUP 追问窗口。
 
@@ -436,7 +437,7 @@ h ēi b ō t ǎ @Hey_Bota
 
 | 页面 | 路由 | 功能 |
 |------|------|------|
-| 仪表盘 | `/` | 实时传感器卡片、门/窗/灯/风扇/空调控制、温湿度曲线 |
+| 仪表盘 | `/` | 实时传感器卡片、门/窗/灯/风扇控制、温湿度曲线 |
 | 门禁管理 | `/access` | 授权人员（人脸/RFID）、识别记录、人脸照片上传识别 |
 | 历史记录 | `/history` | 传感器历史、设备操作日志、图表查询 |
 | 硬件管理 | `/hardware` | 硬件桥状态、可选 Home Assistant 对接配置 |
@@ -458,7 +459,7 @@ py -3.13 run_web.py --no-serial
 
 ```text
 浏览器 ──HTTP── Flask(web/ 蓝图) ──MCP stdio── mcp_home_server.py ──USB── A/B 板
-                    │                              （独占串口，8 个工具）
+                    │                              （独占串口，9 个工具）
                     └── 每 2s get_sensor_status 轮询 → data/smart_home.db
 ```
 

@@ -45,6 +45,10 @@ async function api(url, options = {}) {
 
 // ==================== 积木定义 ====================
 
+// 灯的颜色预设（B 板 8 颗 WS2812 整条同色）
+const LIGHT_COLORS = [['红', 'red'], ['绿', 'green'], ['蓝', 'blue'],
+                      ['黄', 'yellow'], ['紫', 'purple'], ['青', 'cyan']];
+
 // 触发块共用的「持续 N 秒」（0 = 跨阈值立刻触发）
 function appendHoldInput(block) {
     block.appendDummyInput()
@@ -134,10 +138,14 @@ function defineBlocks() {
                 .appendField(new Blockly.FieldDropdown(keypadOptions), 'KEY')
                 .appendField('红外')
                 .appendField(new Blockly.FieldDropdown(irKeyOptions), 'CMD');
+            // RFID 卡号用文本框（下拉会静默回落）；不填 = 任意卡片都触发
+            this.appendDummyInput()
+                .appendField('卡号')
+                .appendField(new Blockly.FieldTextInput(''), 'UID');
             this.setPreviousStatement(true, 'TRIG');
             this.setNextStatement(false);
             this.setColour(30);
-            this.setTooltip('人体/人脸/键盘/红外等事件；只取与所选事件对应的键值');
+            this.setTooltip('人体/人脸/键盘/红外/RFID 等事件；只取与所选事件对应的参数（卡号留空=任意卡片）');
         },
     };
 
@@ -225,6 +233,29 @@ function defineBlocks() {
             this.setPreviousStatement(true, 'ACT');
             this.setNextStatement(true, 'ACT');
             this.setColour(120);
+            this.setTooltip('白光，亮度按百分比；关灯时忽略亮度');
+        },
+    };
+    // 彩色预设（B 板 8 颗 WS2812 整条同色；彩色不接受亮度参数）
+    Blockly.Blocks['act_light_color'] = {
+        init: function () {
+            this.appendDummyInput().appendField('🎨 灯颜色')
+                .appendField(new Blockly.FieldDropdown(LIGHT_COLORS), 'COLOR');
+            this.setPreviousStatement(true, 'ACT');
+            this.setNextStatement(true, 'ACT');
+            this.setColour(120);
+            this.setTooltip('整条灯带换成指定颜色（满亮）');
+        },
+    };
+    Blockly.Blocks['act_light_rgb'] = {
+        init: function () {
+            this.appendDummyInput().appendField('🎨 灯 RGB')
+                .appendField(new Blockly.FieldNumber(255, 0, 255, 1), 'R').appendField('R')
+                .appendField(new Blockly.FieldNumber(0, 0, 255, 1), 'G').appendField('G')
+                .appendField(new Blockly.FieldNumber(0, 0, 255, 1), 'B').appendField('B');
+            this.setPreviousStatement(true, 'ACT');
+            this.setNextStatement(true, 'ACT');
+            this.setColour(120);
         },
     };
     Blockly.Blocks['act_fan'] = {
@@ -246,6 +277,17 @@ function defineBlocks() {
             this.setPreviousStatement(true, 'ACT');
             this.setNextStatement(true, 'ACT');
             this.setColour(120);
+        },
+    };
+    // 持续响 / 停：报警需要长鸣时用
+    Blockly.Blocks['act_buzzer_switch'] = {
+        init: function () {
+            this.appendDummyInput().appendField('🔔 蜂鸣器')
+                .appendField(new Blockly.FieldDropdown([['持续响', 'on'], ['停', 'off']]), 'STATE');
+            this.setPreviousStatement(true, 'ACT');
+            this.setNextStatement(true, 'ACT');
+            this.setColour(120);
+            this.setTooltip('持续响会一直叫到被「停」或断电，注意别把规则写成自激');
         },
     };
     Blockly.Blocks['act_delay'] = {
@@ -271,6 +313,40 @@ function defineBlocks() {
             this.setColour(120);
         },
     };
+    // 指定行直发（不按换行拆分），一行只能放一行文本
+    Blockly.Blocks['act_oled_line'] = {
+        init: function () {
+            this.appendDummyInput().appendField('🖥️ OLED 第')
+                .appendField(new Blockly.FieldNumber(0, 0, 7, 1), 'LINE')
+                .appendField('行')
+                .appendField(new Blockly.FieldTextInput('Temp {temperature}C'), 'TEXT');
+            this.setPreviousStatement(true, 'ACT');
+            this.setNextStatement(true, 'ACT');
+            this.setColour(120);
+            this.setTooltip('只写这一行（0-7），其余行不动；文本里可用 {temperature} 等占位符');
+        },
+    };
+    // 红外发射：直接选键位（复用 A 板实测的 NEC 键码表），或填自定义 32 位码
+    Blockly.Blocks['act_ir'] = {
+        init: function () {
+            this.appendDummyInput().appendField('📡 红外发射')
+                .appendField(new Blockly.FieldDropdown(irKeyOptions), 'CMD');
+            this.setPreviousStatement(true, 'ACT');
+            this.setNextStatement(true, 'ACT');
+            this.setColour(120);
+            this.setTooltip('等价于「按下遥控器这个键」；本系统不支持红外自学习/回环转发');
+        },
+    };
+    Blockly.Blocks['act_ir_code'] = {
+        init: function () {
+            this.appendDummyInput().appendField('📡 红外发射 自定义码')
+                .appendField(new Blockly.FieldNumber(16729530, 0, 4294967295, 1), 'CODE');
+            this.setPreviousStatement(true, 'ACT');
+            this.setNextStatement(true, 'ACT');
+            this.setColour(120);
+            this.setTooltip('十进制 32 位 NEC 码（bit31 先发，不是 LSB-first 那套值）');
+        },
+    };
     // 全屋模式：进门切自动 / 触摸切手动 / 红外循环档位
     Blockly.Blocks['act_home_mode'] = {
         init: function () {
@@ -289,10 +365,25 @@ function defineBlocks() {
                     ['不改', ''], ['自动', 'auto'], ['保持', 'hold'],
                     ['暗', 'dark'], ['半亮', 'half'], ['全亮', 'bright'],
                     ['循环', 'cycle']]), 'LIGHT');
+            // 状态机自身参数：勾选才生效（避免 0 秒被当成「不改」）
+            this.appendDummyInput()
+                .appendField(new Blockly.FieldCheckbox('FALSE'), 'SET_ENABLED')
+                .appendField('自动调节')
+                .appendField(new Blockly.FieldDropdown([['开', 'true'], ['关', 'false']]), 'ENABLED');
+            this.appendDummyInput()
+                .appendField(new Blockly.FieldCheckbox('FALSE'), 'SET_HOLD')
+                .appendField('存在判定保持')
+                .appendField(new Blockly.FieldNumber(1200, 0, 86400, 60), 'HOLD')
+                .appendField('秒');
+            this.appendDummyInput()
+                .appendField(new Blockly.FieldCheckbox('FALSE'), 'SET_GRACE')
+                .appendField('手动冷却')
+                .appendField(new Blockly.FieldNumber(30, 1, 3600, 1), 'GRACE')
+                .appendField('秒');
             this.setPreviousStatement(true, 'ACT');
             this.setNextStatement(true, 'ACT');
             this.setColour(120);
-            this.setTooltip('只改非「不改」的项；离家会关闭全屋设备');
+            this.setTooltip('只改非「不改」的项；离线也能生效（纯状态机，不碰硬件）');
         },
     };
     // 语音联动：按键触发后免唤醒词直接说话
@@ -389,11 +480,17 @@ function buildToolbox() {
         <block type="act_door"></block>
         <block type="act_window"></block>
         <block type="act_light"></block>
+        <block type="act_light_color"></block>
+        <block type="act_light_rgb"></block>
         <block type="act_fan"></block>
         <block type="act_home_mode"></block>
         <block type="act_voice"></block>
+        <block type="act_ir"></block>
+        <block type="act_ir_code"></block>
         <block type="act_buzzer"></block>
+        <block type="act_buzzer_switch"></block>
         <block type="act_oled"></block>
+        <block type="act_oled_line"></block>
         <block type="act_delay"></block>
       </category>
     </xml>`;
@@ -455,6 +552,7 @@ function summarizeTrigger(t) {
             const c = ((e && e.choices) || []).find(x => x.id === t.command);
             label += ` · ${c ? c.label : t.command}`;
         }
+        if (t.uid) label += ` · 卡 ${t.uid}`;
         return label;
     }
     const s = CAPS.sources.find(x => x.id === t.sensor);
@@ -475,13 +573,43 @@ function summarizeAction(a) {
     switch (a.device) {
         case 'door':   return a.status === 'open' ? '开门' : '关门';
         case 'window': return '窗' + ({ open: '打开', close: '关闭', normal: '半开' }[a.status] || '');
-        case 'light':  return '灯' + (a.status === 'on' ? '开' : '关')
-                              + (a.brightness !== undefined ? ` ${a.brightness}%` : '');
+        case 'light': {
+            if (a.color === 'rgb') return `灯 RGB(${a.r},${a.g},${a.b})`;
+            if (a.color && a.color !== 'white') {
+                const c = LIGHT_COLORS.find(x => x[1] === a.color);
+                return '灯 ' + (c ? c[0] : a.color);
+            }
+            return '灯' + (a.status === 'on' ? '开' : '关')
+                   + (a.brightness !== undefined ? ` ${a.brightness}%` : '');
+        }
         case 'fan':    return `风扇 ${a.speed}%`;
-        case 'buzzer': return `蜂鸣 ${a.count} 声`;
+        case 'buzzer':
+            if (a.mode === 'on') return '蜂鸣器 持续响';
+            if (a.mode === 'off') return '蜂鸣器 停';
+            return `蜂鸣 ${a.count} 声`;
         case 'delay':  return `等待 ${a.seconds}s`;
-        case 'oled':   return a.clear ? 'OLED 清屏' : 'OLED 显示';
-        case 'home_mode': return '全屋模式';
+        case 'oled':
+            if (a.clear) return 'OLED 清屏';
+            return (a.line === undefined || a.line === null)
+                ? 'OLED 显示' : `OLED 第${a.line}行`;
+        case 'ir': {
+            if (a.address !== undefined && a.command !== undefined) {
+                const hex = '0x' + Number(a.command).toString(16).toUpperCase().padStart(2, '0');
+                const k = irKeyOptions().find(x => x[1] === hex);
+                return '红外发射 ' + (k ? k[0] : hex);
+            }
+            return `红外发射 ${a.code}`;
+        }
+        case 'home_mode': {
+            const bits = [];
+            if (a.mode) bits.push('模式');
+            if (a.fan_override) bits.push('风扇档');
+            if (a.light_level) bits.push('灯光档');
+            if (a.enabled !== undefined) bits.push('自动调节');
+            if (a.presence_hold_sec !== undefined) bits.push('存在判定');
+            if (a.manual_grace_s !== undefined) bits.push('手动冷却');
+            return '全屋' + (bits.length ? '（' + bits.join('/') + '）' : '');
+        }
         case 'voice':  return a.action === 'say' ? '语音播报' : '唤醒语音';
         default:       return a.device;
     }
@@ -882,6 +1010,10 @@ function triggerToJson(b) {
             const json = { kind: 'event', event: evt };
             if (evt === 'keypad') json.key = b.getFieldValue('KEY') || '1';
             if (evt === 'ir') json.command = b.getFieldValue('CMD') || '0x45';
+            if (evt === 'rfid') {
+                const uid = (b.getFieldValue('UID') || '').trim();
+                if (uid) json.uid = uid;      // 留空 = 任意卡片都触发
+            }
             return json;
         }
         case 'trig_interval':
@@ -916,16 +1048,35 @@ function actionToJson(b) {
         case 'act_window': return { device: 'window', status: b.getFieldValue('STATUS') };
         case 'act_light':  return { device: 'light', status: b.getFieldValue('STATUS'),
                                     brightness: Number(b.getFieldValue('BRIGHTNESS')) };
+        case 'act_light_color':
+            return { device: 'light', status: 'on', brightness: 100,
+                     color: b.getFieldValue('COLOR') };
+        case 'act_light_rgb':
+            return { device: 'light', status: 'on', brightness: 100, color: 'rgb',
+                     r: Number(b.getFieldValue('R')), g: Number(b.getFieldValue('G')),
+                     b: Number(b.getFieldValue('B')) };
         case 'act_fan':    return { device: 'fan', speed: Number(b.getFieldValue('SPEED')) };
-        case 'act_buzzer': return { device: 'buzzer',
+        case 'act_buzzer': return { device: 'buzzer', mode: 'beep',
                                     count: Number(b.getFieldValue('COUNT')),
                                     on_ms: Number(b.getFieldValue('ONMS')),
                                     off_ms: Number(b.getFieldValue('OFFMS')) };
+        case 'act_buzzer_switch':
+            return { device: 'buzzer', mode: b.getFieldValue('STATE') };
+        case 'act_ir': {
+            // 键位表给的是 command(0xNN)，遥控器 address 固定 0x00
+            const hex = b.getFieldValue('CMD') || '0x45';
+            return { device: 'ir', address: 0, command: parseInt(hex, 16) };
+        }
+        case 'act_ir_code':
+            return { device: 'ir', code: Number(b.getFieldValue('CODE')) };
         case 'act_delay':  return { device: 'delay',
                                     seconds: Number(b.getFieldValue('SECONDS')) };
         case 'act_oled':
             if (b.getFieldValue('CLEAR') === 'TRUE') return { device: 'oled', clear: true };
             return { device: 'oled', text: b.getFieldValue('TEXT') };
+        case 'act_oled_line':
+            return { device: 'oled', line: Number(b.getFieldValue('LINE')),
+                     text: b.getFieldValue('TEXT') };
         case 'act_home_mode': {
             const json = { device: 'home_mode' };
             const mode = b.getFieldValue('MODE');
@@ -934,6 +1085,16 @@ function actionToJson(b) {
             if (mode) json.mode = mode;
             if (fan) json.fan_override = fan;
             if (light) json.light_level = light;
+            // 状态机参数：勾选才写进 JSON（0 秒是合法值，不能用 0 当「不改」）
+            if (b.getFieldValue('SET_ENABLED') === 'TRUE') {
+                json.enabled = b.getFieldValue('ENABLED') === 'true';
+            }
+            if (b.getFieldValue('SET_HOLD') === 'TRUE') {
+                json.presence_hold_sec = Number(b.getFieldValue('HOLD'));
+            }
+            if (b.getFieldValue('SET_GRACE') === 'TRUE') {
+                json.manual_grace_s = Number(b.getFieldValue('GRACE'));
+            }
             return json;
         }
         case 'act_voice': {
@@ -1021,28 +1182,77 @@ function fillAction(a) {
         case 'door':   b = createTyped('act_door'); b.setFieldValue(a.status, 'STATUS'); break;
         case 'window': b = createTyped('act_window'); b.setFieldValue(a.status, 'STATUS'); break;
         case 'light':
-            b = createTyped('act_light');
-            b.setFieldValue(a.status || 'on', 'STATUS');
-            b.setFieldValue(String(a.brightness === undefined ? 100 : a.brightness), 'BRIGHTNESS');
+            if (a.color === 'rgb') {
+                b = createTyped('act_light_rgb');
+                b.setFieldValue(String(a.r === undefined ? 255 : a.r), 'R');
+                b.setFieldValue(String(a.g === undefined ? 0 : a.g), 'G');
+                b.setFieldValue(String(a.b === undefined ? 0 : a.b), 'B');
+            } else if (a.color && a.color !== 'white') {
+                b = createTyped('act_light_color');
+                b.setFieldValue(optionValue(LIGHT_COLORS, a.color, 'red'), 'COLOR');
+            } else {
+                b = createTyped('act_light');
+                b.setFieldValue(a.status || 'on', 'STATUS');
+                b.setFieldValue(String(a.brightness === undefined ? 100 : a.brightness), 'BRIGHTNESS');
+            }
             break;
         case 'fan': b = createTyped('act_fan'); b.setFieldValue(String(a.speed === undefined ? 60 : a.speed), 'SPEED'); break;
         case 'buzzer':
-            b = createTyped('act_buzzer');
-            b.setFieldValue(String(a.count === undefined ? 2 : a.count), 'COUNT');
-            b.setFieldValue(String(a.on_ms === undefined ? 200 : a.on_ms), 'ONMS');
-            b.setFieldValue(String(a.off_ms === undefined ? 200 : a.off_ms), 'OFFMS');
+            if (a.mode === 'on' || a.mode === 'off') {
+                b = createTyped('act_buzzer_switch');
+                b.setFieldValue(a.mode, 'STATE');
+            } else {
+                b = createTyped('act_buzzer');
+                b.setFieldValue(String(a.count === undefined ? 2 : a.count), 'COUNT');
+                b.setFieldValue(String(a.on_ms === undefined ? 200 : a.on_ms), 'ONMS');
+                b.setFieldValue(String(a.off_ms === undefined ? 200 : a.off_ms), 'OFFMS');
+            }
+            break;
+        case 'ir':
+            if (a.code !== undefined && a.code !== null
+                && (a.address === undefined || a.command === undefined)) {
+                b = createTyped('act_ir_code');
+                b.setFieldValue(String(a.code), 'CODE');
+            } else {
+                b = createTyped('act_ir');
+                const hex = '0x' + Number(a.command === undefined ? 0x45 : a.command)
+                    .toString(16).toUpperCase().padStart(2, '0');
+                b.setFieldValue(optionValue(irKeyOptions(), hex, '0x45'), 'CMD');
+            }
             break;
         case 'delay': b = createTyped('act_delay'); b.setFieldValue(String(a.seconds === undefined ? 3 : a.seconds), 'SECONDS'); break;
         case 'oled':
-            b = createTyped('act_oled');
-            b.setFieldValue(a.clear ? 'TRUE' : 'FALSE', 'CLEAR');
-            b.setFieldValue(a.text === undefined ? 'Temp {temperature}C' : a.text, 'TEXT');
+            if (a.clear) {
+                b = createTyped('act_oled');
+                b.setFieldValue('TRUE', 'CLEAR');
+                b.setFieldValue('Temp {temperature}C', 'TEXT');
+            } else if (a.line !== undefined && a.line !== null) {
+                b = createTyped('act_oled_line');
+                b.setFieldValue(String(a.line), 'LINE');
+                b.setFieldValue(a.text === undefined ? '' : a.text, 'TEXT');
+            } else {
+                b = createTyped('act_oled');
+                b.setFieldValue('FALSE', 'CLEAR');
+                b.setFieldValue(a.text === undefined ? 'Temp {temperature}C' : a.text, 'TEXT');
+            }
             break;
         case 'home_mode':
             b = createTyped('act_home_mode');
             b.setFieldValue(a.mode || '', 'MODE');
             b.setFieldValue(a.fan_override || '', 'FAN');
             b.setFieldValue(a.light_level || '', 'LIGHT');
+            if (a.enabled !== undefined) {
+                b.setFieldValue('TRUE', 'SET_ENABLED');
+                b.setFieldValue(a.enabled ? 'true' : 'false', 'ENABLED');
+            }
+            if (a.presence_hold_sec !== undefined) {
+                b.setFieldValue('TRUE', 'SET_HOLD');
+                b.setFieldValue(String(a.presence_hold_sec), 'HOLD');
+            }
+            if (a.manual_grace_s !== undefined) {
+                b.setFieldValue('TRUE', 'SET_GRACE');
+                b.setFieldValue(String(a.manual_grace_s), 'GRACE');
+            }
             break;
         case 'voice':
             b = createTyped('act_voice');

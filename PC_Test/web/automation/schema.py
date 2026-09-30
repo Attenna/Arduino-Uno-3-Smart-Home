@@ -19,6 +19,8 @@ from __future__ import annotations
 from .capabilities import (
     ACTION_DEVICES, COMPARATORS, CONDITION_SOURCES, EVENT_TRIGGERS,
 )
+# RFID 卡号归一化（"AA BB CC DD"）与上报值全等比对，避免大小写/分隔符导致匹配失败
+from ..database import normalize_uid
 
 COMPARATOR_IDS = {c["id"] for c in COMPARATORS}
 
@@ -75,6 +77,12 @@ def validate_trigger(trig: dict) -> dict:
         for extra in ("key", "command"):
             if trig.get(extra) not in (None, ""):
                 clean[extra] = str(trig[extra]).strip()
+        # rfid 事件可带卡号过滤（不填=任意卡片都触发）
+        if trig.get("uid") not in (None, ""):
+            try:
+                clean["uid"] = normalize_uid(trig["uid"])
+            except ValueError as e:
+                raise ValidationError(f"RFID 卡号非法：{e}")
         return clean
     if kind == "interval":
         seconds = _as_number(trig.get("seconds"), "周期触发块")
@@ -136,17 +144,45 @@ def validate_action(action: dict, where: str = "动作块") -> dict:
         brightness = int(_as_number(action.get("brightness", 100), where))
         clean.update({"status": status,
                       "brightness": max(0, min(100, brightness))})
+        # 颜色（可选）：不填=普通白光；B 板是 8 颗 WS2812，整条同色
+        color = str(action.get("color") or "").strip()
+        if color:
+            if color not in ("white", "red", "green", "blue",
+                             "yellow", "purple", "cyan", "rgb"):
+                raise ValidationError(
+                    "灯颜色只能是 white/red/green/blue/yellow/purple/cyan/rgb")
+            clean["color"] = color
+            if color == "rgb":
+                for ch in ("r", "g", "b"):
+                    if action.get(ch) is None:
+                        raise ValidationError("灯 RGB 需要 r/g/b 三个值(0~255)")
+                    clean[ch] = max(0, min(255, int(_as_number(action.get(ch), where))))
+            elif color == "white" and action.get("value") is not None:
+                # 白光可指定 0-255 原始亮度（彩色预设不接受亮度）
+                clean["value"] = max(0, min(255, int(_as_number(action.get("value"), where))))
     elif device == "fan":
         speed = int(_as_number(action.get("speed", 100), where))
         clean["speed"] = max(0, min(100, speed))
     elif device == "buzzer":
-        count = int(_as_number(action.get("count", 1), where))
-        on_ms = int(_as_number(action.get("on_ms", 200), where))
-        off_ms = int(_as_number(action.get("off_ms", 200), where))
-        clean.update({"count": max(1, min(10, count)),
-                      "on_ms": max(50, min(2000, on_ms)),
-                      "off_ms": max(50, min(2000, off_ms))})
+        # mode: beep(间歇，默认) / on(持续响) / off(停)
+        mode = str(action.get("mode") or "beep").strip()
+        if mode not in ("beep", "on", "off"):
+            raise ValidationError("蜂鸣器模式只能是 beep(间歇)/on(持续)/off(停)")
+        clean["mode"] = mode
+        if mode == "beep":
+            count = int(_as_number(action.get("count", 1), where))
+            on_ms = int(_as_number(action.get("on_ms", 200), where))
+            off_ms = int(_as_number(action.get("off_ms", 200), where))
+            clean.update({"count": max(1, min(10, count)),
+                          "on_ms": max(50, min(2000, on_ms)),
+                          "off_ms": max(50, min(2000, off_ms))})
     elif device == "oled":
+        # 可选 line：指定行号直发；不填则按文本里的换行自动分配到 0..7 行
+        if action.get("line") not in (None, ""):
+            line_no = int(_as_number(action.get("line"), where))
+            if not 0 <= line_no <= 7:
+                raise ValidationError("OLED 行号需在 0~7 之间")
+            clean["line"] = line_no
         # 二选一：clear 清屏，或 text 显示文本（可含 {占位符}）
         if action.get("clear"):
             clean["clear"] = True
@@ -160,6 +196,23 @@ def validate_action(action: dict, where: str = "动作块") -> dict:
             if len(text) > 200:
                 raise ValidationError("OLED 文本过长（最多 200 字符）")
             clean["text"] = text
+    elif device == "ir":
+        # 红外发射：优先 address+command，其次十进制 32 位 code
+        addr, cmd = action.get("address"), action.get("command")
+        if addr is not None and cmd is not None:
+            a = int(_as_number(addr, where))
+            c = int(_as_number(cmd, where))
+            if not 0 <= a <= 255 or not 0 <= c <= 255:
+                raise ValidationError("NEC 地址/命令需在 0~255 之间")
+            clean["address"] = a
+            clean["command"] = c
+        else:
+            if action.get("code") is None:
+                raise ValidationError("红外发射需要 code，或 address + command")
+            code = int(_as_number(action.get("code"), where))
+            if not 0 <= code <= 4294967295:
+                raise ValidationError("NEC 码需为 0~4294967295（32 位无符号）")
+            clean["code"] = code
     elif device == "home_mode":
         # 三项都可选，但至少要设一项；空串 = 该项不改
         mode = str(action.get("mode") or "").strip()
@@ -177,8 +230,24 @@ def validate_action(action: dict, where: str = "动作块") -> dict:
             if light not in ("auto", "hold", "dark", "half", "bright", "cycle"):
                 raise ValidationError("灯光档位只能是 auto/hold/dark/half/bright/cycle")
             clean["light_level"] = light
+        # 状态机自身参数（原先只能在代码里改）
+        if "enabled" in action and action.get("enabled") is not None:
+            clean["enabled"] = bool(action["enabled"])
+        hold = action.get("presence_hold_sec")
+        if hold not in (None, ""):
+            hold = _as_number(hold, "存在判定保持时长")
+            # home_mode 侧不钳制这个值，校验必须自己钳住
+            if not 0 <= hold <= 86400:
+                raise ValidationError("存在判定保持时长需在 0~86400 秒之间")
+            clean["presence_hold_sec"] = hold
+        grace = action.get("manual_grace_s")
+        if grace not in (None, ""):
+            grace = _as_number(grace, "手动冷却窗口")
+            if not 1 <= grace <= 3600:
+                raise ValidationError("手动冷却窗口需在 1~3600 秒之间")
+            clean["manual_grace_s"] = grace
         if len(clean) == 1:
-            raise ValidationError("全屋模式动作至少要设置一项（模式/风扇档位/灯光档位）")
+            raise ValidationError("全屋模式动作至少要设置一项（模式/风扇档位/灯光档位/参数）")
     elif device == "voice":
         act = str(action.get("action") or "wake").strip()
         if act not in ("wake", "say"):

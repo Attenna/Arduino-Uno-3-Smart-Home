@@ -80,6 +80,23 @@ def detect_board(expect_substr: str, label: str) -> Optional[str]:
     return None
 
 
+# ==================== 红外发射（NEC 码换算）====================
+
+def nec_code(address: int, command: int) -> int:
+    """按 Module B 的红外发送约定拼 32 位码（bit31 先发，不是 LSB-first）。
+
+    B 板 IR.cpp 是最低位在最后、最高位先发，因此**不能**直接填 IRremote 那套
+    常见的 LSB-first 值（如 0xBA45FF00）。要让它解出 address/command，必须按
+    NEC 帧序摆放：addr、~addr、cmd、~cmd 各占一个字节。
+
+    例：nec_code(0x00, 0x45) -> 0x00FF45BA -> 16729530
+    （对应 A 板遥控器「1」键 address=0x00 / command=0x45）
+    """
+    a = address & 0xFF
+    c = command & 0xFF
+    return ((a << 24) | ((~a & 0xFF) << 16) | (c << 8) | (~c & 0xFF)) & 0xFFFFFFFF
+
+
 # ==================== 智能家居控制器（持有串口）====================
 
 class HomeController:
@@ -328,6 +345,19 @@ class HomeController:
             cmd["value"] = value
         return self._send_b(cmd)
 
+    def handle_ir(self, code=None, address=None, command=None) -> str:
+        """红外发射。给 address+command 时由 nec_code 拼码，否则直接用十进制 code。"""
+        if address is not None and command is not None:
+            value = nec_code(int(address), int(command))
+        elif code is not None:
+            value = int(code)
+        else:
+            return "error: 红外发射需要 code，或 address + command"
+        if not 0 <= value <= 0xFFFFFFFF:
+            return "error: NEC 码需为 0~4294967295（32 位无符号）"
+        # B 板 CommandParser 用 strtoul(...,10) 解析 code，必须下发十进制整数
+        return self._send_b({"cmd": "ir", "action": "send_nec", "code": value})
+
     def handle_get_sensor_status(self) -> str:
         with self._snapshot_lock:
             snap = dict(self._snapshot)
@@ -348,14 +378,17 @@ HOME: Optional[HomeController] = None  # 在 main() 里赋值
 
 @mcp.tool()
 async def light(
-    action: Literal["on", "off", "white", "red", "green", "blue",
+    action: Literal["off", "white", "red", "green", "blue",
                     "yellow", "purple", "cyan", "rgb"],
     value: Optional[int] = None,
     r: Optional[int] = None,
     g: Optional[int] = None,
     b: Optional[int] = None,
 ) -> str:
-    """控制灯光。action：on/off/white(可带 value 亮度 0-255)/red/green/blue/yellow/purple/cyan/rgb(需 r,g,b 0-255)。"""
+    """控制灯光。action：off/white(可带 value 亮度 0-255)/red/green/blue/yellow/purple/cyan/rgb(需 r,g,b 0-255)。
+
+    注意：B 板固件没有 "on" 分支，开灯请用 white（或彩色预设）。
+    """
     return await asyncio.to_thread(HOME.handle_light, action, value, r, g, b)
 
 
@@ -402,6 +435,18 @@ async def display(action: Literal["show_time", "show_number", "clear"],
                   value: Optional[int] = None) -> str:
     """数码管显示。action：show_time(需 hour 0-23/minute 0-59)/show_number(需 value)/clear。"""
     return await asyncio.to_thread(HOME.handle_display, action, hour, minute, value)
+
+
+@mcp.tool()
+async def ir(code: Optional[int] = None,
+             address: Optional[int] = None,
+             command: Optional[int] = None) -> str:
+    """红外发射（NEC 38kHz，Module B D12）。
+
+    二选一：code 为十进制 32 位码；或 address(0-255)+command(0-255) 由服务端按 NEC
+    帧序拼码（推荐，避免手算）。本系统不支持红外自学习/回环转发。
+    """
+    return await asyncio.to_thread(HOME.handle_ir, code, address, command)
 
 
 @mcp.tool()

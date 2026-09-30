@@ -181,7 +181,15 @@ come_home:
 ```
 
 > NEC 码需先用 Module A 的红外接收解码（`type:event`，`event:ir` 含 `protocol/address/command`），
-> 再用 `address<<16 | (~address&0xFF)<<8 | command<<0 | (~command&0xFF)` 拼成 32 位完整码填入 `code`。
+> 再用 `address<<24 | (~address&0xFF)<<16 | command<<8 | (~command&0xFF)` 拼成 32 位完整码填入 `code`。
+>
+> 例：address=0x00、command=0x45 → `0x00FF45BA` = **16729530**（即遥控器「1」键）。
+> 注意 Module B 的发送是**最高位先发**，不是 IRremote 常见的 LSB-first 值（如 `0xBA45FF00`），
+> 两者位数正好相反，填错会解出错误的 address/command。
+> `code` 只接受**十进制**整数（固件用 `strtoul(...,10)` 解析）。
+>
+> 自动化积木里可直接选键位（内部走 `address=0` + `command`），或用「红外发射 自定义码」填十进制码。
+> 本系统不支持红外自学习/回环转发：B 板发出的码会被 A 板接收头收回来，引擎有「自发射回声抑制」兜底。
 
 ---
 

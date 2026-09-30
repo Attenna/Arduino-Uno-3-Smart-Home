@@ -164,24 +164,6 @@ function initControlSliders() {
             setLight(v > 0 ? 'on' : 'off', v);
         });
     }
-    const acTempSlider = document.getElementById('acTempSlider');
-    if (acTempSlider) {
-        const acLabel = document.getElementById('acTempSliderValue');
-        acTempSlider.addEventListener('input', () => {
-            if (acLabel) acLabel.textContent = acTempSlider.value + '°C';
-        });
-        acTempSlider.addEventListener('change', async () => {
-            const data = await apiGet('/api/ac');
-            const status = (data && data.ac_status) || 'off';
-            const result = await apiPost('/api/ac', {
-                status, temperature: parseInt(acTempSlider.value)
-            });
-            if (result) {
-                showNotification(getMessage(result));
-                loadStatus();
-            }
-        });
-    }
 }
 
 function startStatusPolling() {
@@ -273,19 +255,6 @@ function updateDashboard(data) {
     const brightLabel = document.getElementById('brightnessValue');
     if (brightLabel) brightLabel.textContent = brightness + '%';
 
-    // 空调（设定温度显示 + 徽标 + 温度滑块回写）
-    const acTempEl = document.getElementById('acTempDisplay');
-    if (acTempEl) acTempEl.textContent = data.ac_temperature ?? '--';
-    const acBadge = document.getElementById('acBadge');
-    if (acBadge) {
-        acBadge.textContent = data.ac_status === 'on' ? t('status.ac_on') : t('status.ac_off');
-        acBadge.className = 'ac-status-badge' + (data.ac_status === 'on' ? ' on' : '');
-    }
-    const acTempSlider = document.getElementById('acTempSlider');
-    if (acTempSlider && document.activeElement !== acTempSlider) acTempSlider.value = data.ac_temperature ?? 26;
-    const acTempSliderLabel = document.getElementById('acTempSliderValue');
-    if (acTempSliderLabel) acTempSliderLabel.textContent = (data.ac_temperature ?? 26) + '°C';
-
     // 门窗
     const doorEl = document.getElementById('doorStatus');
     if (doorEl) {
@@ -307,14 +276,6 @@ function updateDashboard(data) {
         const lightText = data.light_status === 'on' ? t('status.on') : t('status.off');
         lightEl.textContent = lightText;
         lightEl.className = 'status-text ' + (data.light_status === 'on' ? 'active' : 'normal');
-    }
-
-    // 空调
-    const acEl = document.getElementById('acStatus');
-    if (acEl) {
-        const acText = data.ac_status === 'on' ? t('status.ac_on') : t('status.ac_off');
-        acEl.textContent = acText;
-        acEl.className = 'status-text ' + (data.ac_status === 'on' ? 'active' : 'normal');
     }
 
     // 统计
@@ -377,25 +338,11 @@ async function setFan(speed) {
     }
 }
 
-// 空调温度 +/-（保持当前开关状态，仅改设定温度）
-async function adjustAC(delta) {
-    const data = await apiGet('/api/ac');
-    const current = data || { ac_status: 'off', ac_temperature: 26 };
-    const newTemp = Math.max(16, Math.min(30, Number(current.ac_temperature ?? 26) + delta));
-    const result = await apiPost('/api/ac', { status: current.ac_status || 'off', temperature: newTemp });
-    if (result) {
-        showNotification(getMessage(result));
-        loadStatus();
-    }
-}
-
-// 远程控制面板：light_on/off、ac_on/off、fan_on/off、door_open/close
+// 远程控制面板：light_on/off、fan_on/off、door_open/close
 async function remoteControl(action) {
     const posts = {
         light_on:  ['/api/light', { status: 'on', brightness: 100 }],
         light_off: ['/api/light', { status: 'off', brightness: 0 }],
-        ac_on:     ['/api/ac', { status: 'on' }],
-        ac_off:    ['/api/ac', { status: 'off' }],
         fan_on:    ['/api/fan', { speed: 60 }],
         fan_off:   ['/api/fan', { speed: 0 }],
         door_open: ['/api/door', { status: 'open' }],
@@ -404,17 +351,6 @@ async function remoteControl(action) {
     const target = posts[action];
     if (!target) return;
     const result = await apiPost(target[0], target[1]);
-    if (result) {
-        showNotification(getMessage(result));
-        loadStatus();
-    }
-}
-
-async function toggleAC() {
-    const data = await apiGet('/api/ac');
-    const newStatus = (data && data.ac_status === 'on') ? 'off' : 'on';
-    const temp = document.getElementById('acTemperature')?.value || 26;
-    const result = await apiPost('/api/ac', { status: newStatus, temperature: parseInt(temp) });
     if (result) {
         showNotification(getMessage(result));
         loadStatus();

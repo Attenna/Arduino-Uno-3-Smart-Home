@@ -1,4 +1,4 @@
-"""设备控制：门/窗/灯/风扇走 MCP 直连 Arduino；空调为虚拟状态（B 板无空调）。
+"""设备控制：门/窗/灯/风扇走 MCP 直连 Arduino。
 
 与别组旧实现的区别：按钮点击不再直接乐观写库，而是先经 MCP 向 Module B 下发
 JSON 命令；只有收到 B 板 ACK 后才更新 system_status 并写历史，保证 UI 状态
@@ -230,30 +230,3 @@ def manual_report():
 
     return jsonify({"error": f"不支持的设备: {device or '(空)'}",
                     "error_en": f"Unsupported device: {device or '(empty)'}"}), 400
-
-
-# ==================== 空调（虚拟设备：Module B 无空调执行器）====================
-
-@bp.route("/api/ac", methods=["GET"])
-def get_ac_status():
-    status = db.get_current_status()
-    return jsonify({
-        "ac_status": status.get("ac_status", "off"),
-        "ac_temperature": status.get("ac_temperature", 26),
-    })
-
-
-@bp.route("/api/ac", methods=["POST"])
-def control_ac():
-    data = request.get_json(silent=True) or {}
-    ac_status = data.get("status", "off")
-    ac_temp = max(16, min(30, int(data.get("temperature", 26) or 26)))
-    # 空调仅记录期望状态；接入真实空调后可在此改走 HA / 红外 MCP 工具
-    db.update_status(ac_status=ac_status, ac_temperature=ac_temp)
-    return jsonify({
-        "ac_status": ac_status,
-        "ac_temperature": ac_temp,
-        "message": f"空调已{'开启' if ac_status == 'on' else '关闭'}，温度设为 {ac_temp}°C",
-        "message_en": f"AC {'turned on' if ac_status == 'on' else 'turned off'}, "
-                      f"temp set to {ac_temp}°C",
-    })

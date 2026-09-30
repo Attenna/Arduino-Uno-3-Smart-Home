@@ -941,8 +941,8 @@ async def self_check(cfg: dict) -> int:
                 tr = await s.list_tools()
                 names = [t.name for t in tr.tools]
                 print(f"    OK: {len(names)} 个工具: {names}")
-                if len(names) < 8:
-                    print("    警告: 期望 8 个工具")
+                if len(names) < 9:
+                    print("    警告: 期望 9 个工具")
     except Exception as e:
         print(f"    FAIL: {e}")
         ok = False

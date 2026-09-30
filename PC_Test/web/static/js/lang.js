@@ -18,8 +18,6 @@ const I18N = {
             'status.closed': '关闭',
             'status.on': '开启',
             'status.off': '关闭',
-            'status.ac_on': '运行中',
-            'status.ac_off': '已关闭',
 
             // 温湿度
             'temp.title': '温湿度监控',
@@ -60,19 +58,11 @@ const I18N = {
             'light.night': '夜灯',
             'light.off': '关闭',
 
-            // 空调
-            'ac.title': '空调控制',
-            'ac.set_temp': '设定温度',
-            'ac.off': '关闭',
-            'ac.running': '运行中',
-
             // 远程控制
             'remote.title': '远程控制面板',
             'remote.subtitle': '一键控制所有设备',
             'remote.light_on': '全部开灯',
             'remote.light_off': '全部关灯',
-            'remote.ac_on': '开启空调',
-            'remote.ac_off': '关闭空调',
             'remote.fan_on': '开启风扇',
             'remote.fan_off': '关闭风扇',
             'remote.door_open': '开门',
@@ -170,8 +160,6 @@ const I18N = {
             'access.no_events': '暂无识别事件',
 
             // 通知
-            'notify.ac_on': '空调已开启',
-            'notify.ac_off': '空调已关闭',
             'notify.enter_name': '请输入姓名',
             'notify.access_granted': '门禁验证通过: {0}',
             'notify.access_denied': '门禁验证失败: 未授权人员',
@@ -253,8 +241,6 @@ const I18N = {
             'status.closed': 'Closed',
             'status.on': 'On',
             'status.off': 'Off',
-            'status.ac_on': 'Running',
-            'status.ac_off': 'Off',
 
             // Temperature & Humidity
             'temp.title': 'Temperature & Humidity',
@@ -295,19 +281,11 @@ const I18N = {
             'light.night': 'Night',
             'light.off': 'Off',
 
-            // AC
-            'ac.title': 'AC Control',
-            'ac.set_temp': 'Set Temperature',
-            'ac.off': 'Off',
-            'ac.running': 'Running',
-
             // Remote Control
             'remote.title': 'Remote Control Panel',
             'remote.subtitle': 'One-touch control for all devices',
             'remote.light_on': 'All Lights On',
             'remote.light_off': 'All Lights Off',
-            'remote.ac_on': 'Turn On AC',
-            'remote.ac_off': 'Turn Off AC',
             'remote.fan_on': 'Turn On Fan',
             'remote.fan_off': 'Turn Off Fan',
             'remote.door_open': 'Open Door',
@@ -405,8 +383,6 @@ const I18N = {
             'access.no_events': 'No face events yet',
 
             // Notifications
-            'notify.ac_on': 'AC turned on',
-            'notify.ac_off': 'AC turned off',
             'notify.enter_name': 'Please enter a name',
             'notify.access_granted': 'Access granted: {0}',
             'notify.access_denied': 'Access denied: Unauthorized person',

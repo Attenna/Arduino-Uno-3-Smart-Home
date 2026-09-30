@@ -4,6 +4,7 @@ All persisted times use UTC. Hardware data never comes from UI button clicks.
 Migration preserves legacy history and excludes simulated samples from new charts.
 """
 import json
+import logging
 import math
 import os
 import re
@@ -11,6 +12,8 @@ import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 BASE = Path(__file__).resolve().parent
 SENSORS = ('temperature', 'humidity', 'light_raw', 'smoke', 'rain', 'distance',
@@ -88,10 +91,16 @@ class SmartHomeDB:
                 if not Path(backup_path).exists():
                     with sqlite3.connect(backup_path) as backup:
                         c.backup(backup)
+            # v3 是破坏性的「删列」，单独再备份一次
+            if version < 3 and c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='system_status'").fetchone():
+                backup_path = self.db_path + '.before-v3.bak'
+                if not Path(backup_path).exists():
+                    with sqlite3.connect(backup_path) as backup:
+                        c.backup(backup)
             c.execute('BEGIN IMMEDIATE')
             c.execute('''CREATE TABLE IF NOT EXISTS system_status (
                 id INTEGER PRIMARY KEY CHECK(id=1), temperature REAL, humidity REAL,
-                fan_speed INTEGER, ac_status TEXT, ac_temperature REAL,
+                fan_speed INTEGER,
                 door_status TEXT, window_status TEXT, light_status TEXT,
                 light_brightness INTEGER, last_updated TEXT)''')
             extra = {k: 'INTEGER' for k in ('light_raw','smoke','rain','distance','touch','motion','soil_moisture','soil_dry','fan_level','light_level','device_uptime_ms')}
@@ -102,7 +111,7 @@ class SmartHomeDB:
                     c.execute(f'ALTER TABLE system_status ADD COLUMN {key} {kind}')
             c.execute('INSERT OR IGNORE INTO system_status(id) VALUES(1)')
             if version < 2:
-                keys = list(SENSORS) + list(OUTPUTS) + ['ac_status','ac_temperature','last_updated','sensor_last_seen','output_last_seen']
+                keys = list(SENSORS) + list(OUTPUTS) + ['last_updated','sensor_last_seen','output_last_seen']
                 c.execute('UPDATE system_status SET ' + ','.join(k+'=NULL' for k in keys))
             old = list(c.execute('PRAGMA table_info(temperature_history)'))
             if old and 'source' not in {r['name'] for r in old}:
@@ -146,7 +155,20 @@ class SmartHomeDB:
             c.execute('CREATE UNIQUE INDEX IF NOT EXISTS unique_rfid_uid ON authorized_persons(rfid_uid) WHERE rfid_uid IS NOT NULL')
             for table, col in [('sensor_history','received_at'),('hardware_events','received_at'),('temperature_history','timestamp'),('door_window_history','timestamp'),('light_history','timestamp'),('access_logs','timestamp'),('face_events','timestamp'),('automation_logs','timestamp')]:
                 c.execute(f'CREATE INDEX IF NOT EXISTS idx_{table}_time ON {table}({col})')
-            c.execute('PRAGMA user_version=2')
+            if version < 3:
+                # 空调是早期大模型幻觉产物（Module B 从来没有空调执行器）。
+                # API/前端已全局删除，这里把两列也物理删掉，否则 /api/status
+                # 会继续把它们原样回传给前端。
+                if sqlite3.sqlite_version_info >= (3, 35, 0):
+                    cols = {r['name'] for r in c.execute('PRAGMA table_info(system_status)')}
+                    for col in ('ac_status', 'ac_temperature'):
+                        if col in cols:
+                            c.execute(f'ALTER TABLE system_status DROP COLUMN {col}')
+                else:
+                    logger.warning(
+                        '[DB] SQLite %s 不支持 DROP COLUMN，保留已废弃的空调列'
+                        '（已无任何代码引用）', sqlite3.sqlite_version)
+            c.execute('PRAGMA user_version=3')
 
     def _rows(self, sql, args=()):
         with self.connection() as c:
@@ -177,7 +199,7 @@ class SmartHomeDB:
     def update_status(self, **kwargs):
         # Compatibility API; HTTP control routes must never call this optimistically.
         allowed = set(SENSORS + OUTPUTS) | {
-            'ac_status', 'ac_temperature', 'sensor_last_seen', 'output_last_seen'}
+            'sensor_last_seen', 'output_last_seen'}
         values = {k:v for k,v in kwargs.items() if k in allowed}
         if values:
             values['last_updated'] = utcnow()
