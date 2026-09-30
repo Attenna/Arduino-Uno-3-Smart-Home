@@ -7,6 +7,10 @@ let isOnline = true;           // 网络连接状态
 let lastStatusUpdate = Date.now();
 let pendingRequests = new Set(); // 跟踪进行中请求，防止并发堆积
 
+// 空调最后一次成功下发的状态（来自 /api/status 回显），供"合并式"操作补齐
+let acState = { power: false, mode: 'auto', temperature: 26, fan: 'auto',
+                swing_ud: false, swing_lr: false };
+
 // ==================== 增强型 Fetch 工具 ====================
 
 async function fetchWithTimeout(url, options = {}, timeoutMs = 8000) {
@@ -164,6 +168,14 @@ function initControlSliders() {
             setLight(v > 0 ? 'on' : 'off', v);
         });
     }
+    const acSlider = document.getElementById('acTempSlider');
+    if (acSlider) {
+        const acLabel = document.getElementById('acTempLabel');
+        acSlider.addEventListener('input', () => {
+            if (acLabel) acLabel.textContent = Number(acSlider.value).toFixed(1) + '\u00b0C';
+        });
+        acSlider.addEventListener('change', () => setACTemp(acSlider.value));
+    }
 }
 
 function startStatusPolling() {
@@ -278,6 +290,38 @@ function updateDashboard(data) {
         lightEl.className = 'status-text ' + (data.light_status === 'on' ? 'active' : 'normal');
     }
 
+    // 空调（美的红外）：回写读数、滑块与各按钮选中态
+    acState = {
+        power: data.ac_status === 'on',
+        mode: data.ac_mode || 'auto',
+        temperature: Number(data.ac_temperature) || 26,
+        fan: data.ac_fan || 'auto',
+        swing_ud: !!data.ac_swing_ud,
+        swing_lr: !!data.ac_swing_lr,
+    };
+    const acIndicator = document.getElementById('acIndicator');
+    if (acIndicator) acIndicator.classList.toggle('on', acState.power);
+    const acTempEl = document.getElementById('acTempValue');
+    if (acTempEl) acTempEl.textContent = acState.power ? Math.round(acState.temperature) + '°C' : '--';
+    const acModeEl = document.getElementById('acModeValue');
+    if (acModeEl) acModeEl.textContent = acState.power ? t('ac.mode_' + acState.mode) : t('ac.off_hint');
+    const acSliderEl = document.getElementById('acTempSlider');
+    if (acSliderEl && document.activeElement !== acSliderEl) acSliderEl.value = acState.temperature;
+    const acTempLabel = document.getElementById('acTempLabel');
+    if (acTempLabel) acTempLabel.textContent = Math.round(acState.temperature) + '°C';
+    document.querySelectorAll('#acModeButtons [data-ac-mode]').forEach(btn => {
+        btn.classList.toggle('active', acState.power && btn.dataset.acMode === acState.mode);
+    });
+    document.querySelectorAll('#acFanButtons [data-ac-fan]').forEach(btn => {
+        btn.classList.toggle('active', acState.power && btn.dataset.acFan === acState.fan);
+    });
+    [['acSwingUdBtn', 'swing_ud'], ['acSwingLrBtn', 'swing_lr']].forEach(([id, key]) => {
+        const btn = document.getElementById(id);
+        if (btn) btn.classList.toggle('active', acState[key]);
+    });
+    const acPowerBtn = document.getElementById('acPowerBtn');
+    if (acPowerBtn) acPowerBtn.textContent = t(acState.power ? 'ac.power_off' : 'ac.power_on');
+
     // 统计
     if (data.statistics) {
         updateStats(data.statistics);
@@ -338,7 +382,28 @@ async function setFan(speed) {
     }
 }
 
-// 远程控制面板：light_on/off、fan_on/off、door_open/close
+// ==================== 空调（美的红外）====================
+// 空调每条指令都会带上完整状态（红外一帧就含开关/模式/温度/风速），
+// 所以这里只传变化项，由后端按库里当前值补齐后整帧下发。
+
+async function setAC(partial) {
+    const body = { ...partial };
+    // 未开机时改模式/温度/风速 → 自动带开机，避免"设置被忽略"这种哑路径
+    if (body.power === undefined && !acState.power) body.power = true;
+    const result = await apiPost('/api/ac', body);
+    if (result) {
+        showNotification(getMessage(result));
+        loadStatus();
+    }
+}
+
+function toggleAC() { setAC({ power: !acState.power }); }
+function setACMode(mode) { setAC({ mode }); }
+function setACTemp(value) { setAC({ temperature: Number(value) }); }
+function setACFan(fan) { setAC({ fan }); }
+function toggleACOption(key) { setAC({ [key]: !acState[key] }); }
+
+// 远程控制面板：light_on/off、fan_on/off、door_open/close、ac_on/off
 async function remoteControl(action) {
     const posts = {
         light_on:  ['/api/light', { status: 'on', brightness: 100 }],
@@ -347,6 +412,8 @@ async function remoteControl(action) {
         fan_off:   ['/api/fan', { speed: 0 }],
         door_open: ['/api/door', { status: 'open' }],
         door_close:['/api/door', { status: 'closed' }],
+        ac_on:     ['/api/ac', { power: true }],
+        ac_off:    ['/api/ac', { power: false }],
     };
     const target = posts[action];
     if (!target) return;

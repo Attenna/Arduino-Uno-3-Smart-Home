@@ -288,7 +288,7 @@ class McpHardwareBridge:
         if _looks_like_error(text):
             return False, text
         # B 板不自报状态：任何执行器工具成功 ACK 都视为输出板在线
-        if name in ("door", "window", "light", "fan", "buzzer", "ir") and self.command_ack_listener:
+        if name in ("door", "window", "light", "fan", "buzzer", "ir", "ac") and self.command_ack_listener:
             try:
                 self.command_ack_listener(name, args or {})
             except Exception:
@@ -351,7 +351,7 @@ class McpHardwareBridge:
         text = str(body.get("result") or "ok")
         if _looks_like_error(text):
             return False, text
-        if name in ("door", "window", "light", "fan", "buzzer", "ir") and self.command_ack_listener:
+        if name in ("door", "window", "light", "fan", "buzzer", "ir", "ac") and self.command_ack_listener:
             try:
                 self.command_ack_listener(name, args or {})
             except Exception:
@@ -407,3 +407,14 @@ class McpHardwareBridge:
         else:
             return False, "红外发射需要 code，或 address + command"
         return self.call_tool("ir", args)
+
+    def control_ac(self, **kwargs) -> tuple[bool, str]:
+        """美的空调（RN02G(X) 红外状态帧）。kwargs 只带要改变的字段，None = 保持不变。
+
+        一次变更最多翻译成几帧（状态帧 + 扫风翻转帧），B 板发射是阻塞的，
+        因此超时放宽到 20s。MCP 侧负责帧编码与状态合并，这里只转发。
+        """
+        args = {k: v for k, v in kwargs.items() if v is not None}
+        if not args:
+            return False, "空调控制至少需要一个参数"
+        return self.call_tool("ac", args, timeout=20.0)

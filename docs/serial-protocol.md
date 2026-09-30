@@ -130,6 +130,7 @@ Module A 原则上"只报告"，下行仅支持少量**无业务含义**的控�
 | `oled` | `clear` | - | OLED 清屏 |
 | `ir` | `send_nec` | `code`(32 位十进制) | V1221 发射 NEC 码（38kHz） |
 | `ir` | `repeat` | - | 发送 NEC 重复帧（长按） |
+| `ir` | `send_midea` | `hex`(6 个十六进制字符) | 发射美的 RN02G(X) 空调状态帧：`hex` 是 3 字节 A,B,C（如 `B2BF00`），固件补出 `[A,~A,B,~B,C,~C]` 全 MSB-first 并整帧重复 2 遍。帧内容由 Linux 侧 `PC_Test/midea_ac.py` 生成 |
 | `system` | `status` | - | 查询执行器状态 |
 | `system` | `who` | - | 返回设备标识 |
 
@@ -144,6 +145,7 @@ Module A 原则上"只报告"，下行仅支持少量**无业务含义**的控�
 {"cmd":"display","action":"show_time","hour":14,"minute":30}
 {"cmd":"oled","action":"show_text","line":2,"text":"T: 25.3 C"}
 {"cmd":"ir","action":"send_nec","code":16712445}
+{"cmd":"ir","action":"send_midea","hex":"B2BF00"}
 {"cmd":"system","action":"status"}
 ```
 

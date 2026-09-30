@@ -15,6 +15,7 @@ struct Command {
     long line;                  // oled 行号
     char text[24];              // oled 文本
     unsigned long code;         // ir NEC 码（32 位）
+    char hex[20];               // ir 美的帧：最长 9 字节 = 18 个十六进制字符
 };
 
 // 把 JSON 行解析为 Command 结构

@@ -347,6 +347,31 @@ function defineBlocks() {
             this.setTooltip('十进制 32 位 NEC 码（bit31 先发，不是 LSB-first 那套值）');
         },
     };
+    // 空调（美的红外）：每项都能选"不改"，只下发选过的项
+    Blockly.Blocks['act_ac'] = {
+        init: function () {
+            this.appendDummyInput()
+                .appendField('❄️ 空调')
+                .appendField(new Blockly.FieldDropdown(AC_SWITCH_OPTIONS), 'POWER');
+            this.appendDummyInput()
+                .appendField('模式')
+                .appendField(new Blockly.FieldDropdown(AC_MODE_OPTIONS), 'MODE')
+                .appendField('温度')
+                .appendField(new Blockly.FieldDropdown(acTempOptions), 'TEMP')
+                .appendField('风速')
+                .appendField(new Blockly.FieldDropdown(AC_FAN_OPTIONS), 'FAN');
+            this.appendDummyInput()
+                .appendField('上下')
+                .appendField(new Blockly.FieldDropdown(AC_SWITCH_OPTIONS), 'SWING_UD')
+                .appendField('左右')
+                .appendField(new Blockly.FieldDropdown(AC_SWITCH_OPTIONS), 'SWING_LR');
+            this.setPreviousStatement(true, 'ACT');
+            this.setNextStatement(true, 'ACT');
+            this.setColour(120);
+            this.setTooltip('美的空调红外遥控。"不改"的项保持原设定；'
+                + '未开机时给温度/模式/风速会自动先开机');
+        },
+    };
     // 全屋模式：进门切自动 / 触摸切手动 / 红外循环档位
     Blockly.Blocks['act_home_mode'] = {
         init: function () {
@@ -449,6 +474,21 @@ function optionValue(options, value, fallback) {
     return options.some(o => o[1] === value) ? value : fallback;
 }
 
+// 空调积木下拉：值与后端 midea_ac.apply_overrides 的取值一致，空串 = 该项不改
+const AC_SWITCH_OPTIONS = [['不改', ''], ['开', 'on'], ['关', 'off']];
+const AC_MODE_OPTIONS = [['不改', ''], ['自动', 'auto'], ['制冷', 'cool'],
+                         ['制热', 'heat'], ['抽湿', 'dry'], ['送风', 'fan']];
+const AC_FAN_OPTIONS = [['不改', ''], ['自动', 'auto'], ['低', 'low'],
+                        ['中', 'mid'], ['高', 'high']];
+function acTempOptions() {
+    // 真遥控器 RN02G(X) 只有整数度，没有半度档
+    const opts = [['不改', '']];
+    for (let t = 17; t <= 30; t += 1) {
+        opts.push([t + '°C', String(t)]);
+    }
+    return opts;
+}
+
 // ==================== 工具箱 & 主题 ====================
 
 function buildToolbox() {
@@ -483,6 +523,7 @@ function buildToolbox() {
         <block type="act_light_color"></block>
         <block type="act_light_rgb"></block>
         <block type="act_fan"></block>
+        <block type="act_ac"></block>
         <block type="act_home_mode"></block>
         <block type="act_voice"></block>
         <block type="act_ir"></block>
@@ -592,6 +633,19 @@ function summarizeAction(a) {
             if (a.clear) return 'OLED 清屏';
             return (a.line === undefined || a.line === null)
                 ? 'OLED 显示' : `OLED 第${a.line}行`;
+        case 'ac': {
+            const bits = [];
+            if (a.power !== undefined) bits.push(a.power ? '开机' : '关机');
+            if (a.mode) {
+                bits.push({ auto: '自动', cool: '制冷', heat: '制热',
+                            dry: '抽湿', fan: '送风' }[a.mode] || a.mode);
+            }
+            if (a.temperature !== undefined) bits.push(a.temperature + '°C');
+            if (a.fan) bits.push('风' + ({ auto: '自动', low: '低', mid: '中', high: '高' }[a.fan] || a.fan));
+            if (a.swing_ud) bits.push('上下扫风');
+            if (a.swing_lr) bits.push('左右扫风');
+            return '空调' + (bits.length ? ' ' + bits.join(' ') : '');
+        }
         case 'ir': {
             if (a.address !== undefined && a.command !== undefined) {
                 const hex = '0x' + Number(a.command).toString(16).toUpperCase().padStart(2, '0');
@@ -1069,6 +1123,22 @@ function actionToJson(b) {
         }
         case 'act_ir_code':
             return { device: 'ir', code: Number(b.getFieldValue('CODE')) };
+        case 'act_ac': {
+            const a = { device: 'ac' };
+            const power = b.getFieldValue('POWER');
+            if (power) a.power = power === 'on';
+            const mode = b.getFieldValue('MODE');
+            if (mode) a.mode = mode;
+            const temp = b.getFieldValue('TEMP');
+            if (temp) a.temperature = Number(temp);
+            const fan = b.getFieldValue('FAN');
+            if (fan) a.fan = fan;
+            [['SWING_UD', 'swing_ud'], ['SWING_LR', 'swing_lr']].forEach(([field, key]) => {
+                const v = b.getFieldValue(field);
+                if (v) a[key] = v === 'on';
+            });
+            return a;
+        }
         case 'act_delay':  return { device: 'delay',
                                     seconds: Number(b.getFieldValue('SECONDS')) };
         case 'act_oled':
@@ -1220,6 +1290,18 @@ function fillAction(a) {
                 b.setFieldValue(optionValue(irKeyOptions(), hex, '0x45'), 'CMD');
             }
             break;
+        case 'ac': {
+            b = createTyped('act_ac');
+            b.setFieldValue(a.power === undefined ? '' : (a.power ? 'on' : 'off'), 'POWER');
+            b.setFieldValue(a.mode || '', 'MODE');
+            b.setFieldValue(a.temperature === undefined ? '' : Number(a.temperature).toFixed(1), 'TEMP');
+            b.setFieldValue(a.fan || '', 'FAN');
+            [['SWING_UD', 'swing_ud'], ['SWING_LR', 'swing_lr'],
+             ['ECO', 'eco'], ['FZC', 'fzc']].forEach(([field, key]) => {
+                b.setFieldValue(a[key] === undefined ? '' : (a[key] ? 'on' : 'off'), field);
+            });
+            break;
+        }
         case 'delay': b = createTyped('act_delay'); b.setFieldValue(String(a.seconds === undefined ? 3 : a.seconds), 'SECONDS'); break;
         case 'oled':
             if (a.clear) {

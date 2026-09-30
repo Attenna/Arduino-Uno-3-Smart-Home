@@ -213,6 +213,37 @@ def validate_action(action: dict, where: str = "动作块") -> dict:
             if not 0 <= code <= 4294967295:
                 raise ValidationError("NEC 码需为 0~4294967295（32 位无符号）")
             clean["code"] = code
+    elif device == "ac":
+        # 与 MCP 的 ac 工具一致：全部可选，空串/None = 该项不改，但至少要设一项
+        if action.get("power") is not None:
+            clean["power"] = bool(action["power"])
+        mode = str(action.get("mode") or "").strip()
+        if mode:
+            if mode not in ("auto", "cool", "heat", "dry", "fan"):
+                raise ValidationError("空调模式只能是 auto/cool/heat/dry/fan")
+            clean["mode"] = mode
+        temperature = action.get("temperature")
+        if temperature not in (None, ""):
+            temperature = round(_as_number(temperature, where) * 2) / 2
+            if not 17 <= temperature <= 30:
+                raise ValidationError("空调温度需在 17~30℃ 之间")
+            clean["temperature"] = temperature
+        fan = str(action.get("fan") or "").strip()
+        if fan:
+            if fan not in ("auto", "20", "40", "60", "80", "100"):
+                raise ValidationError("空调风速只能是 auto/20/40/60/80/100")
+            clean["fan"] = fan
+        for key in ("swing_ud", "swing_lr", "eco", "fzc"):
+            if action.get(key) is not None:
+                clean[key] = bool(action[key])
+        timer = action.get("timer")
+        if timer not in (None, ""):
+            timer = round(_as_number(timer, where) * 2) / 2
+            if not 0 <= timer <= 24:
+                raise ValidationError("空调定时需在 0~24 小时之间（0=取消）")
+            clean["timer"] = timer
+        if len(clean) == 1:
+            raise ValidationError("空调动作至少要设置一项（开关/模式/温度/风速/扫风/ECO/防直吹/定时）")
     elif device == "home_mode":
         # 三项都可选，但至少要设一项；空串 = 该项不改
         mode = str(action.get("mode") or "").strip()

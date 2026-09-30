@@ -86,6 +86,13 @@ def voice_action_payload(name, args):
             return {"device": "fan", "speed": _pct255(args.get("value"), 50)}
         return None
 
+    if name == "ac":
+        # 空调没有 action：只回传本次真正给出的字段，web 侧按 DB 当前值补齐
+        keys = ("power", "mode", "temperature", "fan",
+                "swing_ud", "swing_lr")
+        state = {k: args[k] for k in keys if args.get(k) is not None}
+        return {"device": "ac", "state": state} if state else None
+
     return None
 
 

@@ -39,6 +39,8 @@ from .home_mode import (FAN_LABELS, FAN_LABELS_EN, LIGHT_LABELS,
 from .oled_carousel import (DEFAULT_PAGES, PAGES_VERSION, OledCarousel,
                             is_legacy_default_pages)
 from .schema import validate_rules
+import midea_ac
+from ..ac_state import AC_KEYS, ac_state_from_db, write_ac_state
 # RFID 卡号归一化：规则里存的与事件里带的两侧都归一后再比
 from ..database import normalize_uid
 
@@ -590,10 +592,10 @@ class AutomationEngine:
         device = action["device"]
         # 手动优先：控制器设备刚被手动设置过（冷却窗口内）→ 自动动作让位跳过，
         # 绝不把用户刚设的状态改回去（「网页控制失败/风扇自启」的根治点）。
-        if device in ("door", "window", "light", "fan"):
+        if device in ("door", "window", "light", "fan", "ac"):
             if self.home_mode.within_manual_grace(device):
                 label = {"door": "门", "window": "窗", "light": "灯",
-                         "fan": "风扇"}.get(device, device)
+                         "fan": "风扇", "ac": "空调"}.get(device, device)
                 return True, f"{label}处于手动冷却窗口，自动动作让位（跳过）"
         if device == "delay":
             time.sleep(float(action["seconds"]))
@@ -724,6 +726,22 @@ class AutomationEngine:
                 address=action.get("address"), command=action.get("command"))
             if ok:
                 return True, f"红外已发射 addr=0x{key[0]:02X} cmd=0x{key[1]:02X}"
+            return False, msg
+        if device == "ac":
+            # 空调是"合并式"状态（一帧带齐开关/模式/温度/风速）：
+            # 规则只给要改的项，其余按库里的当前值补齐后整帧下发。
+            try:
+                target, changed = midea_ac.apply_overrides(
+                    ac_state_from_db(self.db),
+                    **{k: action.get(k) for k in AC_KEYS})
+            except (ValueError, TypeError) as e:
+                return False, f"空调参数无效：{e}"
+            if not changed:
+                return True, "空调状态未变化"
+            ok, msg = self.bridge.control_ac(**target.snapshot())
+            if ok:
+                write_ac_state(self.db, target)
+                return True, "空调已更新"
             return False, msg
         if device == "oled":
             # 清屏比分快且不依赖占位符

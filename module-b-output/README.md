@@ -19,7 +19,7 @@ Module B 是一块 Arduino Uno，负责执行硬件动作并驱动显示设备�
 | 5 | 蜂鸣器 | 数字 | 持续 / 间歇蜂鸣 |
 | 6 | TM1637 数码管 | 数字 | 显示时钟 / 数字 |
 | 7 | SH1106 OLED | SPI | 8 行 × 16 列文本 |
-| 8 | V1221 红外发射管 | 数字 | NEC 协议 38kHz，遥控家电 |
+| 8 | V1221 红外发射管 | 数字 | NEC 协议 + 美的空调长码，38kHz，遥控家电 |
 
 所有命令由 Home Assistant 经 Orange Pi 网关下发，Module B 只执行、不做决定。
 
@@ -61,7 +61,7 @@ Module B 是一块 Arduino Uno，负责执行硬件动作并驱动显示设备�
 | D9 | 蜂鸣器 |
 | D10 | OLED CS |
 | D11 | OLED SDA（=SPI MOSI） |
-| D12 | V1221 红外发射管（NEC 38kHz） |
+| D12 | V1221 红外发射管（NEC / 美的空调长码 38kHz）|
 | D13 | OLED SCK（=SPI SCK） |
 | A0（D14） | OLED DC |
 | A1（D15） | OLED RES |

@@ -19,7 +19,10 @@ BASE = Path(__file__).resolve().parent
 SENSORS = ('temperature', 'humidity', 'light_raw', 'smoke', 'rain', 'distance',
            'touch', 'motion', 'soil_moisture', 'soil_dry')
 OUTPUTS = ('door_status', 'window_status', 'fan_speed', 'fan_level',
-           'light_status', 'light_brightness', 'light_level', 'buzzer_status')
+           'light_status', 'light_brightness', 'light_level', 'buzzer_status',
+           # 美的空调（红外遥控）：都是"已收到 ACK 的指令状态"，与其它执行器一样持久保留
+           'ac_status', 'ac_mode', 'ac_temperature', 'ac_fan',
+           'ac_swing_ud', 'ac_swing_lr', 'ac_eco', 'ac_fzc', 'ac_timer')
 
 
 def utcnow():
@@ -103,8 +106,11 @@ class SmartHomeDB:
                 fan_speed INTEGER,
                 door_status TEXT, window_status TEXT, light_status TEXT,
                 light_brightness INTEGER, last_updated TEXT)''')
-            extra = {k: 'INTEGER' for k in ('light_raw','smoke','rain','distance','touch','motion','soil_moisture','soil_dry','fan_level','light_level','device_uptime_ms')}
-            extra.update({k: 'TEXT' for k in ('buzzer_status','sensor_last_seen','output_last_seen')})
+            extra = {k: 'INTEGER' for k in ('light_raw','smoke','rain','distance','touch','motion','soil_moisture','soil_dry','fan_level','light_level','device_uptime_ms',
+                                            'ac_swing_ud','ac_swing_lr','ac_eco','ac_fzc')}
+            extra.update({k: 'TEXT' for k in ('buzzer_status','sensor_last_seen','output_last_seen',
+                                              'ac_status','ac_mode','ac_fan')})
+            extra.update({k: 'REAL' for k in ('ac_temperature','ac_timer')})
             columns = {r['name'] for r in c.execute('PRAGMA table_info(system_status)')}
             for key, kind in extra.items():
                 if key not in columns:

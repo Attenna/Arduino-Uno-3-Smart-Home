@@ -50,6 +50,17 @@
 // ---- 红外发射（V1221 / TSAL1221 940nm，38kHz NEC 协议）----
 #define IR_TX_PIN           12
 
+// ---- 美的空调长码时序（移植自 IRsendMeidi 参考库，38kHz 载波）----
+// 位 1 = 500µs 载波 + 1600µs 空闲；位 0 = 500µs 载波 + 550µs 空闲
+// 引导 = 4400µs 载波 + 4400µs 空闲；结尾 = 500µs 载波 + 5220µs 空闲
+#define MIDEA_LEAD_MARK     4400
+#define MIDEA_LEAD_SPACE    4400
+#define MIDEA_BIT_MARK      500
+#define MIDEA_ONE_SPACE     1600
+#define MIDEA_ZERO_SPACE    550
+#define MIDEA_STOP_MARK     500
+#define MIDEA_STOP_SPACE    5220
+
 // ---- OLED（SPI 4 线接口）----
 #define OLED_IS_SH1106      1   // 1=SH1106, 0=SSD1306
 #define OLED_RES_PIN        15  // RES  → A1（D15）
@@ -60,6 +71,6 @@
 // ---- 设备标识 ----
 #define BOARD_TYPE          "MODULE_B"
 #define BOARD_ROLE          "OUTPUT_NODE"
-#define FW_VERSION          "V2.1"  // 正式版：移除 TM1637 时钟单元；红外发射保留
+#define FW_VERSION          "V2.3"  // V2.2 起红外支持美的长码；V2.3 修 D12(SPI MISO) 被 OLED 抢成 INPUT 导致发不出红外
 
 #endif // CONFIG_B_H

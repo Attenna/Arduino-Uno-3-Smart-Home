@@ -61,6 +61,8 @@ void assignString(Command& cmd, const char* key, const char* val) {
         strncpy(cmd.action, val, sizeof(cmd.action) - 1);
     } else if (strcmp(key, "text") == 0) {
         strncpy(cmd.text, val, sizeof(cmd.text) - 1);
+    } else if (strcmp(key, "hex") == 0) {
+        strncpy(cmd.hex, val, sizeof(cmd.hex) - 1);
     }
     // 其余字符串字段忽略
 }

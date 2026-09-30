@@ -74,7 +74,7 @@ class HomeModeManager:
     """全屋模式 + 仲裁状态机。线程安全（RLock 保护全部可变状态）。"""
 
     # 会被「手动冷却窗口」仲裁覆盖的控制器设备
-    GRACE_DEVICES = ("light", "fan", "window", "door")
+    GRACE_DEVICES = ("light", "fan", "window", "door", "ac")
 
     def __init__(self, bridge, db, path):
         self.bridge = bridge
@@ -190,7 +190,7 @@ class HomeModeManager:
            （页面切「自动」/触摸键可恢复）。
         """
         label = {"light": "灯光", "fan": "风扇", "door": "门",
-                 "window": "窗户"}.get(device, device)
+                 "window": "窗户", "ac": "空调"}.get(device, device)
         dirty = False
         with self._lock:
             self._last_manual[device] = time.time()

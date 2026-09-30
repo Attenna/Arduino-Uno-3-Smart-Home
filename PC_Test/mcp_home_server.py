@@ -1,8 +1,8 @@
 """mcp_home_server.py — 智能家居 MCP server（stdio）
 
 独占持有 Module A（传感器）/Module B（执行器）两块 Arduino 串口，
-通过标准 MCP 协议向大模型暴露 8 个控制/查询工具：
-    light / door / window / fan / buzzer / oled / display / get_sensor_status
+通过标准 MCP 协议向大模型暴露 10 个控制/查询工具：
+    light / door / window / fan / buzzer / oled / display / ir / ac / get_sensor_status
 
 数据流：
     LLM(voice_assistant) ──MCP stdio──▶ 本 server ──JSON 命令──▶ Module B (USB)
@@ -27,6 +27,8 @@ from typing import Literal, Optional
 
 import serial
 import serial.tools.list_ports
+
+import midea_ac
 
 BAUD = 115200
 
@@ -111,6 +113,8 @@ class HomeController:
         self._events: deque = deque(maxlen=50)
         self._ready: dict = {}
         self._keypad_buf: list = []   # [(ts, key), ...] 键盘密码缓冲
+        self._ac_lock = threading.Lock()
+        self._ac = midea_ac.AcState()  # 美的空调当前状态（本进程内维护）
         self._a_thread: Optional[threading.Thread] = None
         if self.ser_a is not None:
             self._a_thread = threading.Thread(
@@ -358,6 +362,30 @@ class HomeController:
         # B 板 CommandParser 用 strtoul(...,10) 解析 code，必须下发十进制整数
         return self._send_b({"cmd": "ir", "action": "send_nec", "code": value})
 
+    def handle_ac(self, **kwargs) -> str:
+        """美的空调（RN02G(X) 红外状态帧）。把本次变更翻译成若干帧，逐帧下发。
+
+        kwargs 里为 None 的项表示"保持不变"；任一帧失败即整体失败且不更新状态
+        （B 板没收到时空调并未改变，状态必须保持一致）。
+        """
+        with self._ac_lock:
+            try:
+                new_state, changed = midea_ac.apply_overrides(self._ac, **kwargs)
+            except ValueError as e:
+                return f"error: {e}"
+            if not changed:
+                return "ok 空调状态无变化"
+            frames = midea_ac.to_frames(new_state, changed)
+            if not frames:
+                return "ok 空调未开机，已忽略本次设置（请先 power=true）"
+            for hexstr in frames:
+                result = self._send_b({"cmd": "ir", "action": "send_midea",
+                                       "hex": hexstr})
+                if not result.startswith("ok"):
+                    return result
+            self._ac = new_state
+            return f"ok 空调已更新（{len(frames)} 帧）"
+
     def handle_get_sensor_status(self) -> str:
         with self._snapshot_lock:
             snap = dict(self._snapshot)
@@ -450,6 +478,30 @@ async def ir(code: Optional[int] = None,
 
 
 @mcp.tool()
+async def ac(
+    power: Optional[bool] = None,
+    mode: Optional[Literal["auto", "cool", "heat", "dry", "fan"]] = None,
+    temperature: Optional[int] = None,
+    fan: Optional[Literal["auto", "low", "mid", "high"]] = None,
+    swing_ud: Optional[bool] = None,
+    swing_lr: Optional[bool] = None,
+) -> str:
+    """控制美的空调（红外遥控，Module B 的 D12 发射管）。
+
+    只传需要改变的参数，未传的保持不变（服务端进程内记住当前设定）。
+    power：开关机；mode：auto(自动)/cool(制冷)/heat(制热)/dry(抽湿)/fan(送风)；
+    temperature：17~30℃ 的整数度（真遥控器 RN02G(X) 没有半度档）；
+    fan：风速 auto(自动)/low(低)/mid(中)/high(高)；
+    swing_ud/swing_lr：上下/左右扫风。遥控器上它们是**翻转键**，每次下发即翻转一次，
+    所以只在设定值发生变化时才补发，实际朝向取决于空调当时的状态。
+    注意：设置模式/温度/风速会连带把空调开机（状态帧自带开机效果），无需先 power=true。
+    """
+    return await asyncio.to_thread(
+        HOME.handle_ac, power=power, mode=mode, temperature=temperature,
+        fan=fan, swing_ud=swing_ud, swing_lr=swing_lr)
+
+
+@mcp.tool()
 async def get_sensor_status() -> str:
     """查询当前传感器状态：温度、湿度、光照、烟雾、雨、距离、人体运动、土壤湿度等 + 最近事件。"""
     return await asyncio.to_thread(HOME.handle_get_sensor_status)
@@ -484,8 +536,8 @@ def main():
             print("[警告] 未连接任何 Arduino 模块；工具将返回错误信息。", file=sys.stderr)
 
     HOME = HomeController(ser_a=ser_a, ser_b=ser_b)
-    print(f"[MCP] 暴露 8 个工具：light/door/window/fan/buzzer/oled/display/get_sensor_status",
-          file=sys.stderr)
+    print("[MCP] 暴露 10 个工具：light/door/window/fan/buzzer/oled/display/ir/ac"
+          "/get_sensor_status", file=sys.stderr)
     print("[MCP] stdio 传输已就绪，等待 client。", file=sys.stderr)
     mcp.run(transport="stdio")
 

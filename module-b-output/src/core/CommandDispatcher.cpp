@@ -1,6 +1,30 @@
 #include "CommandDispatcher.h"
 #include "../Config.h"
 
+namespace {
+
+uint8_t hexNibble(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return 0xFF;
+}
+
+// 把 "B2FD0B..." 解析成字节数组；遇到非法字符即停止，返回解析出的字节数。
+uint8_t hexToBytes(const char* hex, uint8_t* out, uint8_t maxLen) {
+    uint8_t n = 0;
+    while (hex[0] && hex[1] && n < maxLen) {
+        uint8_t hi = hexNibble(hex[0]);
+        uint8_t lo = hexNibble(hex[1]);
+        if (hi == 0xFF || lo == 0xFF) break;
+        out[n++] = (uint8_t)((hi << 4) | lo);
+        hex += 2;
+    }
+    return n;
+}
+
+} // namespace
+
 void CommandDispatcher::begin() {
     _door.begin();
     _window.begin();
@@ -67,6 +91,13 @@ bool CommandDispatcher::dispatch(const Command& cmd) {
     else if (strcmp(cmd.device, "ir") == 0) {
         if (strcmp(cmd.action, "send_nec") == 0) { _ir.sendNEC(cmd.code); return true; }
         if (strcmp(cmd.action, "repeat") == 0)  { _ir.sendNECRepeat();  return true; }
+        if (strcmp(cmd.action, "send_midea") == 0) {
+            // hex = 3 字节状态帧 (A,B,C)；~A/~B/~C 与整帧重复由驱动生成
+            uint8_t bytes[3];
+            if (hexToBytes(cmd.hex, bytes, sizeof(bytes)) != 3) return false;
+            _ir.sendMideaFrame(bytes, 3);
+            return true;
+        }
     }
 #endif
 

@@ -51,3 +51,6 @@ pi-staging/
 .pio/
 **/.pio/
 
+# 美的红外参考仓库克隆（仅作查阅，自身带 .git，不入库）
+_ref_IRsendMeidi/
+

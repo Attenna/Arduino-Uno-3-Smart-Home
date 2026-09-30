@@ -187,6 +187,57 @@
                     </div>
                 </div>
             </div>
+
+            <!-- 空调控制卡片（美的红外遥控） -->
+            <div class="card card-ac">
+                <div class="card-header">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="card-icon">
+                        <rect x="2" y="4" width="20" height="10" rx="2"/>
+                        <path d="M6 18v2M12 18v3M18 18v2"/>
+                    </svg>
+                    <h3 data-i18n="ac.title">空调（美的红外）</h3>
+                    <span class="ac-indicator" id="acIndicator"></span>
+                </div>
+                <div class="card-body">
+                    <div class="ac-readout">
+                        <span class="ac-temp" id="acTempValue">--</span>
+                        <span class="ac-mode" id="acModeValue">--</span>
+                    </div>
+                    <div class="control-row">
+                        <label data-i18n="ac.temperature">温度</label>
+                        <div class="slider-container">
+                            <input type="range" id="acTempSlider" min="17" max="30" step="1" value="26" class="slider">
+                            <span class="slider-value" id="acTempLabel">26.0°C</span>
+                        </div>
+                    </div>
+                    <div class="control-row">
+                        <label data-i18n="ac.mode">模式</label>
+                        <div class="btn-group btn-group-tight" id="acModeButtons">
+                            <button class="btn btn-sm ac-opt" data-ac-mode="auto" onclick="setACMode('auto')" data-i18n="ac.mode_auto">自动</button>
+                            <button class="btn btn-sm ac-opt" data-ac-mode="cool" onclick="setACMode('cool')" data-i18n="ac.mode_cool">制冷</button>
+                            <button class="btn btn-sm ac-opt" data-ac-mode="heat" onclick="setACMode('heat')" data-i18n="ac.mode_heat">制热</button>
+                            <button class="btn btn-sm ac-opt" data-ac-mode="dry" onclick="setACMode('dry')" data-i18n="ac.mode_dry">抽湿</button>
+                            <button class="btn btn-sm ac-opt" data-ac-mode="fan" onclick="setACMode('fan')" data-i18n="ac.mode_fan">送风</button>
+                        </div>
+                    </div>
+                    <div class="control-row">
+                        <label data-i18n="ac.fan">风速</label>
+                        <div class="btn-group btn-group-tight" id="acFanButtons">
+                            <button class="btn btn-sm ac-opt" data-ac-fan="auto" onclick="setACFan('auto')" data-i18n="ac.mode_auto">自动</button>
+                            <button class="btn btn-sm ac-opt" data-ac-fan="low" onclick="setACFan('low')" data-i18n="ac.fan_low">低</button>
+                            <button class="btn btn-sm ac-opt" data-ac-fan="mid" onclick="setACFan('mid')" data-i18n="ac.fan_mid">中</button>
+                            <button class="btn btn-sm ac-opt" data-ac-fan="high" onclick="setACFan('high')" data-i18n="ac.fan_high">高</button>
+                        </div>
+                    </div>
+                    <div class="btn-group btn-group-tight">
+                        <button class="btn btn-sm ac-opt" id="acSwingUdBtn" onclick="toggleACOption('swing_ud')" data-i18n="ac.swing_ud">上下扫风</button>
+                        <button class="btn btn-sm ac-opt" id="acSwingLrBtn" onclick="toggleACOption('swing_lr')" data-i18n="ac.swing_lr">左右扫风</button>
+                    </div>
+                    <div class="btn-group">
+                        <button class="btn btn-sm btn-toggle" id="acPowerBtn" onclick="toggleAC()" data-i18n="ac.power_on">开机</button>
+                    </div>
+                </div>
+            </div>
         </div>
 
         <!-- 第二行: 温度趋势图 -->
@@ -253,6 +304,18 @@
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
                         </div>
                         <span data-i18n="remote.door_close">关门</span>
+                    </div>
+                    <div class="remote-device" onclick="remoteControl('ac_on')">
+                        <div class="remote-icon ac-on-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="10" rx="2"/><path d="M6 18v2M12 18v3M18 18v2"/></svg>
+                        </div>
+                        <span data-i18n="remote.ac_on">开空调</span>
+                    </div>
+                    <div class="remote-device" onclick="remoteControl('ac_off')">
+                        <div class="remote-icon ac-off-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="10" rx="2"/><line x1="3" y1="15" x2="21" y2="3"/></svg>
+                        </div>
+                        <span data-i18n="remote.ac_off">关空调</span>
                     </div>
                 </div>
             </div>

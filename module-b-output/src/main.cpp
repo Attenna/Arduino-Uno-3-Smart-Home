@@ -16,6 +16,13 @@ CommandDispatcher dispatcher;
 Protocol protocol;
 
 void setup() {
+    // 抢在一切初始化之前把蜂鸣器引脚拉到"静默"电平。
+    // MCU 复位后所有引脚是高阻，而 Buzzer::begin() 排在 door/window/fan/light
+    // 之后（第 5 个），这中间有几十毫秒到数秒的窗口；有源低电平蜂鸣器在高阻
+    // 输入下会持续响（实测每次复位/刷机都会吵到人）。
+    pinMode(BUZZER_PIN, OUTPUT);
+    digitalWrite(BUZZER_PIN, BUZZER_ACTIVE_LOW ? HIGH : LOW);
+
     dispatcher.begin();
     protocol.begin(dispatcher);
     protocol.sendReady();

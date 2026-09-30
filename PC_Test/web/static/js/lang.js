@@ -58,6 +58,25 @@ const I18N = {
             'light.night': '夜灯',
             'light.off': '关闭',
 
+            // 空调（美的红外）
+            'ac.title': '空调（美的红外）',
+            'ac.temperature': '温度',
+            'ac.mode': '模式',
+            'ac.fan': '风速',
+            'ac.swing_ud': '上下扫风',
+            'ac.swing_lr': '左右扫风',
+            'ac.fan_low': '低',
+            'ac.fan_mid': '中',
+            'ac.fan_high': '高',
+            'ac.power_on': '开机',
+            'ac.power_off': '关机',
+            'ac.off_hint': '未开机',
+            'ac.mode_auto': '自动',
+            'ac.mode_cool': '制冷',
+            'ac.mode_heat': '制热',
+            'ac.mode_dry': '抽湿',
+            'ac.mode_fan': '送风',
+
             // 远程控制
             'remote.title': '远程控制面板',
             'remote.subtitle': '一键控制所有设备',
@@ -67,6 +86,8 @@ const I18N = {
             'remote.fan_off': '关闭风扇',
             'remote.door_open': '开门',
             'remote.door_close': '关门',
+            'remote.ac_on': '开空调',
+            'remote.ac_off': '关空调',
 
             // 历史数据
             'history.title': '历史数据 - 智能家居',
@@ -281,6 +302,25 @@ const I18N = {
             'light.night': 'Night',
             'light.off': 'Off',
 
+            // Air Conditioner (Midea IR)
+            'ac.title': 'Air Conditioner (Midea IR)',
+            'ac.temperature': 'Temperature',
+            'ac.mode': 'Mode',
+            'ac.fan': 'Fan Speed',
+            'ac.swing_ud': 'Swing V',
+            'ac.swing_lr': 'Swing H',
+            'ac.fan_low': 'Low',
+            'ac.fan_mid': 'Mid',
+            'ac.fan_high': 'High',
+            'ac.power_on': 'Turn On',
+            'ac.power_off': 'Turn Off',
+            'ac.off_hint': 'Off',
+            'ac.mode_auto': 'Auto',
+            'ac.mode_cool': 'Cool',
+            'ac.mode_heat': 'Heat',
+            'ac.mode_dry': 'Dry',
+            'ac.mode_fan': 'Fan',
+
             // Remote Control
             'remote.title': 'Remote Control Panel',
             'remote.subtitle': 'One-touch control for all devices',
@@ -290,6 +330,8 @@ const I18N = {
             'remote.fan_off': 'Turn Off Fan',
             'remote.door_open': 'Open Door',
             'remote.door_close': 'Close Door',
+            'remote.ac_on': 'AC On',
+            'remote.ac_off': 'AC Off',
 
             // History
             'history.title': 'History - Smart Home',

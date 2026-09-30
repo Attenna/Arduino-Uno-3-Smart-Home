@@ -8,7 +8,10 @@ import logging
 
 from flask import Blueprint, jsonify, request
 
+import midea_ac
+
 from .. import extensions
+from ..ac_state import AC_KEYS, ac_state_from_db, write_ac_state
 from ..extensions import db
 
 logger = logging.getLogger(__name__)
@@ -55,6 +58,29 @@ def _record_fan(speed):
     _note_manual("fan", speed=speed)
 
 
+# ==================== 空调（美的红外）====================
+
+def _ac_state_from_db() -> midea_ac.AcState:
+    return ac_state_from_db(db)
+
+
+def _opt_bool(data, key):
+    """三态布尔：缺省/None = 不改；其余必须是真布尔或 0/1。"""
+    if key not in data or data[key] is None:
+        return None
+    value = data[key]
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)) and value in (0, 1):
+        return bool(value)
+    raise ValueError(f"{key} 需为 true/false")
+
+
+def _record_ac(state, who="面板"):
+    write_ac_state(db, state)
+    _note_manual("ac", reason=f"{who}手动操作空调，全屋切到手动模式并保持当前状态")
+
+
 def _pct(value, default=0):
     try:
         return max(0, min(100, int(value)))
@@ -67,12 +93,12 @@ def _hardware_error(text):
                     "detail": text}), 503
 
 
-def _hw_call(method, *args):
+def _hw_call(method, *args, **kwargs):
     """调用硬件桥方法；桥未初始化时返回 503 而不是抛 AttributeError(500)。"""
     bridge = extensions.bridge
     if bridge is None:
         return False, "硬件服务未启动（硬件桥未初始化）"
-    return getattr(bridge, method)(*args)
+    return getattr(bridge, method)(*args, **kwargs)
 
 
 # ==================== 门 ====================
@@ -190,6 +216,47 @@ def control_fan():
     })
 
 
+# ==================== 空调（美的红外遥控）====================
+
+@bp.route("/api/ac", methods=["GET"])
+def get_ac_status():
+    return jsonify(_ac_state_from_db().snapshot())
+
+
+@bp.route("/api/ac", methods=["POST"])
+def control_ac():
+    """只传要改的字段；其余按数据库里的当前状态补齐后整帧下发。
+
+    红外指令里一帧就带齐了开关/模式/温度/风速，所以这里下发的是**完整状态**
+    而不是增量——MCP 进程重启后第一次指令也能一次带齐全部设定。
+    """
+    data = request.get_json(silent=True) or {}
+    try:
+        target, changed = midea_ac.apply_overrides(
+            _ac_state_from_db(),
+            power=_opt_bool(data, "power"),
+            mode=data.get("mode"),
+            temperature=data.get("temperature"),
+            fan=data.get("fan"),
+            swing_ud=_opt_bool(data, "swing_ud"),
+            swing_lr=_opt_bool(data, "swing_lr"),
+        )
+    except (ValueError, TypeError) as e:
+        return jsonify({"error": f"空调参数无效：{e}",
+                        "error_en": f"Invalid AC parameter: {e}"}), 400
+
+    payload = target.snapshot()
+    if not changed:
+        return jsonify({**payload, "message": "空调状态未变化",
+                        "message_en": "No change"})
+    ok, msg = _hw_call("control_ac", **payload)
+    if not ok:
+        return _hardware_error(msg)
+    _record_ac(target)
+    return jsonify({**payload, "message": "空调已更新",
+                    "message_en": "AC updated"})
+
+
 # ==================== 语音动作回传（与面板等效）====================
 
 @bp.route("/api/devices/manual_report", methods=["POST"])
@@ -227,6 +294,19 @@ def manual_report():
         speed = _pct(data.get("speed"), 0)
         _record_fan(speed)
         return jsonify({"ok": True, "fan_speed": speed})
+    if device == "ac":
+        # 空调是"合并式"状态：语音只报变化的字段，这里按 DB 当前值补齐
+        state = data.get("state")
+        if not isinstance(state, dict):
+            return jsonify({"error": "空调回传需要 state 对象"}), 400
+        try:
+            target, _ = midea_ac.apply_overrides(
+                _ac_state_from_db(),
+                **{k: v for k, v in state.items() if k in AC_KEYS})
+        except (ValueError, TypeError) as e:
+            return jsonify({"error": f"空调参数无效：{e}"}), 400
+        _record_ac(target, who=who)
+        return jsonify({"ok": True, **target.snapshot()})
 
     return jsonify({"error": f"不支持的设备: {device or '(空)'}",
                     "error_en": f"Unsupported device: {device or '(empty)'}"}), 400
