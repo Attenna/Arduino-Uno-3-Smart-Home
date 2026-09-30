@@ -42,6 +42,13 @@ LIGHT_LABELS = {"auto": "自动", "hold": "保持当前", "dark": "暗",
                 "half": "半亮", "bright": "全亮"}
 _LIGHT_CYCLE = ["hold", "dark", "half", "bright", "auto"]
 
+# OLED 专用英文标签：B 板 u8x8 字库只有 ASCII，汉字上屏是乱码。
+# 页面/接口仍返回上面那套中文标签，两者互不影响。
+MODE_LABELS_EN = {MODE_AUTO: "Auto", MODE_MANUAL: "Manual", MODE_AWAY: "Away"}
+FAN_LABELS_EN = {None: "Auto", "on": "ForceON", "off": "ForceOFF"}
+LIGHT_LABELS_EN = {"auto": "Auto", "hold": "Hold", "dark": "Dark",
+                   "half": "Half", "bright": "Full"}
+
 # 红外键码（NEC，ADDRESS 0x00；见派上 ~/ir_remote_keymap.txt）
 IR_FAN_KEYS = (0x45,)          # 键'1'
 IR_LIGHT_KEYS = (0x46, 0x47)   # 键'2'/'3'

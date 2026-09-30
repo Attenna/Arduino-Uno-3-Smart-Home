@@ -239,8 +239,9 @@ function defineBlocks() {
     };
     Blockly.Blocks['act_oled'] = {
         init: function () {
-            this.appendDummyInput().appendField('🖥️ OLED 显示文本')
-                .appendField(new Blockly.FieldTextInput('温度 {temperature}C'), 'TEXT');
+            // OLED 字库只有 ASCII：文案用英文/数字，汉字不会上屏
+            this.appendDummyInput().appendField('🖥️ OLED 显示文本(仅英文)')
+                .appendField(new Blockly.FieldTextInput('Temp {temperature}C'), 'TEXT');
             this.appendDummyInput()
                 .appendField(new Blockly.FieldCheckbox('FALSE'), 'CLEAR')
                 .appendField('清屏');
@@ -655,7 +656,7 @@ function fillAction(a) {
         case 'oled':
             b = createTyped('act_oled');
             b.setFieldValue(a.clear ? 'TRUE' : 'FALSE', 'CLEAR');
-            b.setFieldValue(a.text ?? '温度 {temperature}C', 'TEXT');
+            b.setFieldValue(a.text ?? 'Temp {temperature}C', 'TEXT');
             break;
         default: return null;
     }

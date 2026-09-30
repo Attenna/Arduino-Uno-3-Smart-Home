@@ -29,7 +29,8 @@ from datetime import datetime
 from pathlib import Path
 
 from .capabilities import CONDITION_SOURCES, EVENT_TRIGGERS
-from .home_mode import MODE_LABELS, HomeModeManager
+from .home_mode import (FAN_LABELS_EN, LIGHT_LABELS_EN, MODE_LABELS_EN,
+                        HomeModeManager)
 from .oled_carousel import (DEFAULT_PAGES, PAGES_VERSION, OledCarousel,
                             is_legacy_default_pages)
 from .schema import validate_rules
@@ -262,9 +263,10 @@ class AutomationEngine:
         data = dict(self._snapshot)
         try:
             hm = self.home_mode.config()
-            data["home_mode"] = MODE_LABELS[hm["mode"]]
-            data["home_fan"] = hm["fan_label"]
-            data["home_light"] = hm["light_label"]
+            # OLED 用英文标签（B 板字库无汉字），页面/接口仍返回中文标签
+            data["home_mode"] = MODE_LABELS_EN.get(hm["mode"], "Auto")
+            data["home_fan"] = FAN_LABELS_EN.get(hm["fan_override"], "Auto")
+            data["home_light"] = LIGHT_LABELS_EN.get(hm["light_level"], "Auto")
         except Exception:                            # noqa: BLE001
             pass
         try:
@@ -280,9 +282,10 @@ class AutomationEngine:
             logs = self.db.get_automation_logs(1)
             if logs:
                 row = logs[0]
-                mark = "✓" if row.get("success") else "✗"
-                data["recent_auto"] = (f"{row.get('rule_name', '')} {mark} "
-                                       f"{row.get('reason') or ''}")
+                # OLED 只能显示 ASCII：状态标记用 OK/NG，规则名由用户自取
+                # （中文规则名会被 to_oled_text 丢弃，不会花屏）
+                mark = "OK" if row.get("success") else "NG"
+                data["recent_auto"] = f"{mark} {row.get('rule_name', '')}"
         except Exception:                            # noqa: BLE001
             pass
         return data

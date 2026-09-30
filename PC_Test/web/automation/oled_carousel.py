@@ -16,59 +16,76 @@ import re
 import time
 from typing import Any, Callable, Dict, List, Optional
 
-__all__ = ["OledCarousel", "DEFAULT_PAGES", "DEFAULT_PAGES_OLD",
-           "DEFAULT_PAGES_V0", "PAGES_VERSION", "is_legacy_default_pages"]
+__all__ = ["OledCarousel", "DEFAULT_PAGES", "DEFAULT_PAGES_V3",
+           "DEFAULT_PAGES_OLD", "DEFAULT_PAGES_V0", "PAGES_VERSION",
+           "is_legacy_default_pages", "to_oled_text"]
 
 # 默认页面版本：升级后自动替换磁盘上的旧默认页（避免老配置卡住新文案）
-PAGES_VERSION = 3
+# v4：B 板字库（u8x8_font_chroma48medium8_r）只有 ASCII 字形，汉字上屏是乱码，
+#     默认文案全部改为英文。
+PAGES_VERSION = 4
 
 # 默认页面模板（覆盖常见传感器 + 全屋模式 + 执行器状态 + 最近自动化）
-# OLED 每行 16 个 ASCII 列宽，1 个汉字约占 2 列，故每行控制在 ~8 个汉字。
+# 每行 16 个 ASCII 列宽，务必只用英文/数字/符号。
 DEFAULT_PAGES: List[Dict[str, Any]] = [
     {
-        "title": "环境",
+        "title": "Environment",
         "lines": [
-            "【环境状态】",
-            "当前温度：{temperature}度",
-            "当前湿度：{humidity}%",
-            "当前光照：{light}",
+            "= ENVIRONMENT =",
+            "Temp: {temperature}C",
+            "Hum:  {humidity}%",
+            "Light:{light}",
         ],
     },
     {
-        "title": "全屋模式",
+        "title": "Home Mode",
         "lines": [
-            "【全屋模式】",
-            "当前模式：{home_mode}",
-            "风扇：{home_fan}",
-            "灯光：{home_light}",
+            "= HOME MODE =",
+            "Mode: {home_mode}",
+            "Fan:  {home_fan}",
+            "Light:{home_light}",
         ],
     },
     {
-        "title": "设备",
+        "title": "Devices",
         "lines": [
-            "【设备状态】",
-            "门：{b_door}",
-            "窗：{b_window}",
-            "风扇：{b_fan}%",
-            "灯光：{light_lv}%",
+            "= DEVICES =",
+            "Door: {b_door}",
+            "Wind: {b_window}",
+            "Fan:  {b_fan}%",
+            "Light:{light_lv}%",
         ],
     },
     {
-        "title": "安防",
+        "title": "Safety",
         "lines": [
-            "【安全状态】",
-            "烟雾：{smoke}",
-            "雨水：{rain}",
-            "人体：{motion}",
+            "= SAFETY =",
+            "Smoke:{smoke}",
+            "Rain: {rain}",
+            "PIR:  {motion}",
         ],
     },
     {
-        "title": "最近自动化",
+        "title": "Last Auto",
         "lines": [
-            "【最近自动化】",
+            "= LAST AUTO =",
             "{recent_auto}",
         ],
     },
+]
+
+# v3 默认页（中文文案）。B 板字库显示不了汉字，PAGES_VERSION=4 起改成英文，
+# 磁盘上仍是这份说明用户没自定义过 → 自动替换为英文默认页。
+DEFAULT_PAGES_V3: List[Dict[str, Any]] = [
+    {"title": "环境", "lines": ["【环境状态】", "当前温度：{temperature}度",
+                                "当前湿度：{humidity}%", "当前光照：{light}"]},
+    {"title": "全屋模式", "lines": ["【全屋模式】", "当前模式：{home_mode}",
+                                    "风扇：{home_fan}", "灯光：{home_light}"]},
+    {"title": "设备", "lines": ["【设备状态】", "门：{b_door}", "窗：{b_window}",
+                                "风扇：{b_fan}%", "灯光：{light_lv}%"]},
+    {"title": "安防", "lines": ["【安全状态】", "烟雾：{smoke}", "雨水：{rain}",
+                                "人体：{motion}"]},
+    {"title": "最近自动化", "lines": ["【最近自动化】", "{recent_auto}"]},
 ]
 
 # v1 默认页（旧文案，无「全屋模式」页）。磁盘配置与之完全一致说明用户没自定义过，
@@ -97,15 +114,28 @@ DEFAULT_PAGES_V0: List[Dict[str, Any]] = [
 
 def is_legacy_default_pages(pages: Any) -> bool:
     """判断磁盘上的页面是否就是历史版本的「默认页」（说明用户没自定义过）。"""
-    return pages in (DEFAULT_PAGES_OLD, DEFAULT_PAGES_V0)
+    return pages in (DEFAULT_PAGES_V3, DEFAULT_PAGES_OLD, DEFAULT_PAGES_V0)
 
-# 把状态值翻译成友好中文（open/closed、on/off、True/False 等）
+
+# 把状态值翻译成友好英文（open/closed、on/off、True/False 等）
 _VALUE_LABELS = {
-    "open": "全开", "closed": "关", "opening": "开中", "closing": "关中",
-    "normal": "半开45", "on": "开", "off": "关", "true": "是", "false": "否",
+    "open": "OPEN", "closed": "SHUT", "opening": "OPENING", "closing": "CLOSING",
+    "normal": "HALF45", "on": "ON", "off": "OFF", "true": "YES", "false": "NO",
 }
 
 _PLACEHOLDER = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
+_NON_ASCII = re.compile(r"[^\x20-\x7e]")
+
+
+def to_oled_text(text: Any, cols: int = 16) -> str:
+    """裁剪成 B 板 OLED 能显示的文本（纯 ASCII，最多 16 列）。
+
+    B 板字库 ``u8x8_font_chroma48medium8_r`` 只有 ASCII 字形，且固件
+    ``showText`` 只取前 16 个字节：UTF-8 汉字会被硬切成半截字节，上屏就是
+    花屏乱码。这里直接丢弃非 ASCII 字符并截断，保证任何数据源都不会把
+    汉字送到屏上。
+    """
+    return _NON_ASCII.sub("", str(text))[:cols]
 
 
 class OledCarousel:
@@ -145,18 +175,21 @@ class OledCarousel:
 
     # ---- 格式化 ----
     def format_text(self, template: str) -> str:
-        """替换 {key} 占位符，统一用 _str 格式化；key 不存在则留空。"""
+        """替换 {key} 占位符，统一用 _str 格式化；key 不存在则留空。
+
+        结果再过一遍 to_oled_text：非 ASCII（汉字）丢弃 + 截断 16 列。
+        """
         def repl(m):
             key = m.group(1)
             return self._str(self._data[key]) if key in self._data else ""
-        return _PLACEHOLDER.sub(repl, template)
+        return to_oled_text(_PLACEHOLDER.sub(repl, template))
 
     @staticmethod
     def _str(v: Any) -> str:
         if v is None:
             return "--"
         if isinstance(v, bool):
-            return "是" if v else "否"
+            return "YES" if v else "NO"
         if isinstance(v, float):
             return f"{v:.1f}"
         return _VALUE_LABELS.get(str(v).lower(), str(v))
