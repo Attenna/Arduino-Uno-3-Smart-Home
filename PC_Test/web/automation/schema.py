@@ -138,6 +138,20 @@ def validate_action(action: dict, where: str = "动作块") -> dict:
         clean.update({"count": max(1, min(10, count)),
                       "on_ms": max(50, min(2000, on_ms)),
                       "off_ms": max(50, min(2000, off_ms))})
+    elif device == "oled":
+        # 二选一：clear 清屏，或 text 显示文本（可含 {占位符}）
+        if action.get("clear"):
+            clean["clear"] = True
+        else:
+            raw = action.get("text")
+            if not isinstance(raw, str):
+                raise ValidationError("OLED 文本必须为字符串")
+            text = raw.strip()
+            if not text:
+                raise ValidationError("OLED 文本不能为空（或请用 clear 清屏）")
+            if len(text) > 200:
+                raise ValidationError("OLED 文本过长（最多 200 字符）")
+            clean["text"] = text
     return clean
 
 

@@ -236,6 +236,18 @@ function defineBlocks() {
             this.setColour(120);
         },
     };
+    Blockly.Blocks['act_oled'] = {
+        init: function () {
+            this.appendDummyInput().appendField('🖥️ OLED 显示文本')
+                .appendField(new Blockly.FieldTextInput('温度 {temperature}C'), 'TEXT');
+            this.appendDummyInput()
+                .appendField(new Blockly.FieldCheckbox('FALSE'), 'CLEAR')
+                .appendField('清屏');
+            this.setPreviousStatement(true, 'ACT');
+            this.setNextStatement(true, 'ACT');
+            this.setColour(120);
+        },
+    };
 }
 
 // ==================== 下拉选项（来自后端能力清单） ====================
@@ -303,6 +315,7 @@ function buildToolbox() {
         <block type="act_light"></block>
         <block type="act_fan"></block>
         <block type="act_buzzer"></block>
+        <block type="act_oled"></block>
         <block type="act_delay"></block>
       </category>
     </xml>`;
@@ -345,7 +358,43 @@ async function bootWorkspace() {
     renderRules(data.rules || []);
     refreshPreview();
     refreshLogs();
+    loadOledConfig();
     setInterval(refreshLogs, 5000);
+}
+
+// ==================== OLED 轮播设置 ====================
+
+async function loadOledConfig() {
+    const on = document.getElementById('oledEnabled');
+    const iv = document.getElementById('oledInterval');
+    const st = document.getElementById('oledStatus');
+    if (!on || !iv) return;
+    try {
+        const cfg = await api('/api/automation/oled');
+        on.checked = !!cfg.enabled;
+        iv.value = cfg.interval || 5;
+        if (st) st.textContent = cfg.enabled ? '✅ 已开，每 ' + (cfg.interval || 5) + ' 秒切页' : '⏸ 已关闭';
+    } catch (e) {
+        if (st) st.textContent = '接口暂不可用（引擎未启动）';
+    }
+}
+
+async function saveOledConfig() {
+    const iv = document.getElementById('oledInterval');
+    const body = {
+        enabled: !!document.getElementById('oledEnabled').checked,
+        interval: Number(iv.value) || 5,
+    };
+    try {
+        const r = await api('/api/automation/oled', {
+            method: 'PUT', body: JSON.stringify(body),
+        });
+        const st = document.getElementById('oledStatus');
+        if (st) st.textContent = r.config.enabled ? '✅ 已开启，每 ' + r.config.interval + ' 秒切页' : '⏸ 已关闭';
+        showNotification(r.message || 'OLED 轮播配置已保存', 'success');
+    } catch (e) {
+        showNotification(e.message, 'error');
+    }
 }
 
 // ==================== 积木 -> JSON ====================
@@ -415,6 +464,9 @@ function actionToJson(b) {
                                     off_ms: Number(b.getFieldValue('OFFMS')) };
         case 'act_delay':  return { device: 'delay',
                                     seconds: Number(b.getFieldValue('SECONDS')) };
+        case 'act_oled':
+            if (b.getFieldValue('CLEAR') === 'TRUE') return { device: 'oled', clear: true };
+            return { device: 'oled', text: b.getFieldValue('TEXT') };
         default: return null;
     }
 }
@@ -536,6 +588,11 @@ function fillAction(a) {
             b.setFieldValue(String(a.off_ms ?? 200), 'OFFMS');
             break;
         case 'delay': b = createTyped('act_delay'); b.setFieldValue(String(a.seconds ?? 3), 'SECONDS'); break;
+        case 'oled':
+            b = createTyped('act_oled');
+            b.setFieldValue(a.clear ? 'TRUE' : 'FALSE', 'CLEAR');
+            b.setFieldValue(a.text ?? '温度 {temperature}C', 'TEXT');
+            break;
         default: return null;
     }
     return b;

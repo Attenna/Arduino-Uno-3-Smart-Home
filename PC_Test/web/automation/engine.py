@@ -29,6 +29,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .capabilities import CONDITION_SOURCES, EVENT_TRIGGERS
+from .oled_carousel import DEFAULT_PAGES, OledCarousel
 from .schema import validate_rules
 
 logger = logging.getLogger(__name__)
@@ -57,6 +58,15 @@ class AutomationEngine:
         self._stopping = False
         self._tick_thread: threading.Thread | None = None
 
+        # ── OLED 轮播（默认关闭，避免扰民） ──
+        self.oled_path = Path(rules_path).parent / "oled_carousel.json"
+        self.oled_enabled = False
+        self.oled_interval = 5.0
+        self.oled_pages: list[dict] | None = None
+        self._oled_carousel = OledCarousel(emitter=self._oled_emit,
+                                           on_log=self._oled_log)
+        self._oled_thread: threading.Thread | None = None
+
     # ==================== 生命周期 ====================
 
     def start(self) -> None:
@@ -64,6 +74,9 @@ class AutomationEngine:
         self._tick_thread = threading.Thread(
             target=self._tick_loop, name="automation-tick", daemon=True)
         self._tick_thread.start()
+        self._oled_thread = threading.Thread(
+            target=self._oled_loop, name="automation-oled", daemon=True)
+        self._oled_thread.start()
         logger.info("[自动化] 引擎已启动，规则 %d 条", len(self.rules))
 
     def stop(self) -> None:
@@ -156,6 +169,118 @@ class AutomationEngine:
                             self._fire(rule, reason=f"定时 {trig['hhmm']}")
             except Exception as e:                   # noqa: BLE001
                 logger.debug("[自动化] 滴答求值异常: %s", e)
+
+    # ==================== OLED 轮播（默认关闭） ====================
+
+    def set_oled(self, pages=None, interval=None, enabled=None) -> dict:
+        """配置 OLED 轮播。任一参数为 None 表示保持当前值。
+
+        pages:   页面列表（{"title","lines"}），list 且非空才生效
+        interval: 每页停留秒数（>=1）
+        enabled:  是否启用轮播
+        """
+        if interval is not None:
+            if isinstance(interval, bool) or not isinstance(interval, (int, float)):
+                raise ValueError("间隔必须是数字（秒）")
+            self.oled_interval = max(1.0, float(interval))
+            self._oled_carousel.interval = self.oled_interval
+        if pages is not None:
+            if not isinstance(pages, list) or not pages:
+                raise ValueError("页面需为非空列表")
+            self.oled_pages = pages
+            self._oled_carousel.pages = pages
+            self._oled_carousel._page_idx = 0
+            self._oled_carousel._next_switch = time.time()
+        if enabled is not None:
+            self.oled_enabled = bool(enabled)
+        self._save_oled_config()
+        return self.oled_config()
+
+    def _save_oled_config(self) -> None:
+        try:
+            self.oled_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self.oled_path.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps({
+                "enabled": self.oled_enabled,
+                "interval": self.oled_interval,
+                "pages": self.oled_pages or DEFAULT_PAGES,
+            }, ensure_ascii=False, indent=2), encoding="utf-8")
+            tmp.replace(self.oled_path)
+        except Exception as e:                       # noqa: BLE001
+            logger.debug("[自动化] OLED 配置保存失败: %s", e)
+
+    def oled_config(self) -> dict:
+        """返回当前 OLED 轮播配置（含持久化文件里的历史配置）。"""
+        # 本进程从未显式配置且未持久化过：尝试把磁盘配置并入内存
+        if not (self.oled_enabled or self.oled_pages
+                or self.oled_interval != 5.0):
+            try:
+                if self.oled_path.exists():
+                    cfg = json.loads(self.oled_path.read_text(encoding="utf-8"))
+                    self.oled_enabled = bool(cfg.get("enabled", False))
+                    self.oled_interval = float(cfg.get("interval", 5.0))
+                    pages = cfg.get("pages")
+                    self.oled_pages = pages if isinstance(pages, list) and pages else None
+                    self._oled_carousel.pages = self.oled_pages or DEFAULT_PAGES
+                    self._oled_carousel.interval = self.oled_interval
+            except Exception as e:                   # noqa: BLE001
+                logger.debug("[自动化] OLED 配置读取失败: %s", e)
+        return {"enabled": self.oled_enabled, "interval": self.oled_interval,
+                "pages": self.oled_pages or DEFAULT_PAGES}
+
+    def _oled_loop(self) -> None:
+        """独立轮播线程：仅当启用时填充数据源并 tick。"""
+        while not self._stopping:
+            time.sleep(0.5)
+            try:
+                if not self.oled_enabled:
+                    continue
+                self._oled_carousel.set_data(self._oled_data())
+                self._oled_carousel.tick()
+            except Exception as e:                   # noqa: BLE001
+                logger.debug("[自动化] OLED 轮播异常: %s", e)
+
+    def _oled_data(self) -> dict:
+        """A 板快照 + B 板执行器状态 + 最近自动化，组成扁平数据源。"""
+        data = dict(self._snapshot)
+        try:
+            status = self.db.get_current_status()
+            data["b_door"] = status.get("door_status")
+            data["b_window"] = status.get("window_status")
+            data["b_fan"] = status.get("fan_speed")
+            data["light_lv"] = status.get("light_brightness")
+            data["b_buzzer"] = status.get("buzzer_status")
+        except Exception:                            # noqa: BLE001
+            pass
+        try:
+            logs = self.db.get_automation_logs(1)
+            if logs:
+                row = logs[0]
+                mark = "✓" if row.get("success") else "✗"
+                data["recent_auto"] = (f"{row.get('rule_name', '')} {mark} "
+                                       f"{row.get('reason') or ''}")
+        except Exception:                            # noqa: BLE001
+            pass
+        return data
+
+    def _oled_emit(self, line: int, text: str) -> None:
+        """轮播逐行下发；桥离线（且无 relay）时静默跳过。"""
+        if not self.bridge or (not self.bridge.online and not self.bridge.relay_url):
+            return
+        try:
+            self.bridge.call_tool("oled", {"action": "show_text",
+                                           "line": int(line), "text": text})
+        except Exception as e:                       # noqa: BLE001
+            logger.debug("[自动化] OLED 逐行下发失败: %s", e)
+
+    def _oled_log(self, message: str) -> None:
+        """轮播切页记入自动化日志（作为 reason 记录）。"""
+        try:
+            self.db.add_automation_log(
+                rule_id="oled_carousel", rule_name="OLED轮播显示",
+                triggered=0, conditions_hold=0, reason=message, success=1, detail="")
+        except Exception as e:                       # noqa: BLE001
+            logger.debug("[自动化] OLED 轮播记录写库失败: %s", e)
 
     # ==================== 规则求值 ====================
 
@@ -315,7 +440,35 @@ class AutomationEngine:
             return self.bridge.call_tool("buzzer", {
                 "action": "beep", "count": action["count"],
                 "on_ms": action["on_ms"], "off_ms": action["off_ms"]})
+        if device == "oled":
+            # 清屏比分快且不依赖占位符
+            if action.get("clear"):
+                return self.bridge.call_tool("oled", {"action": "clear"})
+            text = self._oled_format(action.get("text", ""))
+            if not text.strip():
+                return False, "OLED 文本为空"
+            # 支持按换行拆到 line 0..7
+            lines = [blk.strip() for blk in text.split("\n")[:8] if blk.strip()]
+            if not lines:
+                return False, "OLED 文本为空"
+            ok_all, last_msg = True, ""
+            for line_no, block in enumerate(lines):
+                ok, last_msg = self.bridge.call_tool(
+                    "oled", {"action": "show_text", "line": line_no, "text": block})
+                if not ok:
+                    ok_all = False
+                    break
+            return ok_all, last_msg
         return False, f"未知设备 {device}"
+
+    def _oled_format(self, template: str) -> str:
+        """用轮播数据源替换动作文本里的 {占位符}。"""
+        try:
+            self._oled_carousel.set_data(self._oled_data())
+            return self._oled_carousel.format_text(str(template))
+        except Exception as e:                       # noqa: BLE001
+            logger.debug("[自动化] OLED 模板格式化失败: %s", e)
+            return str(template)
 
     def _log(self, rule, fired, conditions_hold, reason, ok, detail) -> None:
         try:

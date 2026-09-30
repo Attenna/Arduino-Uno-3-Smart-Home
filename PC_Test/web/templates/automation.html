@@ -118,6 +118,21 @@
 
             <div style="display:flex;flex-direction:column;gap:16px">
                 <div class="card">
+                    <div class="card-header"><h3>🖥️ OLED 轮播设置</h3></div>
+                    <div class="card-body" style="display:flex;flex-direction:column;gap:10px">
+                        <label style="display:flex;align-items:center;gap:8px;font-size:14px">
+                            <input type="checkbox" id="oledEnabled"> 启用 OLED 轮播显示
+                        </label>
+                        <label style="display:flex;align-items:center;gap:8px;font-size:14px">
+                            每
+                            <input type="number" id="oledInterval" value="5" min="1" max="3600" step="1"
+                                   style="width:70px"> 秒切一页
+                        </label>
+                        <button class="btn btn-primary" onclick="saveOledConfig()">💾 保存 OLED 设置</button>
+                        <span id="oledStatus" style="font-size:12px;color:var(--text-secondary)"></span>
+                    </div>
+                </div>
+                <div class="card">
                     <div class="card-header"><h3>📡 实时状态（不执行动作）</h3></div>
                     <div class="card-body"><div id="previewList" class="preview-list">
                         <span style="color:var(--text-secondary);font-size:13px">点「刷新实时状态」查看各规则当前是否满足。</span>

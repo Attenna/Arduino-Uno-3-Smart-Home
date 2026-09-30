@@ -59,6 +59,9 @@ ACTION_DEVICES = {
     "buzzer": {"label": "蜂鸣器", "params": {"count": {"range": [1, 10], "label": "次数"},
                                              "on_ms": {"range": [50, 2000], "unit": "ms"},
                                              "off_ms": {"range": [50, 2000], "unit": "ms"}}},
+    "oled": {"label": "OLED 屏", "params": {
+        "text": {"label": "文本（可含 {temperature} 等占位符）", "maxlen": 200},
+        "clear": {"type": "bool", "label": "清屏"}}},
     "delay": {"label": "等待（延时）", "params": {"seconds": {"range": [1, 300], "unit": "秒"}}},
 }
 
