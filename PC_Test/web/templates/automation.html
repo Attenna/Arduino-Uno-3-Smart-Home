@@ -127,12 +127,18 @@
                             <button class="btn mini-btn" id="lightLevelBtn"
                                     onclick="cycleLightLevel()">💡 灯光：--</button>
                         </div>
+                        <label style="display:flex;align-items:center;gap:8px;font-size:13px">
+                            <input type="checkbox" id="awayOnlyChk"
+                                   onchange="setAwayOnly(this.checked)">
+                            仅在判定无人在家时自动调节（有人在家保留用户当前状态）
+                        </label>
                         <span id="homeModeDetail" class="mode-hint"></span>
                         <span class="mode-hint">
                             <b>红外遥控</b>：键1 循环「强制关→强制开→自动」风扇；键2/3 循环
                             「保持→暗→半亮→全亮→自动」灯光。<b>触摸传感器</b>按下可切换 手动/自动。
                             自动模式下：温度 &gt; 阈值开风扇（全速）、按光敏自动调灯光；
                             雨水自动关窗、雨停恢复 45°，烟雾报警，任何模式下都生效。
+                            面板/语音手动操作后会自动切到<b>手动</b>，不再被自动逻辑覆盖。
                         </span>
                     </div>
                 </div>

@@ -267,6 +267,8 @@ class AutomationEngine:
             data["home_mode"] = MODE_LABELS_EN.get(hm["mode"], "Auto")
             data["home_fan"] = FAN_LABELS_EN.get(hm["fan_override"], "Auto")
             data["home_light"] = LIGHT_LABELS_EN.get(hm["light_level"], "Auto")
+            # 需求11：人在家时自动调节暂停，屏上给出可见原因
+            data["presence"] = "YES" if hm.get("person_present") else "NO"
         except Exception:                            # noqa: BLE001
             pass
         try:

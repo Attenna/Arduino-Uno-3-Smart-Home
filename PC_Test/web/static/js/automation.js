@@ -384,9 +384,13 @@ async function loadHomeMode() {
     if (fanBtn) fanBtn.textContent = '🌀 风扇：' + HOME_MODE.fan_label;
     const lightBtn = document.getElementById('lightLevelBtn');
     if (lightBtn) lightBtn.textContent = '💡 灯光：' + HOME_MODE.light_label;
+    const awayOnly = document.getElementById('awayOnlyChk');
+    if (awayOnly) awayOnly.checked = !!HOME_MODE.auto_away_only;
     const detail = document.getElementById('homeModeDetail');
     if (detail) {
         const bits = [];
+        if (HOME_MODE.person_present) bits.push('👤 有人在家');
+        if (HOME_MODE.auto_paused) bits.push('⏸ 自动调节已暂停（人走后恢复）');
         if (HOME_MODE.pir_near_door) bits.push('门口有人 ' + HOME_MODE.pir_dwell_seconds + 's');
         if (HOME_MODE.door_close_in > 0) bits.push('关门倒计时 ' + HOME_MODE.door_close_in + 's');
         if (HOME_MODE.smoke_active) bits.push('⚠️ 烟雾报警中');
@@ -411,6 +415,12 @@ async function putHomeMode(body) {
 
 function setHomeMode(mode) {
     putHomeMode({ mode, reason: '页面切换全屋模式' });
+}
+
+function setAwayOnly(on) {
+    putHomeMode({ auto_away_only: !!on,
+                  reason: on ? '页面开启「仅无人在家时自动调节」'
+                             : '页面关闭「仅无人在家时自动调节」（有人也自动调节）' });
 }
 
 function cycleFanOverride() {

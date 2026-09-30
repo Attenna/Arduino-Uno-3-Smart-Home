@@ -16,14 +16,15 @@ import re
 import time
 from typing import Any, Callable, Dict, List, Optional
 
-__all__ = ["OledCarousel", "DEFAULT_PAGES", "DEFAULT_PAGES_V3",
+__all__ = ["OledCarousel", "DEFAULT_PAGES", "DEFAULT_PAGES_V4", "DEFAULT_PAGES_V3",
            "DEFAULT_PAGES_OLD", "DEFAULT_PAGES_V0", "PAGES_VERSION",
            "is_legacy_default_pages", "to_oled_text"]
 
 # 默认页面版本：升级后自动替换磁盘上的旧默认页（避免老配置卡住新文案）
 # v4：B 板字库（u8x8_font_chroma48medium8_r）只有 ASCII 字形，汉字上屏是乱码，
 #     默认文案全部改为英文。
-PAGES_VERSION = 4
+# v5：全屋模式页新增 Person 行（有人在家时自动调节会暂停，便于用户理解）。
+PAGES_VERSION = 5
 
 # 默认页面模板（覆盖常见传感器 + 全屋模式 + 执行器状态 + 最近自动化）
 # 每行 16 个 ASCII 列宽，务必只用英文/数字/符号。
@@ -42,6 +43,7 @@ DEFAULT_PAGES: List[Dict[str, Any]] = [
         "lines": [
             "= HOME MODE =",
             "Mode: {home_mode}",
+            "Person:{presence}",
             "Fan:  {home_fan}",
             "Light:{home_light}",
         ],
@@ -72,6 +74,21 @@ DEFAULT_PAGES: List[Dict[str, Any]] = [
             "{recent_auto}",
         ],
     },
+]
+
+# v4 默认页（已全英文，但全屋模式页还没有 Person 行）。
+# 磁盘上是这份说明用户没自定义过 → PAGES_VERSION=5 起自动替换。
+DEFAULT_PAGES_V4: List[Dict[str, Any]] = [
+    {"title": "Environment", "lines": ["= ENVIRONMENT =", "Temp: {temperature}C",
+                                       "Hum:  {humidity}%", "Light:{light}"]},
+    {"title": "Home Mode", "lines": ["= HOME MODE =", "Mode: {home_mode}",
+                                      "Fan:  {home_fan}", "Light:{home_light}"]},
+    {"title": "Devices", "lines": ["= DEVICES =", "Door: {b_door}",
+                                    "Wind: {b_window}", "Fan:  {b_fan}%",
+                                    "Light:{light_lv}%"]},
+    {"title": "Safety", "lines": ["= SAFETY =", "Smoke:{smoke}", "Rain: {rain}",
+                                   "PIR:  {motion}"]},
+    {"title": "Last Auto", "lines": ["= LAST AUTO =", "{recent_auto}"]},
 ]
 
 # v3 默认页（中文文案）。B 板字库显示不了汉字，PAGES_VERSION=4 起改成英文，
@@ -114,7 +131,8 @@ DEFAULT_PAGES_V0: List[Dict[str, Any]] = [
 
 def is_legacy_default_pages(pages: Any) -> bool:
     """判断磁盘上的页面是否就是历史版本的「默认页」（说明用户没自定义过）。"""
-    return pages in (DEFAULT_PAGES_V3, DEFAULT_PAGES_OLD, DEFAULT_PAGES_V0)
+    return pages in (DEFAULT_PAGES_V4, DEFAULT_PAGES_V3,
+                     DEFAULT_PAGES_OLD, DEFAULT_PAGES_V0)
 
 
 # 把状态值翻译成友好英文（open/closed、on/off、True/False 等）

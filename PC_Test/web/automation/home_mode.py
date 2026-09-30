@@ -11,6 +11,8 @@
     需求6  雨水关窗、雨停恢复 45°；烟雾 ─▶ 蜂鸣器持续报警
     需求8  触摸按下 ─▶ 手动（保持当前状态）；再按 ─▶ 恢复自动
     需求9  烟雾/雨水安全联动在任何模式（含离家/手动/禁用）下都生效
+    需求11 自动调节只在「判定无人在家」时生效；人在家时保留用户当前状态
+          （自动开关设备会让用户觉得「没有操控感」）
 
 设计约束：
 - 任何异常只写日志，绝不拖垮 bridge 轮询线程；
@@ -64,6 +66,8 @@ DEFAULT_CONFIG = {
     "dwell_only_away": True,       # 需求1：仅在「离家」模式做逗留报警，避免家人走动误响
     "door_close_sec": 10.0,        # 需求2：开门后自动关门延时
     "pir_recent_sec": 60.0,        # 判定「检测到人」的时间窗
+    "auto_away_only": True,        # 需求11：仅判定无人在家时才做自动调节
+    "presence_hold_sec": 300.0,    # 需求11：PIR 触发后「人还在家」的保持窗口（秒）
     "smoke_realarm_sec": 15.0,     # 烟雾未消散时的重复报警间隔
     "smoke_confirm_sec": 5.0,      # 需连续检测到烟雾该时长才报警（滤除单帧抖动）
     "smoke_realarm_max": 3,        # 未消散时的重复报警次数上限，之后只记录不再鸣响
@@ -75,10 +79,11 @@ DEFAULT_CONFIG = {
 }
 
 _NUMERIC_KEYS = ("temp_threshold", "door_dwell_sec", "door_close_sec",
-                 "pir_recent_sec", "smoke_realarm_sec", "smoke_confirm_sec",
-                 "light_dark_max", "light_mid_max")
+                 "pir_recent_sec", "presence_hold_sec", "smoke_realarm_sec",
+                 "smoke_confirm_sec", "light_dark_max", "light_mid_max")
 _INT_KEYS = ("fan_auto_speed", "bright_pct", "half_pct", "dark_pct",
              "smoke_realarm_max")
+_BOOL_KEYS = ("dwell_only_away", "auto_away_only")
 
 
 class HomeModeManager:
@@ -108,6 +113,7 @@ class HomeModeManager:
         self._last_fan = None          # 最近下发的风扇转速（去重）
         self._last_light = None        # 最近下发的 (status, brightness)
         self._last_window = None       # 最近下发的窗状态
+        self._presence_paused = False  # 自动调节是否因「人在家」暂停（仅用于状态变化时记日志）
         self._last_reason = ""
 
     # ==================== 配置与持久化 ====================
@@ -131,10 +137,11 @@ class HomeModeManager:
         if self.cfg.get("light_level") not in LIGHT_LABELS:
             self.cfg["light_level"] = "auto"
         self.cfg["enabled"] = bool(self.cfg.get("enabled", True))
-        raw = self.cfg.get("dwell_only_away", True)
-        if isinstance(raw, str):
-            raw = raw.strip().lower() not in ("0", "false", "no", "off", "")
-        self.cfg["dwell_only_away"] = bool(raw)
+        for key in _BOOL_KEYS:
+            raw = self.cfg.get(key, DEFAULT_CONFIG[key])
+            if isinstance(raw, str):
+                raw = raw.strip().lower() not in ("0", "false", "no", "off", "")
+            self.cfg[key] = bool(raw)
         for key in _NUMERIC_KEYS:
             try:
                 self.cfg[key] = float(self.cfg[key])
@@ -186,6 +193,9 @@ class HomeModeManager:
             "light_label": LIGHT_LABELS[cfg["light_level"]],
             "pir_near_door": bool(self._pir_since),
             "pir_dwell_seconds": round(now - self._pir_since, 1) if self._pir_since else 0.0,
+            "person_present": self.person_present(now),
+            "auto_paused": bool(self.cfg["auto_away_only"] and cfg["mode"] == MODE_AUTO
+                                and self.person_present(now)),
             "door_close_in": max(0.0, round(self._door_close_at - now, 1))
             if self._door_close_at else 0.0,
             "smoke_active": self._smoke_active,
@@ -193,6 +203,16 @@ class HomeModeManager:
             "last_reason": self._last_reason,
         })
         return cfg
+
+    def person_present(self, now: float | None = None) -> bool:
+        """需求11：是否判定「有人在家」。
+
+        PIR 只能测到「有动作」，静坐不动会漏检，所以用 presence_hold_sec
+        的保持窗口（默认 5 分钟）来近似「人还在家」。
+        """
+        now = time.time() if now is None else now
+        return bool(self._pir_last_seen
+                    and now - self._pir_last_seen <= self.cfg["presence_hold_sec"])
 
     # ==================== 外部输入（引擎钩子） ====================
 
@@ -392,12 +412,22 @@ class HomeModeManager:
         if mode == MODE_AWAY:
             return                                    # 离家：保持全关，不自动开启
 
+        # 需求11：判定有人在家的期间不做自动调节——自动开关设备会让用户觉得
+        # 「没有操控感」。只暂停 AUTO 的自动分支；红外强制档位、雨水/烟雾安全
+        # 联动、逗留报警都不受影响。
+        paused = self.cfg["auto_away_only"] and self.person_present()
+        if paused != self._presence_paused:
+            self._presence_paused = paused
+            self._log("判定有人在家：暂停自动调节，保留当前设备状态（人离开后恢复）"
+                      if paused else
+                      f"已 {self.cfg['presence_hold_sec']:g} 秒未检测到人：自动调节恢复")
+
         override = self.cfg["fan_override"]
         if override == "on":
             self._apply_fan(100, "红外强制开风扇")
         elif override == "off":
             self._apply_fan(0, "红外强制关风扇")
-        elif mode == MODE_AUTO:
+        elif mode == MODE_AUTO and not paused:
             temp = self._snapshot.get("temperature")
             if temp is not None:
                 threshold = self.cfg["temp_threshold"]
@@ -418,7 +448,7 @@ class HomeModeManager:
             self._apply_light("on", self.cfg["half_pct"], "手动档位：灯光半亮")
         elif level == "dark":
             self._apply_light("on", self.cfg["dark_pct"], "手动档位：灯光调暗")
-        elif mode == MODE_AUTO:
+        elif mode == MODE_AUTO and not paused:
             light = self._snapshot.get("light")
             if light is None:
                 return

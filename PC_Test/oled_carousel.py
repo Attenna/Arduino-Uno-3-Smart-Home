@@ -1,5 +1,8 @@
 """OLED 多行轮播显示 —— 按时间间隔轮换显示传感器/执行器状态。
 
+**文案只能用英文/数字/符号**：B 板字库（u8x8_font_chroma48medium8_r）只有
+ASCII 字形，且固件 showText 只取前 16 字节，汉字会被硬切成半截字节导致花屏。
+
 设计:
     - OLED 有 8 行(0~7)，每行 16 字符。
     - 把显示内容组织成多个"页面"，每页是一组多行文本（可含占位符）。
@@ -11,17 +14,18 @@
 
     carousel = OledCarousel(
         pages=[
-            {"title": "环境", "lines": [
-                "T:{temperature}C H:{humidity}%",
-                "光:{light} 距离:{distance}",
+            {"title": "Env", "lines": [
+                "Temp:{temperature}C",
+                "Hum: {humidity}%",
+                "Light:{light}",
             ]},
-            {"title": "安防", "lines": [
-                "烟:{smoke} 雨:{rain}",
-                "人:{motion} 土:{soil_dry}",
+            {"title": "Safety", "lines": [
+                "Smoke:{smoke} Rain:{rain}",
+                "PIR:  {motion}",
             ]},
-            {"title": "执行器", "lines": [
-                "门:{door} 窗:{window}",
-                "扇:{fan} 灯:{light_lv}",
+            {"title": "Output", "lines": [
+                "Door:{door} Wind:{window}",
+                "Fan: {fan}  Light:{light_lv}",
             ]},
         ],
         interval=3.0,          # 每页停留秒数
@@ -32,34 +36,48 @@
     carousel.tick()                       # 在循环里调用，自动轮播
 """
 
+import re
 import time
 from typing import Any, Callable, Dict, List, Optional
+
+# 把状态值翻译成友好英文（open/closed、on/off、True/False 等）
+_VALUE_LABELS = {
+    "open": "OPEN", "closed": "SHUT", "opening": "OPENING", "closing": "CLOSING",
+    "normal": "HALF45", "on": "ON", "off": "OFF", "true": "YES", "false": "NO",
+}
+
+_PLACEHOLDER = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
+_NON_ASCII = re.compile(r"[^\x20-\x7e]")
 
 
 # 默认页面模板（覆盖常见传感器 + 执行器状态）
 DEFAULT_PAGES: List[Dict[str, Any]] = [
     {
-        "title": "环境",
+        "title": "Env",
         "lines": [
-            "温度 {temperature}C",
-            "湿度 {humidity}%",
-            "光 {light}",
+            "= ENVIRONMENT =",
+            "Temp: {temperature}C",
+            "Hum:  {humidity}%",
+            "Light:{light}",
         ],
     },
     {
-        "title": "安防",
+        "title": "Safety",
         "lines": [
-            "烟 {smoke} 雨 {rain}",
-            "人 {motion} 距 {distance}",
-            "土 {soil_dry}",
+            "= SAFETY =",
+            "Smoke:{smoke}",
+            "Rain: {rain}",
+            "PIR:  {motion}",
         ],
     },
     {
-        "title": "执行器",
+        "title": "Output",
         "lines": [
-            "门 {b_door} 窗 {b_window}",
-            "扇 {b_fan} 灯 {light_lv}",
-            "蜂 {b_buzzer}",
+            "= DEVICES =",
+            "Door: {b_door}",
+            "Wind: {b_window}",
+            "Fan:  {b_fan}%",
+            "Light:{light_lv}%",
         ],
     },
 ]
@@ -121,24 +139,26 @@ class OledCarousel:
 
     # ---- 格式化 ----
     def _fmt(self, template: str) -> str:
-        """替换 {key} 占位符，统一用 _str 格式化；key 不存在则留空。"""
-        import re
+        """替换 {key} 占位符，统一用 _str 格式化；key 不存在则留空。
+
+        结果再丢弃非 ASCII（汉字上屏会花屏）并截断 16 列。
+        """
         def repl(m):
             key = m.group(1)
             if key in self._data:
                 return self._str(self._data[key])
             return ""
-        return re.sub(r"\{([A-Za-z_][A-Za-z0-9_]*)\}", repl, template)
+        return _NON_ASCII.sub("", _PLACEHOLDER.sub(repl, template))[:16]
 
     @staticmethod
     def _str(v: Any) -> str:
         if v is None:
             return "--"
         if isinstance(v, bool):
-            return "是" if v else "否"
+            return "YES" if v else "NO"
         if isinstance(v, float):
             return f"{v:.1f}"
-        return str(v)
+        return _VALUE_LABELS.get(str(v).lower(), str(v))
 
     # ---- 轮播 ----
     def tick(self):
