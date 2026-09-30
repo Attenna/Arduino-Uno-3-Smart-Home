@@ -352,6 +352,8 @@ async function bootWorkspace() {
         zoom: { controls: true, wheel: true, startScale: 0.95, maxScale: 2, minScale: 0.5 },
         trashcan: true,
         renderer: 'zelos',
+        // 媒体资源走本地（内网/校园网无外网也能用），避免 blockly-demo.appspot.com 超时
+        media: '/static/vendor/blockly/media/',
     });
     window.addEventListener('resize', () => Blockly.svgResize(workspace));
     const data = await api('/api/automation/rules');

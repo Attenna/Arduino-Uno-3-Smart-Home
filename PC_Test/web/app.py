@@ -40,6 +40,16 @@ def create_app(config: dict | None = None, start_hardware: bool = True):
         return jsonify({"error": "接口不存在",
                         "error_en": "API endpoint not found"}), 404
 
+    # ==================== 缓存策略 ====================
+    @app.after_request
+    def _no_cache_html(resp):
+        # HTML 页面不缓存：避免浏览器加载到旧版本页面（脚本/样式已带 ?v 版本参数）
+        if resp.headers.get("Content-Type", "").startswith("text/html"):
+            resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+            resp.headers["Pragma"] = "no-cache"
+            resp.headers["Expires"] = "0"
+        return resp
+
     if start_hardware:
         init_bridge(cfg)
     atexit.register(shutdown_bridge)

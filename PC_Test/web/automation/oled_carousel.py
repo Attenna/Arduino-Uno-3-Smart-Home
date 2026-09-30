@@ -19,32 +19,50 @@ from typing import Any, Callable, Dict, List, Optional
 __all__ = ["OledCarousel", "DEFAULT_PAGES"]
 
 # 默认页面模板（覆盖常见传感器 + 执行器状态 + 最近自动化）
+# OLED 每行 16 个 ASCII 列宽，1 个汉字约占 2 列，故每行控制在 ~8 个汉字。
 DEFAULT_PAGES: List[Dict[str, Any]] = [
     {
         "title": "环境",
         "lines": [
-            "温度 {temperature}C",
-            "湿度 {humidity}%",
-            "光照 {light}",
-            "烟 {smoke} 雨 {rain}",
-            "人 {motion} 触 {touch}",
+            "【环境状态】",
+            "当前温度：{temperature}度",
+            "当前湿度：{humidity}%",
+            "当前光照：{light}",
+        ],
+    },
+    {
+        "title": "安防",
+        "lines": [
+            "【安全状态】",
+            "烟雾：{smoke}",
+            "雨水：{rain}",
+            "人体：{motion}",
         ],
     },
     {
         "title": "执行器",
         "lines": [
-            "门 {b_door} 窗 {b_window}",
-            "扇 {b_fan} 灯 {light_lv}",
-            "蜂鸣 {b_buzzer}",
+            "【设备状态】",
+            "门：{b_door}",
+            "窗：{b_window}",
+            "风扇：{b_fan}%",
+            "灯光：{light_lv}%",
         ],
     },
     {
         "title": "最近自动化",
         "lines": [
+            "【最近自动化】",
             "{recent_auto}",
         ],
     },
 ]
+
+# 把状态值翻译成友好中文（open/closed、on/off、True/False 等）
+_VALUE_LABELS = {
+    "open": "开", "closed": "关", "opening": "开中", "closing": "关中",
+    "on": "开", "off": "关", "true": "是", "false": "否",
+}
 
 _PLACEHOLDER = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
@@ -100,7 +118,7 @@ class OledCarousel:
             return "是" if v else "否"
         if isinstance(v, float):
             return f"{v:.1f}"
-        return str(v)
+        return _VALUE_LABELS.get(str(v).lower(), str(v))
 
     # ---- 轮播 ----
     def tick(self):

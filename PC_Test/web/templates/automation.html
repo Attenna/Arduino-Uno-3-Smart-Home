@@ -6,7 +6,7 @@
     <title>自动化规则 - 智能家居</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <!-- Blockly 自托管（内网/校园网无外网也可用）；本地缺失时依次回退两个 CDN -->
-    <script src="{{ url_for('static', filename='vendor/blockly/blockly.min.js') }}"></script>
+    <script src="{{ url_for('static', filename='vendor/blockly/blockly.min.js') }}?v=20260930"></script>
     <script>
         if (typeof Blockly === 'undefined') {
             document.write('<script src="https://cdn.jsdelivr.net/npm/blockly@10.4.3/blockly.min.js"><\/script>');
@@ -110,7 +110,7 @@
                     <div id="blocklyArea">
                         <div id="blocklyDiv"></div>
                         <div id="blocklyMissing" class="missing-box hidden">
-                            积木引擎（Blockly）未能从 CDN 加载，请检查电脑网络后刷新页面。
+                            积木引擎（Blockly）未能加载，请按 Ctrl+F5 强制刷新页面；若仍失败，请确认 web 容器已包含本地积木资源（static/vendor/blockly）。
                         </div>
                     </div>
                 </div>
@@ -151,7 +151,7 @@
         </div>
     </main>
 
-    <script src="{{ url_for('static', filename='js/lang.js') }}"></script>
-    <script src="{{ url_for('static', filename='js/automation.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/lang.js') }}?v=20260930"></script>
+    <script src="{{ url_for('static', filename='js/automation.js') }}?v=20260930"></script>
 </body>
 </html>
