@@ -5,8 +5,24 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>自动化规则 - 智能家居</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-    <script src="https://cdn.jsdelivr.net/npm/blockly@10.4.3/dist/blockly.min.js"
-            onerror="document.getElementById('blocklyMissing').classList.remove('hidden')"></script>
+    <!-- Blockly 自托管（内网/校园网无外网也可用）；本地缺失时依次回退两个 CDN -->
+    <script src="{{ url_for('static', filename='vendor/blockly/blockly.min.js') }}"></script>
+    <script>
+        if (typeof Blockly === 'undefined') {
+            document.write('<script src="https://cdn.jsdelivr.net/npm/blockly@10.4.3/blockly.min.js"><\/script>');
+        }
+    </script>
+    <script>
+        if (typeof Blockly === 'undefined') {
+            document.write('<script src="https://unpkg.com/blockly@10.4.3/blockly.min.js"><\/script>');
+        }
+    </script>
+    <!-- 简体中文内置文案（自定义积木本身已是中文）；Blockly 未加载则跳过 -->
+    <script>
+        if (typeof Blockly !== 'undefined') {
+            document.write('<script src="{{ url_for('static', filename='vendor/blockly/zh-hans.js') }}"><\/script>');
+        }
+    </script>
     <style>
         .auto-layout { display: grid; grid-template-columns: 1fr 360px; gap: 16px; align-items: start; }
         .auto-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
