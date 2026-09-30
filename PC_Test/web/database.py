@@ -121,6 +121,7 @@ class SmartHomeDB:
                 'face_events': "id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT DEFAULT CURRENT_TIMESTAMP, face_id TEXT, person_name TEXT, confidence REAL, image_path TEXT, device_source TEXT, status TEXT DEFAULT 'pending', verified INTEGER DEFAULT 0",
                 'sensor_history': 'id INTEGER PRIMARY KEY AUTOINCREMENT, received_at TEXT NOT NULL, device_uptime_ms INTEGER, temperature REAL, humidity REAL, light_raw INTEGER, smoke INTEGER, rain INTEGER, distance INTEGER, touch INTEGER, motion INTEGER, soil_moisture INTEGER, soil_dry INTEGER',
                 'hardware_events': 'id INTEGER PRIMARY KEY AUTOINCREMENT, received_at TEXT NOT NULL, module TEXT NOT NULL, event_type TEXT NOT NULL, payload_json TEXT NOT NULL',
+                'automation_logs': 'id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT DEFAULT CURRENT_TIMESTAMP, rule_id TEXT NOT NULL, rule_name TEXT NOT NULL, triggered INTEGER NOT NULL, conditions_hold INTEGER NOT NULL, reason TEXT, success INTEGER NOT NULL DEFAULT 0, detail_json TEXT',
             }
             for table, definition in definitions.items():
                 c.execute(f'CREATE TABLE IF NOT EXISTS {table} ({definition})')
@@ -143,7 +144,7 @@ class SmartHomeDB:
                     if len(ids) == 1:
                         c.execute('UPDATE authorized_persons SET rfid_uid=?,enabled=1 WHERE id=?', (uid,ids[0]))
             c.execute('CREATE UNIQUE INDEX IF NOT EXISTS unique_rfid_uid ON authorized_persons(rfid_uid) WHERE rfid_uid IS NOT NULL')
-            for table, col in [('sensor_history','received_at'),('hardware_events','received_at'),('temperature_history','timestamp'),('door_window_history','timestamp'),('light_history','timestamp'),('access_logs','timestamp'),('face_events','timestamp')]:
+            for table, col in [('sensor_history','received_at'),('hardware_events','received_at'),('temperature_history','timestamp'),('door_window_history','timestamp'),('light_history','timestamp'),('access_logs','timestamp'),('face_events','timestamp'),('automation_logs','timestamp')]:
                 c.execute(f'CREATE INDEX IF NOT EXISTS idx_{table}_time ON {table}({col})')
             c.execute('PRAGMA user_version=2')
 
@@ -184,11 +185,16 @@ class SmartHomeDB:
         if message.get('module') != 'sensor' or message.get('type') != 'data':
             raise ValueError('非 A 板数据')
         data = message['data']
-        values = {k: number(data[k], *bounds) for k,bounds in {'temperature':(-50,100),'humidity':(0,100)}.items()}
-        for name, source, maximum in [('light_raw','light',1023),('distance','distance',400),('soil_moisture','soil_moisture',1023)]:
-            values[name] = number(data[source],0,maximum,True)
-        for name in ('smoke','rain','touch','motion','soil_dry'):
-            values[name] = boolean(data[name])
+        # V2.1 固件已移除超声波(distance)/土壤(soil_*)；缺失字段写 NULL，
+        # 绝不能因单个字段缺失丢掉整帧（否则仪表盘与自动化引擎全部断粮）。
+        values = {k: number(data.get(k), *bounds)
+                  for k, bounds in {'temperature': (-50, 100), 'humidity': (0, 100)}.items()}
+        for name, source, maximum in [('light_raw', 'light', 1023),
+                                      ('distance', 'distance', 400),
+                                      ('soil_moisture', 'soil_moisture', 1023)]:
+            values[name] = number(data[source], 0, maximum, True) if source in data else None
+        for name in ('smoke', 'rain', 'touch', 'motion', 'soil_dry'):
+            values[name] = boolean(data[name]) if name in data else None
         uptime = number(message['timestamp'],0,4294967295,True)
         seen = utcnow()
         with self.connection() as c:
@@ -223,6 +229,18 @@ class SmartHomeDB:
         with self.connection() as c:
             return c.execute('INSERT INTO hardware_events(received_at,module,event_type,payload_json) VALUES(?,?,?,?)',
                 (utcnow(),message['module'],message.get('event',message['type']),json.dumps(message,ensure_ascii=False))).lastrowid
+
+    def add_automation_log(self, rule_id, rule_name, triggered, conditions_hold, reason, success, detail=''):
+        with self.connection() as c:
+            return c.execute(
+                'INSERT INTO automation_logs(rule_id,rule_name,triggered,conditions_hold,reason,success,detail_json) '
+                'VALUES(?,?,?,?,?,?,?)',
+                (rule_id, rule_name, int(triggered), int(conditions_hold), reason,
+                 int(success), detail)).lastrowid
+
+    def get_automation_logs(self, limit=50):
+        return self._rows('SELECT * FROM automation_logs ORDER BY id DESC LIMIT ?',
+                          (max(1, min(int(limit), 500)),))
 
     def mark_offline(self, module):
         if module not in ('sensor','output'):

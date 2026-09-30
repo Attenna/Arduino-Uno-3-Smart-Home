@@ -168,6 +168,7 @@ const I18N = {
 
             // 硬件管理
             'nav.hardware': '硬件管理',
+            'nav.automation': '自动化',
             'ha.config_title': 'Home Assistant 连接配置',
             'ha.url': 'HA 地址',
             'ha.fixed': '已固定',
@@ -373,6 +374,7 @@ const I18N = {
 
             // Hardware Management
             'nav.hardware': 'Hardware',
+            'nav.automation': 'Automation',
             'ha.config_title': 'Home Assistant Connection Config',
             'ha.url': 'HA URL',
             'ha.fixed': 'Fixed',

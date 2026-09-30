@@ -54,6 +54,9 @@ class McpHardwareBridge:
         self._last_error = ""
         self._last_sensor_ts = None
         self._seen_events: set[str] = set()
+        # 自动化引擎钩子（由 extensions 注入；参数：原始快照/事件 dict）
+        self.snapshot_listener = None
+        self.event_listener = None
 
     # ==================== 生命周期 ====================
 
@@ -206,6 +209,8 @@ class McpHardwareBridge:
         except Exception as e:
             # NaN/越界等脏数据：忽略本帧，不能杀死轮询循环
             logger.debug("[硬件桥] 传感器数据入库失败: %s", e)
+            return
+        self._fire_hook(self.snapshot_listener, data)
 
     def _ingest_event(self, event: dict) -> None:
         key = json.dumps(event, sort_keys=True, ensure_ascii=False)
@@ -221,6 +226,16 @@ class McpHardwareBridge:
                  **{k: v for k, v in event.items() if k != "event"}})
         except Exception as e:
             logger.debug("[硬件桥] 事件入库失败: %s", e)
+        self._fire_hook(self.event_listener, event)
+
+    @staticmethod
+    def _fire_hook(listener, payload) -> None:
+        if listener is None:
+            return
+        try:
+            listener(payload)
+        except Exception as e:                           # noqa: BLE001
+            logger.debug("[硬件桥] 自动化钩子异常: %s", e)
 
     # ==================== 同步调用 API（供 Flask 路由） ====================
 

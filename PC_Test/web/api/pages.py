@@ -22,3 +22,8 @@ def access_page():
 @bp.route("/hardware")
 def hardware_page():
     return render_template("hardware.html")
+
+
+@bp.route("/automation")
+def automation_page():
+    return render_template("automation.html")

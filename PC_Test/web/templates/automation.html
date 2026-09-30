@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>自动化规则 - 智能家居</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <script src="https://cdn.jsdelivr.net/npm/blockly@10.4.3/dist/blockly.min.js"
+            onerror="document.getElementById('blocklyMissing').classList.remove('hidden')"></script>
+    <style>
+        .auto-layout { display: grid; grid-template-columns: 1fr 360px; gap: 16px; align-items: start; }
+        .auto-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+        .auto-toolbar h3 { margin: 0; flex: 1 1 auto; }
+        .auto-toolbar .hint { width: 100%; color: var(--text-secondary); font-size: 13px; }
+        #blocklyArea { width: 100%; height: 72vh; min-height: 520px; border-radius: var(--radius-sm);
+                       overflow: hidden; border: 1px solid var(--border-color); background: #0f1923; position: relative; }
+        #blocklyDiv { position: absolute; inset: 0; }
+        .blockly-main { --ws-toolbar: #162231; }
+        .preview-list { display: flex; flex-direction: column; gap: 10px; max-height: 300px; overflow-y: auto; }
+        .preview-item { border: 1px solid var(--border-color); border-radius: var(--radius-sm);
+                        padding: 10px 12px; background: var(--bg-secondary); }
+        .preview-item .pv-title { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+        .preview-item .pv-name { flex: 1 1 auto; }
+        .badge { font-size: 11px; padding: 2px 8px; border-radius: 999px; }
+        .badge.on { background: rgba(0,230,118,.15); color: var(--accent-green); }
+        .badge.off { background: rgba(255,23,68,.12); color: var(--accent-red); }
+        .badge.evt { background: rgba(255,145,0,.15); color: var(--accent-orange); }
+        .badge.disabled { background: rgba(139,164,184,.15); color: var(--text-secondary); }
+        .pv-conds { margin-top: 6px; font-size: 12px; color: var(--text-secondary); display: flex; flex-direction: column; gap: 2px; }
+        .pv-conds .yes { color: var(--accent-green); }
+        .pv-conds .no { color: var(--accent-red); }
+        .auto-log { width: 100%; font-size: 12px; border-collapse: collapse; }
+        .auto-log th, .auto-log td { padding: 6px 8px; border-bottom: 1px solid var(--border-color); text-align: left; vertical-align: top; }
+        .auto-log th { color: var(--text-secondary); font-weight: 500; }
+        .log-wrap { max-height: 300px; overflow-y: auto; }
+        .mini-btn { font-size: 12px; padding: 4px 10px; }
+        .missing-box { position: absolute; inset: 20px; z-index: 5; display: flex; align-items: center; justify-content: center;
+                       background: var(--bg-card); border: 1px dashed var(--accent-orange);
+                       color: var(--accent-orange); border-radius: var(--radius-sm); text-align: center; padding: 20px; }
+        @media (max-width: 1100px) { .auto-layout { grid-template-columns: 1fr; } }
+    </style>
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-brand">
+            <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/>
+                <polyline points="9 22 9 12 15 12 15 22"/>
+            </svg>
+            <span data-i18n="system.title">智能家居控制系统</span>
+        </div>
+        <div class="nav-links">
+            <a href="/" class="nav-link" data-i18n="nav.dashboard">仪表盘</a>
+            <a href="/history" class="nav-link" data-i18n="nav.history">历史数据</a>
+            <a href="/access" class="nav-link" data-i18n="nav.access">门禁管理</a>
+            <a href="/hardware" class="nav-link" data-i18n="nav.hardware">硬件管理</a>
+            <a href="/automation" class="nav-link active" data-i18n="nav.automation">自动化</a>
+        </div>
+        <div class="nav-status">
+            <span class="status-dot online"></span>
+            <span data-i18n="system.online">系统在线</span>
+            <span id="currentTime" class="time-display">--:--:--</span>
+        </div>
+        <button class="lang-switch" onclick="setLang(I18N.currentLang === 'zh' ? 'en' : 'zh')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"/>
+                <line x1="2" y1="12" x2="22" y2="12"/>
+                <path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/>
+            </svg>
+            <span data-i18n="nav.lang">EN</span>
+        </button>
+    </nav>
+
+    <div id="notification" class="notification hidden"></div>
+
+    <main class="main-content">
+        <div class="card" style="margin-bottom:16px">
+            <div class="card-body auto-toolbar">
+                <h3>🧩 积木式自动化（当触发 → 如果条件 → 执行动作 / 否则切换状态）</h3>
+                <button class="btn" onclick="addRuleBlock()">＋ 新建规则</button>
+                <button class="btn btn-primary" onclick="saveAll()">💾 保存全部规则</button>
+                <button class="btn" onclick="refreshPreview()">🔄 刷新实时状态</button>
+                <div class="hint">
+                    从左侧工具箱拖积木：紫色「规则」块每个代表一条规则，槽位依次放 <b>触发块（橙色）</b>、
+                    <b>条件块（蓝色，可叠多个）</b>、<b>执行块（绿色，从上往下依次执行）</b>；
+                    「否则」槽可放状态切换动作（如温度回落自动关风扇），也可留空。改完点「保存全部规则」立即生效。
+                </div>
+            </div>
+        </div>
+
+        <div class="auto-layout">
+            <div class="card">
+                <div class="card-body">
+                    <div id="blocklyArea">
+                        <div id="blocklyDiv"></div>
+                        <div id="blocklyMissing" class="missing-box hidden">
+                            积木引擎（Blockly）未能从 CDN 加载，请检查电脑网络后刷新页面。
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div style="display:flex;flex-direction:column;gap:16px">
+                <div class="card">
+                    <div class="card-header"><h3>📡 实时状态（不执行动作）</h3></div>
+                    <div class="card-body"><div id="previewList" class="preview-list">
+                        <span style="color:var(--text-secondary);font-size:13px">点「刷新实时状态」查看各规则当前是否满足。</span>
+                    </div></div>
+                </div>
+                <div class="card">
+                    <div class="card-header"><h3>📜 执行记录</h3></div>
+                    <div class="card-body log-wrap">
+                        <table class="auto-log">
+                            <thead><tr><th>时间</th><th>规则</th><th>触发原因 / 结果</th></tr></thead>
+                            <tbody id="autoLogBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script src="{{ url_for('static', filename='js/lang.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/automation.js') }}"></script>
+</body>
+</html>

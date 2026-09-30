@@ -47,3 +47,7 @@ yolo_face_detection*.zip
 # 香橙派部署的本机暂存（.env、daemon.json、临时探测脚本，仅部署用）
 pi-staging/
 
+# PlatformIO / Arduino 构建产物（不入库）
+.pio/
+**/.pio/
+

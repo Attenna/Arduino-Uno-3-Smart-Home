@@ -130,6 +130,11 @@ def face_notify():
                           credential=face_id, command_status=command_status)
         if event_id:
             db.update_face_event_status(event_id, "granted", verified=True)
+        # 通知自动化引擎（可触发「授权人脸 → 开灯/迎客」等自定义规则）
+        if extensions.automation is not None:
+            extensions.automation.on_event(
+                {"event": "face", "status": "granted",
+                 "person": matched["name"], "face_id": face_id})
         result = {
             "granted": True, "person": matched["name"], "face_id": face_id,
             "event_id": event_id, "command_status": command_status,
