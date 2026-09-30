@@ -59,17 +59,34 @@ async function apiGet(url, timeoutMs = 8000) {
     }
 }
 
-async function apiPost(url, data, timeoutMs = 8000) {
+async function apiPost(url, data, timeoutMs = 15000) {
     try {
         const response = await fetchWithTimeout(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
         }, timeoutMs);
-        if (!response) return null;
-        return await response.json();
+        if (!response) {
+            showNotification(currentLang === 'en'
+                ? 'Request timeout or network error'
+                : '请求超时或网络错误', 'error');
+            return null;
+        }
+        let body = null;
+        try { body = await response.json(); } catch (e) { body = null; }
+        if (!response.ok) {
+            // 硬件离线(503)/参数错误(400)/服务器错误(500)：把后端消息弹给用户
+            const msg = (currentLang === 'en' ? (body && body.error_en) : (body && body.error))
+                || (body && body.detail)
+                || (currentLang === 'en' ? `Request failed (HTTP ${response.status})`
+                                        : `操作失败（HTTP ${response.status}）`);
+            showNotification(msg, 'error');
+            return null;
+        }
+        return body;
     } catch (e) {
         console.error('API POST error:', e);
+        showNotification(currentLang === 'en' ? 'Request failed' : '请求失败', 'error');
         return null;
     }
 }
@@ -123,7 +140,49 @@ document.addEventListener('DOMContentLoaded', () => {
     updateClock();
     setInterval(updateClock, 1000);
     initLanguageSwitch();
+    initControlSliders();
 });
+
+// 滑块：拖动时只更新数值标签，松手(change)才下发硬件指令，避免串口刷屏
+function initControlSliders() {
+    const fanSlider = document.getElementById('fanSpeed');
+    if (fanSlider) {
+        const fanLabel = document.getElementById('fanSpeedValue');
+        fanSlider.addEventListener('input', () => {
+            if (fanLabel) fanLabel.textContent = fanSlider.value + '%';
+        });
+        fanSlider.addEventListener('change', () => setFan(parseInt(fanSlider.value)));
+    }
+    const brightSlider = document.getElementById('brightnessSlider');
+    if (brightSlider) {
+        const brightLabel = document.getElementById('brightnessValue');
+        brightSlider.addEventListener('input', () => {
+            if (brightLabel) brightLabel.textContent = brightSlider.value + '%';
+        });
+        brightSlider.addEventListener('change', () => {
+            const v = parseInt(brightSlider.value);
+            setLight(v > 0 ? 'on' : 'off', v);
+        });
+    }
+    const acTempSlider = document.getElementById('acTempSlider');
+    if (acTempSlider) {
+        const acLabel = document.getElementById('acTempSliderValue');
+        acTempSlider.addEventListener('input', () => {
+            if (acLabel) acLabel.textContent = acTempSlider.value + '°C';
+        });
+        acTempSlider.addEventListener('change', async () => {
+            const data = await apiGet('/api/ac');
+            const status = (data && data.ac_status) || 'off';
+            const result = await apiPost('/api/ac', {
+                status, temperature: parseInt(acTempSlider.value)
+            });
+            if (result) {
+                showNotification(getMessage(result));
+                loadStatus();
+            }
+        });
+    }
+}
 
 function startStatusPolling() {
     // 清理旧定时器，防止重复
@@ -184,9 +243,48 @@ function updateDashboard(data) {
     const humEl = document.getElementById('humidityValue');
     if (humEl) humEl.textContent = data.humidity ? data.humidity.toFixed(0) : '--';
 
-    // 风扇
-    const fanEl = document.getElementById('fanSpeed');
-    if (fanEl) fanEl.textContent = data.fan_speed || 0;
+    // 风扇（fanSpeed 是滑块 input，fanSpeedValue 是数值标签，扇叶按转速分档旋转）
+    const fanSpeed = Number(data.fan_speed) || 0;
+    const fanSlider = document.getElementById('fanSpeed');
+    if (fanSlider && document.activeElement !== fanSlider) fanSlider.value = fanSpeed;
+    const fanLabel = document.getElementById('fanSpeedValue');
+    if (fanLabel) fanLabel.textContent = fanSpeed + '%';
+    const blades = document.getElementById('fanBlades');
+    if (blades) {
+        blades.classList.remove('spinning', 'spinning-slow', 'spinning-medium', 'spinning-fast');
+        if (fanSpeed > 0) {
+            blades.classList.add(
+                fanSpeed <= 40 ? 'spinning-slow' : fanSpeed <= 75 ? 'spinning-medium' : 'spinning-fast');
+        }
+    }
+
+    // 灯光（灯泡高亮 + 指示点 + 亮度滑块回写，拖动时不抢焦点）
+    const lightOn = data.light_status === 'on';
+    const brightness = Number(data.light_brightness) || (lightOn ? 100 : 0);
+    const bulb = document.getElementById('bulb');
+    if (bulb) {
+        bulb.classList.toggle('on', lightOn);
+        bulb.style.opacity = lightOn ? String(0.35 + 0.65 * brightness / 100) : '';
+    }
+    const lightIndicator = document.getElementById('lightIndicator');
+    if (lightIndicator) lightIndicator.classList.toggle('on', lightOn);
+    const brightSlider = document.getElementById('brightnessSlider');
+    if (brightSlider && document.activeElement !== brightSlider) brightSlider.value = brightness;
+    const brightLabel = document.getElementById('brightnessValue');
+    if (brightLabel) brightLabel.textContent = brightness + '%';
+
+    // 空调（设定温度显示 + 徽标 + 温度滑块回写）
+    const acTempEl = document.getElementById('acTempDisplay');
+    if (acTempEl) acTempEl.textContent = data.ac_temperature ?? '--';
+    const acBadge = document.getElementById('acBadge');
+    if (acBadge) {
+        acBadge.textContent = data.ac_status === 'on' ? t('status.ac_on') : t('status.ac_off');
+        acBadge.className = 'ac-status-badge' + (data.ac_status === 'on' ? ' on' : '');
+    }
+    const acTempSlider = document.getElementById('acTempSlider');
+    if (acTempSlider && document.activeElement !== acTempSlider) acTempSlider.value = data.ac_temperature ?? 26;
+    const acTempSliderLabel = document.getElementById('acTempSliderValue');
+    if (acTempSliderLabel) acTempSliderLabel.textContent = (data.ac_temperature ?? 26) + '°C';
 
     // 门窗
     const doorEl = document.getElementById('doorStatus');
@@ -261,20 +359,51 @@ async function toggleWindow() {
     }
 }
 
-async function toggleLight() {
-    const data = await apiGet('/api/light');
-    const newStatus = (data && data.light_status === 'on') ? 'off' : 'on';
-    const brightness = document.getElementById('lightBrightness')?.value || 50;
-    const result = await apiPost('/api/light', { status: newStatus, brightness: parseInt(brightness) });
+// 灯光卡片按钮：全亮/半亮/夜灯/关闭
+async function setLight(status, brightness) {
+    const result = await apiPost('/api/light', { status, brightness: Number(brightness) || 0 });
     if (result) {
         showNotification(getMessage(result));
         loadStatus();
     }
 }
 
-async function setFanSpeed() {
-    const speed = document.getElementById('fanSpeedControl')?.value || 0;
-    const result = await apiPost('/api/fan', { speed: parseInt(speed) });
+// 风扇卡片按钮：关闭/低速/中速/高速
+async function setFan(speed) {
+    const result = await apiPost('/api/fan', { speed: Number(speed) || 0 });
+    if (result) {
+        showNotification(getMessage(result));
+        loadStatus();
+    }
+}
+
+// 空调温度 +/-（保持当前开关状态，仅改设定温度）
+async function adjustAC(delta) {
+    const data = await apiGet('/api/ac');
+    const current = data || { ac_status: 'off', ac_temperature: 26 };
+    const newTemp = Math.max(16, Math.min(30, Number(current.ac_temperature ?? 26) + delta));
+    const result = await apiPost('/api/ac', { status: current.ac_status || 'off', temperature: newTemp });
+    if (result) {
+        showNotification(getMessage(result));
+        loadStatus();
+    }
+}
+
+// 远程控制面板：light_on/off、ac_on/off、fan_on/off、door_open/close
+async function remoteControl(action) {
+    const posts = {
+        light_on:  ['/api/light', { status: 'on', brightness: 100 }],
+        light_off: ['/api/light', { status: 'off', brightness: 0 }],
+        ac_on:     ['/api/ac', { status: 'on' }],
+        ac_off:    ['/api/ac', { status: 'off' }],
+        fan_on:    ['/api/fan', { speed: 60 }],
+        fan_off:   ['/api/fan', { speed: 0 }],
+        door_open: ['/api/door', { status: 'open' }],
+        door_close:['/api/door', { status: 'closed' }],
+    };
+    const target = posts[action];
+    if (!target) return;
+    const result = await apiPost(target[0], target[1]);
     if (result) {
         showNotification(getMessage(result));
         loadStatus();

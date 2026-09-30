@@ -7,6 +7,7 @@ from .automation.engine import AutomationEngine
 from .config import DB_PATH
 from .config import DATA_DIR
 from .database import SmartHomeDB
+from .database import utcnow
 from .face.engine import FaceEngine
 from .ha_client import HomeAssistantClient
 from .hardware import McpHardwareBridge
@@ -33,6 +34,13 @@ def init_bridge(cfg: dict) -> McpHardwareBridge:
             automation = AutomationEngine(bridge, db, rules_path)
             bridge.snapshot_listener = automation.on_snapshot
             bridge.event_listener = automation.on_event
+
+            # B 板不主动上报 state：执行器指令收到 ACK 即刷新 output_last_seen，
+            # 使 output_online 反映"最近能否成功应答"
+            def _mark_output_ack(_tool, _args):
+                db.update_status(output_last_seen=utcnow())
+
+            bridge.command_ack_listener = _mark_output_ack
             automation.start()
         return bridge
 

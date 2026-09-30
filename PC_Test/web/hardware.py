@@ -57,6 +57,9 @@ class McpHardwareBridge:
         # 自动化引擎钩子（由 extensions 注入；参数：原始快照/事件 dict）
         self.snapshot_listener = None
         self.event_listener = None
+        # 执行器指令 ACK 钩子（参数：工具名, 参数 dict）；B 板不主动上报状态，
+        # 靠成功 ACK 刷新 output_last_seen
+        self.command_ack_listener = None
 
     # ==================== 生命周期 ====================
 
@@ -270,6 +273,12 @@ class McpHardwareBridge:
             return False, f"硬件调用失败: {e}"
         if text.startswith("error"):
             return False, text
+        # B 板不自报状态：任何执行器工具成功 ACK 都视为输出板在线
+        if name in ("door", "window", "light", "fan", "buzzer") and self.command_ack_listener:
+            try:
+                self.command_ack_listener(name, args or {})
+            except Exception:
+                logger.debug("command_ack_listener 异常", exc_info=True)
         return True, text
 
     def _relay_call(self, name: str, args: dict, timeout: float = 10.0) -> tuple[bool, str]:
@@ -291,6 +300,11 @@ class McpHardwareBridge:
         except Exception as e:
             return False, f"硬件联动失败（语音助手不可达 {self.relay_url}）: {e}"
         if body.get("ok"):
+            if name in ("door", "window", "light", "fan", "buzzer") and self.command_ack_listener:
+                try:
+                    self.command_ack_listener(name, args or {})
+                except Exception:
+                    logger.debug("command_ack_listener 异常", exc_info=True)
             return True, str(body.get("result") or "ok")
         return False, str(body.get("error") or body.get("result") or "硬件联动被拒绝")
 

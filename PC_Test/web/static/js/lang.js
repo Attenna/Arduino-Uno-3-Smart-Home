@@ -13,6 +13,14 @@ const I18N = {
             'system.online': '系统在线',
             'system.offline': '系统离线',
 
+            // 状态文案
+            'status.open': '打开',
+            'status.closed': '关闭',
+            'status.on': '开启',
+            'status.off': '关闭',
+            'status.ac_on': '运行中',
+            'status.ac_off': '已关闭',
+
             // 温湿度
             'temp.title': '温湿度监控',
             'temp.humidity': '湿度',
@@ -218,6 +226,14 @@ const I18N = {
             'system.title': 'Smart Home Control System',
             'system.online': 'System Online',
             'system.offline': 'System Offline',
+
+            // Status
+            'status.open': 'Open',
+            'status.closed': 'Closed',
+            'status.on': 'On',
+            'status.off': 'Off',
+            'status.ac_on': 'Running',
+            'status.ac_off': 'Off',
 
             // Temperature & Humidity
             'temp.title': 'Temperature & Humidity',

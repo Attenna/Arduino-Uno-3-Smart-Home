@@ -683,7 +683,7 @@ setInterval(() => {
 
 document.addEventListener('DOMContentLoaded', () => {
     if (typeof Blockly === 'undefined') {
-        document.getElementById('blocklyMissing').classList.remove('hidden');
+        document.getElementById('blocklyMissing')?.classList.remove('hidden');
         return;
     }
     bootWorkspace().catch(e => showNotification('初始化失败：' + e.message, 'error'));

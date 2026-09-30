@@ -166,14 +166,18 @@ class SmartHomeDB:
                 age = (now-datetime.fromisoformat(seen).replace(tzinfo=timezone.utc)).total_seconds()
                 online = 0 <= age < 15
             result[module+'_online'] = online
-            if not online:
+            # 传感器是连续遥测：过期清空。执行器字段是"已收到 ACK 的指令状态"
+            # （V2.1 的 B 板不主动上报 state），必须持久保留，否则门/灯状态在
+            # 最后一条指令 15 秒后全部变 null，页面无法回显真实硬件状态。
+            if module == 'sensor' and not online:
                 for field in fields:
                     result[field] = None
         return result
 
     def update_status(self, **kwargs):
         # Compatibility API; HTTP control routes must never call this optimistically.
-        allowed = set(SENSORS + OUTPUTS) | {'ac_status','ac_temperature'}
+        allowed = set(SENSORS + OUTPUTS) | {
+            'ac_status', 'ac_temperature', 'sensor_last_seen', 'output_last_seen'}
         values = {k:v for k,v in kwargs.items() if k in allowed}
         if values:
             values['last_updated'] = utcnow()

@@ -17,6 +17,14 @@ def _hardware_error(text):
                     "detail": text}), 503
 
 
+def _hw_call(method, *args):
+    """调用硬件桥方法；桥未初始化时返回 503 而不是抛 AttributeError(500)。"""
+    bridge = extensions.bridge
+    if bridge is None:
+        return False, "硬件服务未启动（硬件桥未初始化）"
+    return getattr(bridge, method)(*args)
+
+
 # ==================== 门 ====================
 
 @bp.route("/api/door", methods=["GET"])
@@ -27,10 +35,10 @@ def get_door_status():
 
 @bp.route("/api/door", methods=["POST"])
 def control_door():
-    new_status = (request.json or {}).get("status", "closed")
+    new_status = (request.get_json(silent=True) or {}).get("status", "closed")
     if new_status not in ("open", "closed"):
         return jsonify({"error": "无效状态，只能是 open 或 closed"}), 400
-    ok, msg = extensions.bridge.control_door(new_status)
+    ok, msg = _hw_call("control_door", new_status)
     if not ok:
         return _hardware_error(msg)
     db.update_status(door_status=new_status)
@@ -53,10 +61,10 @@ def get_window_status():
 
 @bp.route("/api/window", methods=["POST"])
 def control_window():
-    new_status = (request.json or {}).get("status", "closed")
+    new_status = (request.get_json(silent=True) or {}).get("status", "closed")
     if new_status not in ("open", "closed"):
         return jsonify({"error": "无效状态"}), 400
-    ok, msg = extensions.bridge.control_window(new_status)
+    ok, msg = _hw_call("control_window", new_status)
     if not ok:
         return _hardware_error(msg)
     db.update_status(window_status=new_status)
@@ -88,12 +96,12 @@ def get_light_status():
 
 @bp.route("/api/light", methods=["POST"])
 def control_light():
-    data = request.json or {}
+    data = request.get_json(silent=True) or {}
     light_status = data.get("status", "off")
     brightness = max(0, min(100, int(data.get("brightness", 0) or 0)))
     if light_status == "on" and brightness == 0:
         brightness = 100
-    ok, msg = extensions.bridge.control_light(light_status, brightness)
+    ok, msg = _hw_call("control_light", light_status, brightness)
     if not ok:
         return _hardware_error(msg)
     db.update_status(light_status=light_status, light_brightness=brightness)
@@ -123,8 +131,8 @@ def get_fan_status():
 
 @bp.route("/api/fan", methods=["POST"])
 def control_fan():
-    speed = max(0, min(100, int((request.json or {}).get("speed", 0) or 0)))
-    ok, msg = extensions.bridge.control_fan(speed)
+    speed = max(0, min(100, int((request.get_json(silent=True) or {}).get("speed", 0) or 0)))
+    ok, msg = _hw_call("control_fan", speed)
     if not ok:
         return _hardware_error(msg)
     db.update_status(fan_speed=speed)
@@ -148,7 +156,7 @@ def get_ac_status():
 
 @bp.route("/api/ac", methods=["POST"])
 def control_ac():
-    data = request.json or {}
+    data = request.get_json(silent=True) or {}
     ac_status = data.get("status", "off")
     ac_temp = max(16, min(30, int(data.get("temperature", 26) or 26)))
     # 空调仅记录期望状态；接入真实空调后可在此改走 HA / 红外 MCP 工具

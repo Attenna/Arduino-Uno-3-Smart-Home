@@ -286,19 +286,16 @@ class AutomationEngine:
             return True, f"等待 {action['seconds']:g}s"
         if not self.bridge or not self.bridge.online and not self.bridge.relay_url:
             return False, "硬件桥离线"
-        if device == "door":
+        if device in ("door", "window"):
+            # 积木/硬件动作用 open/close；DB 与页面约定 open/closed
             status = action["status"]
-            ok, msg = self.bridge.control_door(status)
+            db_status = "open" if status == "open" else "closed"
+            method = self.bridge.control_door if device == "door" else self.bridge.control_window
+            label = "前门(自动化)" if device == "door" else "客厅窗户(自动化)"
+            ok, msg = method(status)
             if ok:
-                self.db.update_status(door_status=status)
-                self.db.add_door_window_event("door", "前门(自动化)", status)
-            return ok, msg
-        if device == "window":
-            status = action["status"]
-            ok, msg = self.bridge.control_window(status)
-            if ok:
-                self.db.update_status(window_status=status)
-                self.db.add_door_window_event("window", "客厅窗户(自动化)", status)
+                self.db.update_status(**{f"{device}_status": db_status})
+                self.db.add_door_window_event(device, label, db_status)
             return ok, msg
         if device == "light":
             status = action["status"]
