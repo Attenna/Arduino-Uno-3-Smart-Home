@@ -18,11 +18,8 @@ PC_Test/
 ├── web_config.yaml         # ⑥ Web 仪表盘配置（串口/端口/人脸/开门联动）
 │
 ├── test_serial.py          # ① 串口调试控制台（交互式，手动发命令测试硬件）
-├── run_automation.py       # ② 自动化 DSL 运行器（运行 .auto 脚本）
-├── oled_carousel.py        #    OLED 多行轮播模块（被 run_automation 调用）
-├── camera_stream.py        # ④ USB 摄像头流式传输 + 人脸检测（本地窗口 / HTTP 流）
+├── camera_stream.py        # ② USB 摄像头流式传输 + 人脸检测（本地窗口 / HTTP 流）
 ├── camera_test.py          #    摄像头快速自检（验证摄像头 + 检测链路）
-├── link_server.py          # ③ 旧版联动服务（已过时，见下方说明）
 │
 ├── voice_assistant.py      # ⑤ 语音交互模式（唤醒词 → Qwen2.5 → MCP 控硬件 → 流式 TTS）
 ├── qwen_server.py          #    本地 Qwen2.5 OpenAI 兼容服务（llama.cpp 后端 + 工具调用）
@@ -40,25 +37,15 @@ PC_Test/
 │   ├── hardware.py         #    MCP 硬件桥（stdio 拉起 mcp_home_server，轮询入库）
 │   ├── ha_client.py        #    可选 Home Assistant REST 客户端（硬件管理页）
 │   ├── utils.py            #    节流 / 安全 Base64 / 连接健康 / 重试
-│   ├── api/                #    REST 蓝图：status / devices / access / face / ha / pages
+│   ├── api/                #    REST 蓝图：status / devices / access / face / ha / pages / automation
 │   ├── face/               #    人脸引擎：YOLOv8-face 检测 + ArcFace/灰度嵌入识别
-│   ├── templates/          #    前端页面（dashboard/history/access/hardware）
+│   ├── automation/         #    积木式自动化引擎（规则 JSON + 全屋模式 + OLED 轮播）
+│   ├── templates/          #    前端页面（dashboard/history/access/hardware/automation）
 │   └── static/             #    前端资源（css/js，Chart.js 图表）
 ├── scripts/
 │   └── enroll_faces.py     #    人脸注册：data/face/authorized/<姓名>/ → embeddings.pkl
 ├── data/                   #    运行时数据（不入库）：smart_home.db、face/、ha_config.json
 ├── models/                 #    模型权重（不入库）：qwen/、sherpa/、face/yolov8n-face.pt
-│
-└── automation/             # AST 自动化引擎核心库
-    ├── __init__.py
-    ├── lexer.py            # 词法分析：脚本文本 → Token
-    ├── parser.py           # 语法分析：Token → AST（递归下降）
-    ├── runtime.py          # 运行时：遍历 AST + 动作映射
-    ├── examples/           # 示例脚本（.auto）
-    │   ├── smoke_alarm.auto
-    │   ├── climate_control.auto
-    │   └── edge_timer.auto
-    └── README.md           # DSL 语法手册（写脚本时查这里）
 ```
 
 ---
@@ -68,12 +55,14 @@ PC_Test/
 | 工具 | 用途 | 什么时候用 |
 |------|------|-----------|
 | `test_serial.py` | 手动发命令测试单块板 | 排查硬件、验证某个传感器/执行器是否正常 |
-| `run_automation.py` | 运行 `.auto` 自动化脚本 | 写联动规则、定时任务、OLED 轮播 |
 | `camera_stream.py` | USB 摄像头流式传输 + 人脸检测 | 视频监控、人脸识别（香橙派部署用 HTTP 流） |
 | `voice_assistant.py` | 语音交互（KWS 唤醒 + Qwen2.5 + MCP） | 说「Hey Bota」唤醒（或键盘打字/HTTP 下发），自然语言控制硬件 |
-| `run_web.py` | Web 仪表盘（监控 + 控制 + 门禁 + 人脸 + 历史曲线） | 浏览器访问 http://localhost:5000，日常使用的主界面 |
+| `run_web.py` | Web 仪表盘（监控 + 控制 + 门禁 + 人脸 + 积木自动化） | 浏览器访问 http://localhost:5000，日常使用的主界面 |
 | `start_all.py` | **一键启动联动栈**：语音助手 + Web 人脸 + 摄像头流 | 三者要同时运行时用（或双击 start_all.bat） |
-| `link_server.py` | 旧的硬编码规则联动 | ⚠️ 已过时，建议改用 `run_automation.py` |
+
+> **自动化统一入口**：所有联动规则走 Web 积木引擎（`/automation` 页面，Blockly「当触发→如果条件→执行动作/否则切换」）。
+> 传感器、事件（按键/红外/人脸）、周期/定时作为触发与条件积木，门/窗/灯/风扇/蜂鸣器/OLED/全屋模式/语音作为执行积木；
+> 历史 DSL 脚本（`.auto`）与独立 `run_automation.py`、`link_server.py` 已移除，不再维护。
 
 ---
 
@@ -124,43 +113,18 @@ py -3.13 test_serial.py --log sensor_log.csv
 
 ---
 
-## ② run_automation.py — 自动化 DSL 运行器
+## ② 积木式自动化（Web /automation）
 
-用接近自然语言的 `.auto` 脚本定义自动化规则（条件、分支、计时、边沿、定时器、操作）。
+自动化统一入口：`run_web.py` 启动后访问 **http://localhost:5000/automation**，用 Blockly
+积木可视化编排「当触发 → 如果条件（可多个） → 执行动作（依次）/ 否则切换」。
 
-```powershell
-# 运行示例脚本（自动探测串口）
-py -3.13 run_automation.py automation/examples/smoke_alarm.auto
+- **触发块**：传感器（温度/湿度/光照/烟雾/雨水/触摸/PIR）、事件（矩阵键盘按键、红外遥控键、人脸授权通过）、周期（每 N 秒）、定时（HH:MM）；传感器触发可设「持续 N 秒」防止误触发；
+- **条件块**：门/窗/灯/风扇状态、全屋模式、判定是否有人在家等，可叠加（全部/任一）；
+- **执行块**：门、窗、灯（亮度）、风扇（转速）、蜂鸣器、OLED 屏、全屋模式（模式/风扇/灯光档位）、等待、语音助手唤醒/播报；
+- 每条规则可独立启停、设冷却秒数；内置 15 条默认规则（高温控风扇、光敏调光、雨水关窗、烟雾报警、人脸开门、离家关全屋、触摸/按键切换模式等）默认注入，可编辑/停用/删除，可「恢复内置规则」。
+- 执行记录与规则判定实时预览见同页。
 
-# 手动指定串口
-py -3.13 run_automation.py automation/examples/smoke_alarm.auto --port-a COM7 --port-b COM6
-
-# 只跑一轮（调试用）
-py -3.13 run_automation.py automation/examples/smoke_alarm.auto --once
-
-# 启用 OLED 多行轮播（3 秒切一页）
-py -3.13 run_automation.py automation/examples/edge_timer.auto --carousel
-
-# 调整轮播间隔 / 轮询间隔
-py -3.13 run_automation.py automation/examples/edge_timer.auto --carousel --carousel-interval 5 --interval 1
-```
-
-**脚本语法见 [automation/README.md](automation/README.md)**，示例脚本在 [automation/examples/](automation/examples/)。
-
-一个最小示例：
-
-```
-规则 "烟雾报警" {
-    边沿 data.smoke {
-        执行 蜂鸣器.开
-        执行 红灯
-    }
-    边沿 下降 data.smoke {
-        执行 蜂鸣器.关
-        执行 关灯
-    }
-}
-```
+> 历史 `.auto` 文本 DSL、`run_automation.py`、`link_server.py` 已移除，全部统一到本积木引擎。
 
 ---
 
@@ -207,15 +171,6 @@ py -3.13 camera_test.py --cam 0 --frames 10
 
 > 香橙派部署提示：`--mode web` 会用 Flask 起 MJPEG 流，浏览器打开 `http://<香橙派IP>:8080` 即可实时查看，
 > 无需图形界面。HTTP 服务与摄像头采集在不同线程运行，互不阻塞。
-
----
-
-## ③ link_server.py — 旧版联动服务（已过时）
-
-> ⚠️ **建议改用 `run_automation.py`**。本脚本用硬编码的 `RULES` 列表实现联动，
-> 逻辑与代码耦合，改规则需要改 Python 代码；新方案用 `.auto` 脚本解耦，可读可维护。
-
-仅作历史参考保留，不再维护。
 
 ---
 
@@ -345,7 +300,7 @@ py -3.13 voice_assistant.py --port-a COM7 --port-b COM6 --llm-mode local --model
 ```
 
 > ⚠️ **串口互斥**：语音模式运行期间，COM 口被 mcp_home_server 子进程独占，
-> 不要同时运行 `test_serial.py / full_test.py / run_automation.py / link_server.py`
+> 不要同时运行 `test_serial.py / full_test.py`
 > 或 Arduino IDE 串口监视器（会报「拒绝访问」，属 Windows 串口单进程规则，非 bug）。
 > TCP 方面无冲突：Qwen 服务固定 8000，camera_stream 8080。
 

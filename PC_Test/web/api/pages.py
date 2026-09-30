@@ -24,6 +24,11 @@ def hardware_page():
     return render_template("hardware.html")
 
 
+@bp.route("/voice")
+def voice_page():
+    return render_template("voice.html")
+
+
 @bp.route("/automation")
 def automation_page():
     return render_template("automation.html")

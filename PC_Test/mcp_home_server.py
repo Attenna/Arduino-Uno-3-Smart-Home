@@ -36,7 +36,7 @@ KEYPAD_WINDOW_S = 10.0        # 全部按键必须在该时间窗口内完成，
 KEYPAD_OPEN_HOLD_S = 10.0     # 触发后开门保持秒数，到时自动关门（需求2：门禁通过 10 秒后关门）
 
 
-# ==================== 串口探测 / 连接（移植自 link_server.py）====================
+# ==================== 串口探测 / 连接（早期串口工具移植而来）====================
 
 def list_ports():
     return [(p.device, p.description) for p in serial.tools.list_ports.comports()]
@@ -129,6 +129,11 @@ class HomeController:
                             "event": ev_name,
                             **{k: v for k, v in msg.items()
                                if k not in ("module", "type")},
+                            # A 板事件本身不带时间戳：同一按键连按时 JSON 完全相同，
+                            # web 侧按整包去重会把第二次以后全丢掉（遥控器连按失效）。
+                            # 这里在「到达时刻」打一次标记：同一物理事件跨轮询保持不变
+                            # （仍能去重），不同次按键则因时间戳不同而各自触发。
+                            "ts": int(time.time() * 1000),
                         })
                     if ev_name == "keypad":
                         self._handle_keypad(msg.get("key", ""))
@@ -250,6 +255,7 @@ class HomeController:
             pass
         if not port:
             print("[B] 串口重开失败：未知端口名", file=sys.stderr)
+            self.ser_b = None
             return
         try:
             time.sleep(0.2)
@@ -259,6 +265,13 @@ class HomeController:
             print(f"[B] 响应超时，串口已重开自愈: {port}", file=sys.stderr)
         except Exception as e:                       # noqa: BLE001
             print(f"[B] 串口重开失败: {e}", file=sys.stderr)
+            # 重开失败：清掉损坏句柄，后续调用明确返回「Module B 未连接」
+            # 而不是对坏句柄继续写，避免静默丢指令。
+            try:
+                self.ser_b.close()
+            except Exception:                        # noqa: BLE001
+                pass
+            self.ser_b = None
 
     # ── 工具实现 ──
     def handle_light(self, action, value=None, r=None, g=None, b=None) -> str:

@@ -5,12 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>自动化规则 - 智能家居</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-    <!-- Blockly 全量自托管（内网/校园网无外网也可用）；不再回退外网 CDN，避免控制台报错 -->
-    <script src="{{ url_for('static', filename='vendor/blockly/blockly.min.js') }}?v=20260930c"></script>
-    <!-- 简体中文内置文案（自定义积木本身已是中文）；Blockly 未加载则跳过 -->
+    <!-- Blockly 全量自托管（内网/校园网无外网也可用）-->
+    <script src="{{ url_for('static', filename='vendor/blockly/blockly.min.js') }}?v=20261001a"></script>
     <script>
         if (typeof Blockly !== 'undefined') {
-            document.write('<script src="{{ url_for('static', filename='vendor/blockly/zh-hans.js') }}?v=20260930c"><\/script>');
+            document.write('<script src="{{ url_for('static', filename='vendor/blockly/zh-hans.js') }}?v=20261001a"><\/script>');
         }
     </script>
     <style>
@@ -21,17 +20,25 @@
         #blocklyArea { width: 100%; height: 72vh; min-height: 520px; border-radius: var(--radius-sm);
                        overflow: hidden; border: 1px solid var(--border-color); background: #0f1923; position: relative; }
         #blocklyDiv { position: absolute; inset: 0; }
-        .blockly-main { --ws-toolbar: #162231; }
-        .preview-list { display: flex; flex-direction: column; gap: 10px; max-height: 300px; overflow-y: auto; }
-        .preview-item { border: 1px solid var(--border-color); border-radius: var(--radius-sm);
-                        padding: 10px 12px; background: var(--bg-secondary); }
-        .preview-item .pv-title { display: flex; align-items: center; gap: 8px; font-weight: 600; }
-        .preview-item .pv-name { flex: 1 1 auto; }
         .badge { font-size: 11px; padding: 2px 8px; border-radius: 999px; }
         .badge.on { background: rgba(0,230,118,.15); color: var(--accent-green); }
         .badge.off { background: rgba(255,23,68,.12); color: var(--accent-red); }
         .badge.evt { background: rgba(255,145,0,.15); color: var(--accent-orange); }
         .badge.disabled { background: rgba(139,164,184,.15); color: var(--text-secondary); }
+        .mode-badge { font-weight: 600; font-size: 14px; padding: 8px 12px; border-radius: var(--radius-sm);
+                      background: rgba(0,229,255,.10); color: var(--accent-cyan); }
+        .mode-badge.mode-manual { background: rgba(255,145,0,.12); color: var(--accent-orange); }
+        .mode-badge.mode-away { background: rgba(255,23,68,.12); color: var(--accent-red); }
+        .manual-grace { display: flex; flex-wrap: wrap; gap: 6px; }
+        .grace-chip { font-size: 12px; padding: 4px 10px; border-radius: 999px;
+                      background: rgba(255,145,0,.14); color: var(--accent-orange); }
+        .grace-chip.empty { background: rgba(0,230,118,.10); color: var(--accent-green); }
+        .mode-hint { font-size: 12px; color: var(--text-secondary); line-height: 1.7; }
+        .preview-list { display: flex; flex-direction: column; gap: 10px; max-height: 300px; overflow-y: auto; }
+        .preview-item { border: 1px solid var(--border-color); border-radius: var(--radius-sm);
+                        padding: 10px 12px; background: var(--bg-secondary); }
+        .preview-item .pv-title { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+        .preview-item .pv-name { flex: 1 1 auto; }
         .pv-conds { margin-top: 6px; font-size: 12px; color: var(--text-secondary); display: flex; flex-direction: column; gap: 2px; }
         .pv-conds .yes { color: var(--accent-green); }
         .pv-conds .no { color: var(--accent-red); }
@@ -40,11 +47,6 @@
         .auto-log th { color: var(--text-secondary); font-weight: 500; }
         .log-wrap { max-height: 300px; overflow-y: auto; }
         .mini-btn { font-size: 12px; padding: 4px 10px; }
-        .mode-badge { font-weight: 600; font-size: 14px; padding: 8px 12px; border-radius: var(--radius-sm);
-                      background: rgba(0,229,255,.10); color: var(--accent-cyan); }
-        .mode-badge.mode-manual { background: rgba(255,145,0,.12); color: var(--accent-orange); }
-        .mode-badge.mode-away { background: rgba(255,23,68,.12); color: var(--accent-red); }
-        .mode-hint { font-size: 12px; color: var(--text-secondary); line-height: 1.7; }
         .missing-box { position: absolute; inset: 20px; z-index: 5; display: flex; align-items: center; justify-content: center;
                        background: var(--bg-card); border: 1px dashed var(--accent-orange);
                        color: var(--accent-orange); border-radius: var(--radius-sm); text-align: center; padding: 20px; }
@@ -65,6 +67,7 @@
             <a href="/history" class="nav-link" data-i18n="nav.history">历史数据</a>
             <a href="/access" class="nav-link" data-i18n="nav.access">门禁管理</a>
             <a href="/hardware" class="nav-link" data-i18n="nav.hardware">硬件管理</a>
+            <a href="/voice" class="nav-link" data-i18n="nav.voice">语音助手</a>
             <a href="/automation" class="nav-link active" data-i18n="nav.automation">自动化</a>
         </div>
         <div class="nav-status">
@@ -91,10 +94,15 @@
                 <button class="btn" onclick="addRuleBlock()">＋ 新建规则</button>
                 <button class="btn btn-primary" onclick="saveAll()">💾 保存全部规则</button>
                 <button class="btn" onclick="refreshPreview()">🔄 刷新实时状态</button>
+                <button class="btn" onclick="restorePresets()">♻️ 恢复内置规则</button>
                 <div class="hint">
                     从左侧工具箱拖积木：紫色「规则」块每个代表一条规则，槽位依次放 <b>触发块（橙色）</b>、
                     <b>条件块（蓝色，可叠多个）</b>、<b>执行块（绿色，从上往下依次执行）</b>；
-                    「否则」槽可放状态切换动作（如温度回落自动关风扇），也可留空。改完点「保存全部规则」立即生效。
+                    「否则」槽可放状态切换动作（如雨停恢复 45°），也可留空。改完点「保存全部规则」立即生效。
+                    内置联动（温度控风扇、光敏调光、雨水关窗、烟雾报警、门禁自动关门、触摸/按键切换等）
+                    已全部变成下面的<span style="color:#00e5ff">默认规则积木</span>，可改名/改阈值/停用/删除；
+                    误删用「恢复内置规则」找回。<b>手动优先</b>：你在面板/语音手动操作某设备后，
+                    该设备进入「手动冷却窗口」，期间自动规则与档位覆盖自动让位，绝不把你要的状态改回去。
                 </div>
             </div>
         </div>
@@ -105,7 +113,7 @@
                     <div id="blocklyArea">
                         <div id="blocklyDiv"></div>
                         <div id="blocklyMissing" class="missing-box hidden">
-                            积木引擎（Blockly）未能加载，请按 Ctrl+F5 强制刷新页面；若仍失败，请确认 web 容器已包含本地积木资源（static/vendor/blockly）。
+                            积木引擎（Blockly）未能加载，请按 Ctrl+F5 强制刷新；若仍失败，请确认 web 容器已包含本地积木资源（static/vendor/blockly）。
                         </div>
                     </div>
                 </div>
@@ -127,18 +135,19 @@
                             <button class="btn mini-btn" id="lightLevelBtn"
                                     onclick="cycleLightLevel()">💡 灯光：--</button>
                         </div>
-                        <label style="display:flex;align-items:center;gap:8px;font-size:13px">
-                            <input type="checkbox" id="awayOnlyChk"
-                                   onchange="setAwayOnly(this.checked)">
-                            仅在判定无人在家时自动调节（有人在家保留用户当前状态）
-                        </label>
+                        <div>
+                            <div style="font-size:12px;color:var(--text-secondary);margin-bottom:4px">
+                                手动优先（自动让位中的设备）：
+                            </div>
+                            <div id="manualGraceChips" class="manual-grace">
+                                <span class="grace-chip empty">暂无（自动可正常起作用）</span>
+                            </div>
+                        </div>
                         <span id="homeModeDetail" class="mode-hint"></span>
                         <span class="mode-hint">
-                            <b>红外遥控</b>：键1 循环「强制关→强制开→自动」风扇；键2/3 循环
-                            「保持→暗→半亮→全亮→自动」灯光。<b>触摸传感器</b>按下可切换 手动/自动。
-                            自动模式下：温度 &gt; 阈值开风扇（全速）、按光敏自动调灯光；
-                            雨水自动关窗、雨停恢复 45°，烟雾报警，任何模式下都生效。
-                            面板/语音手动操作后会自动切到<b>手动</b>，不再被自动逻辑覆盖。
+                            手动模式 = 自动联动（温度/光照/雨水/烟雾等）全部让位给用户；离家模式 = 关闭灯光/风扇/窗户。
+                            你在面板/语音手动操作某设备后，该设备约 30 秒内处于「手动优先」，自动规则与档位覆盖都不会再动它，
+                            从根上避免「我开了灯/风扇，结果又被自动逻辑改回去」。真正离家请用「🚪 离家」。
                         </span>
                     </div>
                 </div>
@@ -179,7 +188,7 @@
         </div>
     </main>
 
-    <script src="{{ url_for('static', filename='js/lang.js') }}?v=20260930"></script>
-    <script src="{{ url_for('static', filename='js/automation.js') }}?v=20260930b"></script>
+    <script src="{{ url_for('static', filename='js/lang.js') }}?v=20261001"></script>
+    <script src="{{ url_for('static', filename='js/automation.js') }}?v=20261001a"></script>
 </body>
 </html>

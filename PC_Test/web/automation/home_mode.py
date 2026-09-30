@@ -1,23 +1,20 @@
-"""全屋模式状态机（引擎级联动）：自动 / 手动 / 离家 + 设备级强制覆盖。
+"""全屋模式状态机（引擎级状态）：自动 / 手动 / 离家 + 设备档位覆盖。
 
-「十条全屋自动化」里跨设备、带时序的联动无法用单条积木规则表达，
-统一收敛到本状态机，由自动化引擎在**快照 / 事件 / 滴答**三个入口驱动：
+**职责边界**：本模块只负责「状态 + 仲裁」，不再内置任何联动策略（联动全是
+积木规则，见 default_rules.py）。核心是解决两处历史 bug：
+1. **手动优先 + 冷却窗口**：记录每设备最近一次手动操作的时刻 ``_last_manual``，
+   `within_manual_grace()` 返回该设备是否处于手动冷却窗口内；规则动作与
+   `tick()` 下发前都先查询它——设备刚被手动设置过则**跳过**，自动绝不和手动抢。
+2. **统一锁**：所有可变状态（cfg / _last_* / _last_manual / _pir_last_seen）
+   读写都持 ``self._lock``，杜绝自动化线程与 Flask 手动控制线程并发竞争。
 
-    需求1  PIR 检测到人靠近门逗留 >=30s 且未通过门禁 ─▶ 蜂鸣器拉响
-    需求2  门禁通过 ─▶ 开锁，10s 后自动关门
-    需求3  检测到人后门舵机动作 = 进门 → 全屋自动；无人时门动作 = 出门 → 全屋关闭
-    需求4  自动模式温度 > 阈值 ─▶ 风扇全速；红外键1 循环 强制关→强制开→自动
-    需求5  自动模式光敏调光；红外键2/3 循环 保持→暗→半亮→全亮→自动
-    需求6  雨水关窗、雨停恢复 45°；烟雾 ─▶ 蜂鸣器持续报警
-    需求8  触摸按下 ─▶ 手动（保持当前状态）；再按 ─▶ 恢复自动
-    需求9  烟雾/雨水安全联动在任何模式（含离家/手动/禁用）下都生效
-    需求11 自动调节只在「判定无人在家」时生效；人在家时保留用户当前状态
-          （自动开关设备会让用户觉得「没有操控感」）
+保留的状态：
+    auto / manual / away 及其语义（离家=全屋关闭 via away_close_all 积木规则）；
+    fan_override / light_level 档位覆盖（供「全屋模式」积木设置，tick 持锁、
+    且不覆盖手动冷却窗口内的设备）；
+    person_present 人在家判定（PIR 保持窗口，静坐漏检时做安全默认）。
 
-设计约束：
-- 任何异常只写日志，绝不拖垮 bridge 轮询线程；
-- 动作经 bridge 下发（relay → voice → Module B），与积木规则共用同一通道；
-- 状态与配置持久化到 data/home_mode.json，容器重建不丢。
+设计约束：任何异常只写日志，绝不拖垮 bridge 轮询线程。
 """
 from __future__ import annotations
 
@@ -35,59 +32,49 @@ MODE_AWAY = "away"
 MODES = (MODE_AUTO, MODE_MANUAL, MODE_AWAY)
 MODE_LABELS = {MODE_AUTO: "自动", MODE_MANUAL: "手动", MODE_AWAY: "离家"}
 
-# 风扇红外覆盖档位循环（需求4）：强制关 → 强制开 → 自动 → …
+# 风扇档位循环：强制关 → 强制开 → 自动 → …
 FAN_LABELS = {None: "自动", "on": "强制开", "off": "强制关"}
-_FAN_CYCLE = {"off": "on", "on": None, None: "off"}
+FAN_CYCLE = {"off": "on", "on": None, None: "off"}
 
-# 灯光档位循环（需求5）：自动 → 保持 → 暗 → 半亮 → 全亮 → 自动
+# 灯光档位循环：保持 → 暗 → 半亮 → 全亮 → 自动 → …
 LIGHT_LABELS = {"auto": "自动", "hold": "保持当前", "dark": "暗",
                 "half": "半亮", "bright": "全亮"}
-_LIGHT_CYCLE = ["hold", "dark", "half", "bright", "auto"]
+LIGHT_CYCLE = ["hold", "dark", "half", "bright", "auto"]
 
 # OLED 专用英文标签：B 板 u8x8 字库只有 ASCII，汉字上屏是乱码。
-# 页面/接口仍返回上面那套中文标签，两者互不影响。
 MODE_LABELS_EN = {MODE_AUTO: "Auto", MODE_MANUAL: "Manual", MODE_AWAY: "Away"}
 FAN_LABELS_EN = {None: "Auto", "on": "ForceON", "off": "ForceOFF"}
 LIGHT_LABELS_EN = {"auto": "Auto", "hold": "Hold", "dark": "Dark",
                    "half": "Half", "bright": "Full"}
 
-# 红外键码（NEC，ADDRESS 0x00；见派上 ~/ir_remote_keymap.txt）
-IR_FAN_KEYS = (0x45,)          # 键'1'
-IR_LIGHT_KEYS = (0x46, 0x47)   # 键'2'/'3'
+# 档位对应的亮度百分比（档位是「相对档」，具体百分比固定在这里）
+LEVEL_PCT = {"bright": 100, "half": 50, "dark": 30}
+
+# 窗状态在 DB/页面里是 open/closed/normal，下发给 B 板是 open/close/normal
+_WINDOW_HW = {"open": "open", "closed": "close", "close": "close", "normal": "normal"}
+
+
+def _window_hw(status) -> str:
+    return _WINDOW_HW.get(str(status or "close"), "close")
+
 
 DEFAULT_CONFIG = {
     "enabled": True,
     "mode": MODE_AUTO,
-    "fan_override": None,          # None=自动调节；"on"/"off"=红外强制
+    "fan_override": None,          # None=自动；"on"/"off"=强制档位
     "light_level": "auto",         # auto/hold/dark/half/bright
-    "temp_threshold": 25.0,        # 需求4：高于此温度自动开风扇
-    "fan_auto_speed": 100,         # 需求4：默认全速
-    "door_dwell_sec": 30.0,        # 需求1：靠近门逗留报警阈值
-    "dwell_only_away": True,       # 需求1：仅在「离家」模式做逗留报警，避免家人走动误响
-    "door_close_sec": 10.0,        # 需求2：开门后自动关门延时
-    "pir_recent_sec": 60.0,        # 判定「检测到人」的时间窗
-    "auto_away_only": True,        # 需求11：仅判定无人在家时才做自动调节
-    "presence_hold_sec": 300.0,    # 需求11：PIR 触发后「人还在家」的保持窗口（秒）
-    "smoke_realarm_sec": 15.0,     # 烟雾未消散时的重复报警间隔
-    "smoke_confirm_sec": 5.0,      # 需连续检测到烟雾该时长才报警（滤除单帧抖动）
-    "smoke_realarm_max": 3,        # 未消散时的重复报警次数上限，之后只记录不再鸣响
-    "light_dark_max": 200,         # 需求5：光照 <= 此值 → 全亮
-    "light_mid_max": 500,          # 需求5：光照 <= 此值 → 半亮，否则关灯
-    "bright_pct": 100,
-    "half_pct": 50,
-    "dark_pct": 30,
+    "presence_hold_sec": 1200.0,   # PIR 触发后「人还在家」的保持窗口（秒，默认20分钟）
+    "manual_grace_s": 30.0,        # 手动操作后，自动/规则/tick 让位的冷却窗口（秒）
 }
 
-_NUMERIC_KEYS = ("temp_threshold", "door_dwell_sec", "door_close_sec",
-                 "pir_recent_sec", "presence_hold_sec", "smoke_realarm_sec",
-                 "smoke_confirm_sec", "light_dark_max", "light_mid_max")
-_INT_KEYS = ("fan_auto_speed", "bright_pct", "half_pct", "dark_pct",
-             "smoke_realarm_max")
-_BOOL_KEYS = ("dwell_only_away", "auto_away_only")
+_NUMERIC_KEYS = ("presence_hold_sec", "manual_grace_s")
 
 
 class HomeModeManager:
-    """全屋模式 + 强制覆盖状态机。线程安全（RLock 保护配置）。"""
+    """全屋模式 + 仲裁状态机。线程安全（RLock 保护全部可变状态）。"""
+
+    # 会被「手动冷却窗口」仲裁覆盖的控制器设备
+    GRACE_DEVICES = ("light", "fan", "window", "door")
 
     def __init__(self, bridge, db, path):
         self.bridge = bridge
@@ -99,22 +86,12 @@ class HomeModeManager:
 
         # ── 运行期状态（不持久化） ──
         self._snapshot: dict = {}
-        self._prev_touch = False
-        self._pir_since = 0.0          # 本轮 PIR 起始时刻（0=当前无人）
-        self._pir_last_seen = 0.0      # 最近一次检测到人的时刻
-        self._pir_alarm_done = False   # 本轮逗留是否已报警
-        self._door_granted_at = 0.0    # 最近一次门禁通过时刻
-        self._door_close_at = 0.0      # 待自动关门时刻（0=无）
-        self._smoke_active = False
-        self._smoke_since = 0.0
-        self._smoke_alarms = 0
-        self._smoke_last_alarm = 0.0
-        self._rain_wet = False
+        self._pir_last_seen = 0.0      # 最近一次检测到「有人」的时刻
         self._last_fan = None          # 最近下发的风扇转速（去重）
         self._last_light = None        # 最近下发的 (status, brightness)
         self._last_window = None       # 最近下发的窗状态
-        self._presence_paused = False  # 自动调节是否因「人在家」暂停（仅用于状态变化时记日志）
         self._last_reason = ""
+        self._last_manual: dict[str, float] = {}   # device -> 最近手动操作时刻
 
     # ==================== 配置与持久化 ====================
 
@@ -137,21 +114,13 @@ class HomeModeManager:
         if self.cfg.get("light_level") not in LIGHT_LABELS:
             self.cfg["light_level"] = "auto"
         self.cfg["enabled"] = bool(self.cfg.get("enabled", True))
-        for key in _BOOL_KEYS:
-            raw = self.cfg.get(key, DEFAULT_CONFIG[key])
-            if isinstance(raw, str):
-                raw = raw.strip().lower() not in ("0", "false", "no", "off", "")
-            self.cfg[key] = bool(raw)
         for key in _NUMERIC_KEYS:
             try:
                 self.cfg[key] = float(self.cfg[key])
             except (TypeError, ValueError):
                 self.cfg[key] = float(DEFAULT_CONFIG[key])
-        for key in _INT_KEYS:
-            try:
-                self.cfg[key] = max(0, min(100, int(self.cfg[key])))
-            except (TypeError, ValueError):
-                self.cfg[key] = int(DEFAULT_CONFIG[key])
+        # 冷却窗口至少 1 秒、最多 1 小时
+        self.cfg["manual_grace_s"] = max(1.0, min(3600.0, self.cfg["manual_grace_s"]))
 
     def _save(self) -> None:
         try:
@@ -166,7 +135,6 @@ class HomeModeManager:
     def configure(self, reason: str = "页面设置", **kw) -> dict:
         """更新配置并落盘。fan_override 允许显式传 None 表示回到自动。"""
         with self._lock:
-            prev_mode = self.cfg["mode"]
             for key, value in kw.items():
                 if key not in DEFAULT_CONFIG:
                     continue
@@ -178,290 +146,170 @@ class HomeModeManager:
         self._log(f"设置更新（{reason}）：模式={MODE_LABELS[self.cfg['mode']]}"
                   f"｜风扇={FAN_LABELS[self.cfg['fan_override']]}"
                   f"｜灯光={LIGHT_LABELS[self.cfg['light_level']]}")
-        # 页面/语音切到离家时，与「出门判定」一致地关闭全屋设备
-        if self.cfg["mode"] == MODE_AWAY and prev_mode != MODE_AWAY:
-            self._apply_away()
         return self.config()
 
     def config(self) -> dict:
         with self._lock:
             cfg = dict(self.cfg)
         now = time.time()
+        # 当前处于「手动冷却窗口」的设备（前端显示为「手动优先中」）
+        graces = [d for d in self.GRACE_DEVICES if self.within_manual_grace(d, now)]
         cfg.update({
             "mode_label": MODE_LABELS[cfg["mode"]],
             "fan_label": FAN_LABELS[cfg["fan_override"]],
             "light_label": LIGHT_LABELS[cfg["light_level"]],
-            "pir_near_door": bool(self._pir_since),
-            "pir_dwell_seconds": round(now - self._pir_since, 1) if self._pir_since else 0.0,
             "person_present": self.person_present(now),
-            "auto_paused": bool(self.cfg["auto_away_only"] and cfg["mode"] == MODE_AUTO
-                                and self.person_present(now)),
-            "door_close_in": max(0.0, round(self._door_close_at - now, 1))
-            if self._door_close_at else 0.0,
-            "smoke_active": self._smoke_active,
-            "rain_wet": self._rain_wet,
             "last_reason": self._last_reason,
+            "manual_grace_s": cfg["manual_grace_s"],
+            "manual_graces": graces,
         })
         return cfg
 
-    def person_present(self, now: float | None = None) -> bool:
-        """需求11：是否判定「有人在家」。
+    # ==================== 手动冷却窗口（自动/规则的仲裁闸门） ====================
 
-        PIR 只能测到「有动作」，静坐不动会漏检，所以用 presence_hold_sec
-        的保持窗口（默认 5 分钟）来近似「人还在家」。
+    def within_manual_grace(self, device: str, now: float | None = None) -> bool:
+        """设备是否处于「手动冷却窗口」内。
+
+        - ``True``：该设备刚被手动操作过，自动规则 / tick() 都应让位（跳过）；
+        - ``False``：可以下发。
         """
+        if device not in self.GRACE_DEVICES:
+            return False
         now = time.time() if now is None else now
-        return bool(self._pir_last_seen
-                    and now - self._pir_last_seen <= self.cfg["presence_hold_sec"])
-
-    # ==================== 外部输入（引擎钩子） ====================
-
-    def on_snapshot(self, snap: dict) -> None:
-        """A 板周期快照：只更新状态，实际动作交给 tick（1s）。"""
-        try:
-            self._snapshot = dict(snap or {})
-            now = time.time()
-            if self._snapshot.get("motion"):
-                self._pir_last_seen = now
-                if not self._pir_since:
-                    self._pir_since = now
-                    self._pir_alarm_done = False
-            else:
-                self._pir_since = 0.0
-                self._pir_alarm_done = False
-            self._handle_touch(self._snapshot.get("touch"))
-        except Exception as e:                       # noqa: BLE001
-            logger.debug("[全屋模式] 快照处理异常: %s", e)
-
-    def on_event(self, event: dict) -> None:
-        """离散事件：门禁通过 / 红外遥控。"""
-        try:
-            event = dict(event or {})
-            name = event.get("event")
-            if name == "face" and event.get("status") == "granted":
-                self.on_face_granted(str(event.get("person") or ""))
-            elif name == "ir":
-                self._handle_ir(event.get("command"))
-        except Exception as e:                       # noqa: BLE001
-            logger.debug("[全屋模式] 事件处理异常: %s", e)
-
-    def tick(self) -> None:
-        """1s 滴答：安全联动（始终）→ 逗留报警 → 自动关门 → 自动调节。"""
-        try:
-            now = time.time()
-            # 需求6/9：烟雾与雨水任何模式下都自动工作
-            self._handle_smoke(now)
-            self._handle_rain()
-            if not self.cfg["enabled"]:
-                return
-            self._check_dwell(now)
-            self._check_door_close(now)
-            self._auto_regulate()
-        except Exception as e:                       # noqa: BLE001
-            logger.debug("[全屋模式] 滴答处理异常: %s", e)
-
-    def note_door_action(self, source: str = "rule") -> None:
-        """门舵机动作（积木规则/手动控制）：结合 PIR 判定进门 / 出门（需求3）。"""
-        if source == "face":
-            return                                    # 门禁流程已单独处理
-        now = time.time()
-        if self._pir_last_seen and now - self._pir_last_seen <= self.cfg["pir_recent_sec"]:
-            self._set_mode(MODE_AUTO, "检测到人后门舵机动作，判定为进门")
-        else:
-            self._set_mode(MODE_AWAY, "未检测到人时门舵机动作，判定为出门")
+        with self._lock:
+            last = self._last_manual.get(device)
+            return last is not None and (now - last) < self.cfg["manual_grace_s"]
 
     def note_manual_control(self, device: str, reason: str = "", **state) -> None:
         """面板/语音手动操作硬件后的状态机同步（用户策略：手动操作 → 全屋转手动）。
 
-        做两件事：
-        1. 把去重缓存 ``_last_*`` 更新为手动值——否则自动调节会误判「已下发过」
-           而静默不再下发（实测：自动模式下面板开灯后，自动逻辑 4 秒都没关灯）；
-        2. 任何手动操作都把全屋切到「手动」，并清掉该设备此前的红外强制档位，
-           使用户刚设的状态不被自动逻辑/旧档位覆盖（触摸键或页面「自动」可恢复）。
+        做三件事（全程持锁）：
+        1. 记录 ``_last_manual[device]`` 时刻 → 进入手动冷却窗口，自动让位；
+        2. 更新去重缓存 ``_last_*``，清掉该设备的档位覆盖；
+        3. 把全屋切到「手动」，使用户刚设的状态不被自动逻辑再次覆盖
+           （页面切「自动」/触摸键可恢复）。
         """
         label = {"light": "灯光", "fan": "风扇", "door": "门",
                  "window": "窗户"}.get(device, device)
         dirty = False
         with self._lock:
+            self._last_manual[device] = time.time()
             if device == "fan":
                 self._last_fan = max(0, min(100, int(state.get("speed", 0) or 0)))
                 if self.cfg["fan_override"] is not None:
-                    self.cfg["fan_override"] = None      # 清掉红外强制档
+                    self.cfg["fan_override"] = None      # 清掉强制档
                     dirty = True
             elif device == "light":
                 status = "on" if state.get("status") == "on" else "off"
                 brightness = max(0, min(100, int(state.get("brightness", 0) or 0)))
                 self._last_light = (status, brightness)
-                if self.cfg["light_level"] in ("dark", "half", "bright"):
-                    self.cfg["light_level"] = "auto"     # 清掉红外档位
+                if self.cfg["light_level"] in LEVEL_PCT:
+                    self.cfg["light_level"] = "auto"     # 清掉档位
                     dirty = True
             elif device == "window":
-                raw = str(state.get("status") or "close")
-                self._last_window = "open" if raw == "open" else "close"
+                self._last_window = _window_hw(state.get("status"))
             if dirty:
                 self._save()
         self._set_mode(MODE_MANUAL,
                        reason or f"手动控制{label}，全屋切到手动模式并保持当前状态")
 
-    def on_face_granted(self, person: str = "") -> None:
-        """需求2/3：门禁通过 → 开门 + 10s 后自动关门 + 判定进门。"""
-        now = time.time()
-        self._door_granted_at = now
-        self._pir_alarm_done = True                   # 已通过门禁，取消逗留报警
-        who = f"（{person}）" if person else ""
-        self._apply_door("open", f"门禁通过{who}，开锁")
-        self._door_close_at = now + self.cfg["door_close_sec"]
-        self._set_mode(MODE_AUTO, "门禁通过，判定为进门 → 全屋自动调节")
+    def note_rule_action(self, device: str, **state) -> None:
+        """积木规则下发了设备动作后：同步去重缓存，让档位覆盖让位。
 
-    # ==================== 需求1：逗留报警 ====================
+        规则给的是**具体指令**（如风扇 40%），比「强制开/强制关」更具体，所以
+        清掉该设备的覆盖档，避免下一秒 tick 再按覆盖值重下发（「刚设的值被改回去」）。
 
-    def _check_dwell(self, now: float) -> None:
-        if not self._pir_since or self._pir_alarm_done:
-            return
-        # PIR 装在房间而非门口，家里有人时走动也会触发；
-        # 默认只在「离家」模式报警，语义上等同「无人在家却有人逗留」。
-        if self.cfg["dwell_only_away"] and self.cfg["mode"] != MODE_AWAY:
-            return
-        dwell = self.cfg["door_dwell_sec"]
-        if now - self._pir_since < dwell:
-            return
-        if self._door_granted_at >= self._pir_since:
-            self._pir_alarm_done = True               # 期间门禁通过，不算可疑逗留
-            return
-        self._pir_alarm_done = True
-        self._buzzer(3, 300, 200,
-                     f"有人靠近门逗留超过 {dwell:g} 秒且未通过门禁，蜂鸣器报警")
+        与 ``note_manual_control`` 的区别：**不记录手动冷却、不切手动**——规则
+        本来就是自动编排的，不该因自己执行一次动作就把全屋踢出自动。
+        """
+        dirty = False
+        with self._lock:
+            if device == "fan":
+                self._last_fan = max(0, min(100, int(state.get("speed", 0) or 0)))
+                if self.cfg["fan_override"] is not None:
+                    self.cfg["fan_override"] = None
+                    dirty = True
+            elif device == "light":
+                status = "on" if state.get("status") == "on" else "off"
+                brightness = max(0, min(100, int(state.get("brightness", 0) or 0)))
+                self._last_light = (status, brightness)
+                if self.cfg["light_level"] in LEVEL_PCT:
+                    self.cfg["light_level"] = "auto"
+                    dirty = True
+            elif device == "window":
+                self._last_window = _window_hw(state.get("status"))
+            if dirty:
+                self._save()
 
-    def _check_door_close(self, now: float) -> None:
-        if self._door_close_at and now >= self._door_close_at:
-            self._door_close_at = 0.0
-            self._apply_door("close", "门禁开门后自动关门")
+    # ==================== 档位循环/翻转（供积木的 cycle/toggle 动作） ====================
 
-    # ==================== 需求6/9：安全联动（始终生效） ====================
+    def next_fan_override(self):
+        with self._lock:
+            return FAN_CYCLE[self.cfg["fan_override"]]
 
-    def _handle_rain(self) -> None:
-        wet = bool(self._snapshot.get("rain"))
-        if wet and not self._rain_wet:
-            self._rain_wet = True
-            self._apply_window("close", "检测到雨水，自动关窗")
-        elif not wet and self._rain_wet:
-            self._rain_wet = False
-            self._apply_window("normal", "雨水消失，窗户恢复 45°")
-
-    def _handle_smoke(self, now: float) -> None:
-        active = bool(self._snapshot.get("smoke"))
-        if active and not self._smoke_active:
-            self._smoke_since = now
-            self._smoke_active = True
-        elif not active and self._smoke_active:
-            self._smoke_active = False
-            self._smoke_alarms = 0
-            self._log("烟雾解除，停止报警")
-            return
-        if not active:
-            return
-        # 需连续确认 smoke_confirm_sec 才拉响（滤除预热抖动/单帧误报）
-        if now - self._smoke_since < self.cfg["smoke_confirm_sec"]:
-            return
-        # 未消散时最多重复 realarm_max 次，防止模块异常时蜂鸣器响个不停
-        if now - self._smoke_last_alarm >= self.cfg["smoke_realarm_sec"]:
-            if self._smoke_alarms >= self.cfg["smoke_realarm_max"]:
-                self._log("烟雾持续存在已超过重复报警上限，停止鸣响（仅记录）")
-                self._smoke_last_alarm = now
-                return
-            self._smoke_alarms += 1
-            self._smoke_last_alarm = now
-            self._buzzer(5, 400, 200,
-                         f"检测到烟雾，蜂鸣器拉响报警（第 {self._smoke_alarms} 次）")
-
-    # ==================== 需求8：触摸切换 手动/自动 ====================
-
-    def _handle_touch(self, touch) -> None:
-        pressed = bool(touch)
-        if pressed and not self._prev_touch:
-            if self.cfg["mode"] == MODE_MANUAL:
-                self._set_mode(MODE_AUTO, "触摸传感器再按，恢复自动调节")
-            else:
-                self._set_mode(MODE_MANUAL, "触摸传感器按下，全屋转手动（保持当前状态）")
-        self._prev_touch = pressed
-
-    # ==================== 需求4/5：红外按键循环 ====================
-
-    def _handle_ir(self, command) -> None:
-        try:
-            code = int(command)
-        except (TypeError, ValueError):
-            return
-        if code in IR_FAN_KEYS:
-            nxt = _FAN_CYCLE[self.cfg["fan_override"]]
-            self.configure(reason=f"红外键 0x{code:02X}：风扇切到「{FAN_LABELS[nxt]}」",
-                           fan_override=nxt)
-            self._auto_regulate()
-        elif code in IR_LIGHT_KEYS:
+    def next_light_level(self) -> str:
+        with self._lock:
             cur = self.cfg["light_level"]
-            idx = _LIGHT_CYCLE.index(cur) if cur in _LIGHT_CYCLE else 0
-            nxt = _LIGHT_CYCLE[(idx + 1) % len(_LIGHT_CYCLE)]
-            self.configure(reason=f"红外键 0x{code:02X}：灯光切到「{LIGHT_LABELS[nxt]}」",
-                           light_level=nxt)
-            self._auto_regulate()
+            idx = LIGHT_CYCLE.index(cur) if cur in LIGHT_CYCLE else 0
+        return LIGHT_CYCLE[(idx + 1) % len(LIGHT_CYCLE)]
 
-    # ==================== 需求4/5：自动模式下的自动调节 ====================
+    def toggled_mode(self) -> str:
+        """触摸键那种「手动↔自动」翻转：非手动 → 手动，手动 → 自动。"""
+        with self._lock:
+            cur = self.cfg["mode"]
+        return MODE_AUTO if cur == MODE_MANUAL else MODE_MANUAL
 
-    def _auto_regulate(self) -> None:
-        mode = self.cfg["mode"]
-        if mode == MODE_AWAY:
-            return                                    # 离家：保持全关，不自动开启
+    # ==================== 人在家判定 ====================
 
-        # 需求11：判定有人在家的期间不做自动调节——自动开关设备会让用户觉得
-        # 「没有操控感」。只暂停 AUTO 的自动分支；红外强制档位、雨水/烟雾安全
-        # 联动、逗留报警都不受影响。
-        paused = self.cfg["auto_away_only"] and self.person_present()
-        if paused != self._presence_paused:
-            self._presence_paused = paused
-            self._log("判定有人在家：暂停自动调节，保留当前设备状态（人离开后恢复）"
-                      if paused else
-                      f"已 {self.cfg['presence_hold_sec']:g} 秒未检测到人：自动调节恢复")
+    def person_present(self, now: float | None = None) -> bool:
+        """是否判定「有人在家」（积木条件源 person_present）。
 
-        override = self.cfg["fan_override"]
-        if override == "on":
-            self._apply_fan(100, "红外强制开风扇")
-        elif override == "off":
-            self._apply_fan(0, "红外强制关风扇")
-        elif mode == MODE_AUTO and not paused:
-            temp = self._snapshot.get("temperature")
-            if temp is not None:
-                threshold = self.cfg["temp_threshold"]
-                if float(temp) > threshold:
-                    self._apply_fan(
-                        self.cfg["fan_auto_speed"],
-                        f"自动模式：温度 {float(temp):.1f}°C 高于 {threshold:g}°C，风扇全速")
-                else:
-                    self._apply_fan(
-                        0, f"自动模式：温度 {float(temp):.1f}°C 不高于 {threshold:g}°C，关闭风扇")
+        PIR 只能测到「有动作」，静坐会漏检。处理策略：
+        - 从未收到过 PIR 数据 → 按**安全默认「有人」**（除非显式离家），
+          避免启动/无人数据时自动调控误判；
+        - PIR 最近有动作、或在 ``presence_hold_sec`` 保持窗口内 → 有人；
+        - PIR 超过窗口没动 → 判「无人」——此时温度/光照等「无人自动调控」才可能生效。
+        真正常住离家请切「离家」模式（关闭全屋 + 安全规则）。
+        """
+        now = time.time() if now is None else now
+        seen = self._pir_last_seen
+        if not seen:
+            return self.cfg["mode"] != MODE_AWAY
+        return (now - seen) <= self.cfg["presence_hold_sec"]
 
-        level = self.cfg["light_level"]
-        if level == "hold":
-            return
-        if level == "bright":
-            self._apply_light("on", self.cfg["bright_pct"], "手动档位：灯光全亮")
-        elif level == "half":
-            self._apply_light("on", self.cfg["half_pct"], "手动档位：灯光半亮")
-        elif level == "dark":
-            self._apply_light("on", self.cfg["dark_pct"], "手动档位：灯光调暗")
-        elif mode == MODE_AUTO and not paused:
-            light = self._snapshot.get("light")
-            if light is None:
-                return
-            light = float(light)
-            if light <= self.cfg["light_dark_max"]:
-                self._apply_light("on", self.cfg["bright_pct"],
-                                  f"自动调光：光照 {light:.0f} 偏暗，灯光全亮")
-            elif light <= self.cfg["light_mid_max"]:
-                self._apply_light("on", self.cfg["half_pct"],
-                                  f"自动调光：光照 {light:.0f} 中等，灯光半亮")
-            else:
-                self._apply_light("off", 0,
-                                  f"自动调光：光照 {light:.0f} 充足，关闭灯光")
+    # ==================== 外部输入（引擎钩子） ====================
+
+    def on_snapshot(self, snap: dict) -> None:
+        """A 板周期快照：只更新「人在家」判定，不做任何设备动作。"""
+        try:
+            with self._lock:
+                self._snapshot = dict(snap or {})
+                if self._snapshot.get("motion"):
+                    self._pir_last_seen = time.time()
+        except Exception as e:                       # noqa: BLE001
+            logger.debug("[全屋模式] 快照处理异常: %s", e)
+
+    def tick(self) -> None:
+        """1s 滴答：持锁重新下发被积木设置的档位覆盖。
+
+        关键：每个需要下发的设备先查 ``within_manual_grace``——若该设备刚被
+        手动操作过（冷却窗口内）则**跳过**，绝不把用户的设置改回去。
+        """
+        try:
+            with self._lock:
+                if not self.cfg["enabled"]:
+                    return
+                now = time.time()
+                override = self.cfg["fan_override"]
+                if override in ("on", "off") and not self.within_manual_grace("fan", now):
+                    self._apply_fan(100 if override == "on" else 0,
+                                    "档位覆盖：强制" + ("开" if override == "on" else "关") + "风扇")
+                level = self.cfg["light_level"]
+                if level in LEVEL_PCT and not self.within_manual_grace("light", now):
+                    self._apply_light("on", LEVEL_PCT[level],
+                                      f"档位覆盖：灯光{LIGHT_LABELS[level]}")
+        except Exception as e:                       # noqa: BLE001
+            logger.debug("[全屋模式] 滴答处理异常: %s", e)
 
     # ==================== 模式切换 ====================
 
@@ -473,16 +321,7 @@ class HomeModeManager:
             if changed:
                 self._save()
         self._log(f"全屋模式 → {MODE_LABELS[mode]}：{reason}")
-        if changed and mode == MODE_AWAY:
-            self._apply_away()
         return changed
-
-    def _apply_away(self) -> None:
-        """需求3：出门 → 全屋关闭（仅保留烟雾/雨水安全联动）。"""
-        self._apply_light("off", 0, "离家模式：关闭全屋灯光")
-        self._apply_fan(0, "离家模式：关闭风扇")
-        self._apply_window("close", "离家模式：关闭窗户")
-        self._log("离家模式已生效：灯光/风扇/窗户全部关闭，烟雾与雨水检测继续工作")
 
     # ==================== 设备动作（经 bridge 下发，带去重） ====================
 
@@ -526,53 +365,6 @@ class HomeModeManager:
             except Exception:                        # noqa: BLE001
                 logger.debug("[全屋模式] 灯光状态写库失败", exc_info=True)
         self._log(f"{reason} → 灯 {status}/{brightness}%", ok=ok, detail=msg)
-        return ok
-
-    def _apply_window(self, status: str, reason: str) -> bool:
-        """status: open/close/normal(45°)。"""
-        if self._last_window == status:
-            return True
-        if not self._hardware_ready():
-            self._log(f"{reason}（硬件桥离线，未下发）", ok=False)
-            return False
-        ok, msg = self.bridge.control_window(status)
-        if ok:
-            self._last_window = status
-            db_status = {"open": "open", "close": "closed"}.get(status, "normal")
-            try:
-                self.db.update_status(window_status=db_status)
-                self.db.add_door_window_event("window", "客厅窗户(全屋模式)", db_status)
-            except Exception:                        # noqa: BLE001
-                logger.debug("[全屋模式] 窗状态写库失败", exc_info=True)
-        self._log(f"{reason} → 窗 {status}", ok=ok, detail=msg)
-        return ok
-
-    def _apply_door(self, status: str, reason: str) -> bool:
-        if not self._hardware_ready():
-            self._log(f"{reason}（硬件桥离线，未下发）", ok=False)
-            return False
-        ok, msg = self.bridge.control_door(status)
-        if ok:
-            db_status = "open" if status == "open" else "closed"
-            try:
-                self.db.update_status(door_status=db_status)
-                self.db.add_door_window_event("door", "前门(全屋模式)", db_status)
-            except Exception:                        # noqa: BLE001
-                logger.debug("[全屋模式] 门状态写库失败", exc_info=True)
-        self._log(f"{reason} → 门 {status}", ok=ok, detail=msg)
-        return ok
-
-    def _buzzer(self, count: int, on_ms: int, off_ms: int, reason: str) -> bool:
-        if not self._hardware_ready():
-            self._log(f"{reason}（硬件桥离线，未下发）", ok=False)
-            return False
-        try:
-            ok, msg = self.bridge.call_tool("buzzer", {
-                "action": "beep", "count": int(count),
-                "on_ms": int(on_ms), "off_ms": int(off_ms)})
-        except Exception as e:                       # noqa: BLE001
-            ok, msg = False, str(e)
-        self._log(reason, ok=ok, detail=msg)
         return ok
 
     # ==================== 日志 ====================

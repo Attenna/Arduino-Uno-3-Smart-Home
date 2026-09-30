@@ -56,6 +56,17 @@ def run_rule(rule_id):
     return jsonify(result), (200 if result.get("ok") else 400)
 
 
+@bp.route("/api/automation/rules/restore", methods=["POST"])
+def restore_rules():
+    """恢复内置规则：把被删掉的默认规则（preset）按原样补回。"""
+    engine = extensions.automation
+    if engine is None:
+        return jsonify({"error": "自动化引擎未启动"}), 503
+    rules = engine.restore_presets()
+    return jsonify({"ok": True, "rules": rules,
+                    "message": f"内置规则已恢复，当前共 {len(rules)} 条"})
+
+
 @bp.route("/api/automation/home_mode", methods=["GET"])
 def get_home_mode():
     """全屋模式状态（自动/手动/离家 + 风扇/灯光覆盖档位 + 逗留/关门倒计时）。"""

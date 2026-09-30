@@ -17,6 +17,7 @@ import glob
 import json
 import os
 import sys
+import threading
 import time
 import uuid
 
@@ -59,6 +60,10 @@ PC_TEST_DIR = os.path.dirname(os.path.abspath(__file__))
 _llm = None
 _MODEL_ID = "qwen2.5-3b-instruct-q4_k_m"
 _TPL = None
+# llama_cpp.Llama 不是线程安全的：两个请求（语音助手在思考 + 面板/探测同时在问）
+# 并发解码会共用同一份 KV cache，触发 `llama_decode returned -1` 并让服务进程退出。
+# 单卡单上下文服务本就只能串行推理，这里用一把锁把生成过程互斥掉。
+_GEN_LOCK = threading.Lock()
 
 TAG_OPEN = "<tool_call>"
 TAG_CLOSE = "</tool_call>"
@@ -256,9 +261,10 @@ async def chat_completions(req: Request):
     created = int(time.time())
 
     if not stream:
-        out = _llm.create_completion(prompt=prompt, max_tokens=max_tokens,
-                                     temperature=temperature, top_p=top_p,
-                                     stop=["<|im_end|>"])
+        with _GEN_LOCK:
+            out = _llm.create_completion(prompt=prompt, max_tokens=max_tokens,
+                                         temperature=temperature, top_p=top_p,
+                                         stop=["<|im_end|>"])
         text = out["choices"][0]["text"] or ""
         content_parts, tool_calls = [], []
         rest = text
@@ -320,52 +326,55 @@ def _sse_stream(prompt, max_tokens, temperature, top_p, cid, created, tools=None
             return emit({"content": txt})
         # 工具轮先判头：若以 { 开头则整段缓冲（小模型常裸吐 JSON 不带标签）
         json_mode = tools is not None
-        stream = _llm.create_completion(prompt=prompt, stream=True,
-                                        max_tokens=max_tokens,
-                                        temperature=temperature, top_p=top_p,
-                                        stop=["<|im_end|>"])
-        for chunk in stream:
-            piece = chunk["choices"][0].get("text") or ""
-            if not piece:
-                continue
-            buf += piece
-            while True:
-                if json_mode:
-                    s = buf.lstrip()
-                    if s and not s.startswith("{"):
-                        json_mode = False    # 普通文本/标签开头 → 回流式
-                    break
-                if not in_tool:
-                    i = buf.find(TAG_OPEN)
-                    if i >= 0:
-                        pre, buf = buf[:i], buf[i + len(TAG_OPEN):]
-                        in_tool = True
-                        if pre.strip():
-                            yield say(pre)
-                        continue
-                    hold = len(TAG_OPEN) - 1    # 扣住可能是半截标签的尾巴
-                    if len(buf) > hold:
-                        outp, buf = buf[:-hold], buf[-hold:]
-                        if outp:
-                            yield say(outp)
-                    break
-                else:
-                    j = buf.find(TAG_CLOSE)
-                    if j < 0:
+        # 持锁贯穿整个流式生成（含中间 yield）：单上下文只允许一个请求在解码。
+        # 后到的请求会排队，而不是并发解码把 KV cache 弄坏。
+        with _GEN_LOCK:
+            stream = _llm.create_completion(prompt=prompt, stream=True,
+                                            max_tokens=max_tokens,
+                                            temperature=temperature, top_p=top_p,
+                                            stop=["<|im_end|>"])
+            for chunk in stream:
+                piece = chunk["choices"][0].get("text") or ""
+                if not piece:
+                    continue
+                buf += piece
+                while True:
+                    if json_mode:
+                        s = buf.lstrip()
+                        if s and not s.startswith("{"):
+                            json_mode = False    # 普通文本/标签开头 → 回流式
                         break
-                    body, buf = buf[:j], buf[j + len(TAG_CLOSE):]
-                    in_tool = False
-                    parsed = _parse_tool_json(body)
-                    if parsed:
-                        name, args_json = parsed
-                        yield emit({"tool_calls": [{
-                            "index": tools_emitted,
-                            "id": f"call_{uuid.uuid4().hex[:8]}",
-                            "type": "function",
-                            "function": {"name": name, "arguments": args_json}}]})
-                        tools_emitted += 1
+                    if not in_tool:
+                        i = buf.find(TAG_OPEN)
+                        if i >= 0:
+                            pre, buf = buf[:i], buf[i + len(TAG_OPEN):]
+                            in_tool = True
+                            if pre.strip():
+                                yield say(pre)
+                            continue
+                        hold = len(TAG_OPEN) - 1    # 扣住可能是半截标签的尾巴
+                        if len(buf) > hold:
+                            outp, buf = buf[:-hold], buf[-hold:]
+                            if outp:
+                                yield say(outp)
+                        break
                     else:
-                        yield say(body)   # 解析失败回退为文本
+                        j = buf.find(TAG_CLOSE)
+                        if j < 0:
+                            break
+                        body, buf = buf[:j], buf[j + len(TAG_CLOSE):]
+                        in_tool = False
+                        parsed = _parse_tool_json(body)
+                        if parsed:
+                            name, args_json = parsed
+                            yield emit({"tool_calls": [{
+                                "index": tools_emitted,
+                                "id": f"call_{uuid.uuid4().hex[:8]}",
+                                "type": "function",
+                                "function": {"name": name, "arguments": args_json}}]})
+                            tools_emitted += 1
+                        else:
+                            yield say(body)   # 解析失败回退为文本
         # 收尾：残留 buffer 处理
         if json_mode:
             parsed = _parse_tool_json(buf)

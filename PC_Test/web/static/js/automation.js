@@ -30,6 +30,14 @@ async function api(url, options = {}) {
 
 // ==================== 积木定义 ====================
 
+// 三种传感器触发块共用的「持续 N 秒」输入（0 = 跨阈值立刻触发）
+function appendHoldInput(block) {
+    block.appendDummyInput()
+        .appendField('　并持续')
+        .appendField(new Blockly.FieldNumber(0, 0, 86400, 1), 'HOLD')
+        .appendField('秒才触发（0=立刻）');
+}
+
 function defineBlocks() {
     // ── 规则容器 ──
     Blockly.Blocks['rule_block'] = {
@@ -66,10 +74,12 @@ function defineBlocks() {
                 .appendField(new Blockly.FieldDropdown(numSourceOptions), 'SRC')
                 .appendField(new Blockly.FieldDropdown(opOptions), 'OP')
                 .appendField(new Blockly.FieldNumber(30, -1000, 100000, 1), 'VAL');
+            appendHoldInput(this);
             this.setPreviousStatement(true, 'TRIG');
             this.setNextStatement(false);
             this.setColour(30);
-            this.setTooltip('数值跨过阈值的瞬间触发一次（上升沿）');
+            this.setTooltip('数值跨过阈值的瞬间触发一次（上升沿）；'
+                + '「持续 N 秒」适合逗留报警这类需要连续保持的需求');
         },
     };
 
@@ -81,9 +91,12 @@ function defineBlocks() {
                 .appendField(new Blockly.FieldDropdown(boolSourceOptions), 'SRC')
                 .appendField(new Blockly.FieldDropdown([
                     ['变为「是/触发」', 'true'], ['变为「否/恢复」', 'false']]), 'STATE');
+            appendHoldInput(this);
             this.setPreviousStatement(true, 'TRIG');
             this.setNextStatement(false);
             this.setColour(30);
+            this.setTooltip('布尔传感器变为指定状态时触发；'
+                + '写「否则」动作后，状态恢复（例如雨停）也会执行否则分支');
         },
     };
 
@@ -93,6 +106,7 @@ function defineBlocks() {
             this.appendDummyInput()
                 .appendField('当')
                 .appendField(new Blockly.FieldDropdown(statusOptions), 'PRED');
+            appendHoldInput(this);
             this.setPreviousStatement(true, 'TRIG');
             this.setNextStatement(false);
             this.setColour(30);
@@ -106,14 +120,15 @@ function defineBlocks() {
                 .appendField('当事件')
                 .appendField(new Blockly.FieldDropdown(eventOptions), 'EVT');
             this.appendDummyInput()
-                .appendField('  ▸ 键盘事件的按键：')
-                .appendField(new Blockly.FieldTextInput('1'), 'KEY')
-                .appendField('  红外事件的键码(hex)：')
-                .appendField(new Blockly.FieldTextInput('0x45'), 'CMD');
+                .appendField('  ▸ 矩阵键盘按键：')
+                .appendField(new Blockly.FieldDropdown(keypadOptions), 'KEY')
+                .appendField('  红外遥控按键：')
+                .appendField(new Blockly.FieldDropdown(irKeyOptions), 'CMD');
             this.setPreviousStatement(true, 'TRIG');
             this.setNextStatement(false);
             this.setColour(30);
-            this.setTooltip('人体移动/人脸授权/矩阵键盘/红外遥控等离散事件');
+            this.setTooltip('人体移动/人脸授权/矩阵键盘/红外遥控等离散事件；'
+                + '按下的键直接在下拉里选，只对应事件的那一项生效');
         },
     };
 
@@ -250,6 +265,47 @@ function defineBlocks() {
             this.setColour(120);
         },
     };
+    // 全屋模式状态机：让用户自己编排「进门切自动 / 触摸切手动 / 红外强制档位」
+    Blockly.Blocks['act_home_mode'] = {
+        init: function () {
+            this.appendDummyInput().appendField('🏠 全屋模式设为')
+                .appendField(new Blockly.FieldDropdown([
+                    ['（不改）', ''], ['自动', 'auto'],
+                    ['手动', 'manual'], ['离家', 'away'],
+                    ['手动↔自动 翻转', 'toggle']]), 'MODE');
+            this.appendDummyInput().appendField('　风扇档位')
+                .appendField(new Blockly.FieldDropdown([
+                    ['（不改）', ''], ['强制开', 'on'],
+                    ['强制关', 'off'], ['回到自动', 'auto'],
+                    ['循环下一档', 'cycle']]), 'FAN');
+            this.appendDummyInput().appendField('　灯光档位')
+                .appendField(new Blockly.FieldDropdown([
+                    ['（不改）', ''], ['自动', 'auto'], ['保持当前', 'hold'],
+                    ['暗', 'dark'], ['半亮', 'half'], ['全亮', 'bright'],
+                    ['循环下一档', 'cycle']]), 'LIGHT');
+            this.setPreviousStatement(true, 'ACT');
+            this.setNextStatement(true, 'ACT');
+            this.setColour(120);
+            this.setTooltip('只设置非「不改」的项；「翻转」= 触摸键那种一键切换；'
+                + '「循环下一档」= 遥控器按键那种按一次换一档；离家会关闭全屋设备');
+        },
+    };
+    // 语音助手联动：遥控器/键盘按键触发后免唤醒词直接说话
+    Blockly.Blocks['act_voice'] = {
+        init: function () {
+            this.appendDummyInput().appendField('🎙️ 语音助手')
+                .appendField(new Blockly.FieldDropdown([
+                    ['唤醒（跳过唤醒词）', 'wake'],
+                    ['播报/执行文本', 'say']]), 'ACT');
+            this.appendDummyInput().appendField('　文本')
+                .appendField(new Blockly.FieldTextInput(''), 'TEXT');
+            this.setPreviousStatement(true, 'ACT');
+            this.setNextStatement(true, 'ACT');
+            this.setColour(120);
+            this.setTooltip('「唤醒」= 直接进入指令模式，用户接着说指令；'
+                + '「播报」= 把文本直接交给语音助手的大模型处理');
+        },
+    };
 }
 
 // ==================== 下拉选项（来自后端能力清单） ====================
@@ -282,6 +338,23 @@ function eventOptions() {
 }
 function opOptions() {
     return CAPS.comparators.map(c => [c.label, c.id]);
+}
+// 按键类事件的键位下拉（键名来自后端键码表，用户不用记十六进制）
+function eventChoices(evtId) {
+    const e = CAPS.events.find(x => x.id === evtId);
+    return (e && e.choices) ? e.choices : [];
+}
+function keypadOptions() {
+    const opts = eventChoices('keypad').map(c => [`键 ${c.label}`, c.id]);
+    return opts.length ? opts : [['键 1', '1']];
+}
+function irKeyOptions() {
+    const opts = eventChoices('ir').map(c => [c.label, c.id]);
+    return opts.length ? opts : [['1（0x45）', '0x45']];
+}
+// 下拉里没有该值时退回默认，避免 setFieldValue 静默失败
+function optionValue(options, value, fallback) {
+    return options.some(o => o[1] === value) ? value : fallback;
 }
 
 // ==================== 工具箱 & 注入 ====================
@@ -316,6 +389,8 @@ function buildToolbox() {
         <block type="act_window"></block>
         <block type="act_light"></block>
         <block type="act_fan"></block>
+        <block type="act_home_mode"></block>
+        <block type="act_voice"></block>
         <block type="act_buzzer"></block>
         <block type="act_oled"></block>
         <block type="act_delay"></block>
@@ -372,10 +447,24 @@ async function bootWorkspace() {
 
 let HOME_MODE = null;
 
+const GRACE_LABEL = { light: '💡 灯', fan: '🌀 风扇', window: '🪟 窗', door: '🚪 门' };
+
+function renderManualGrace(graces) {
+    const box = document.getElementById('manualGraceChips');
+    if (!box) return;
+    graces = (graces || []).filter(d => GRACE_LABEL[d]);
+    if (!graces.length) {
+        box.innerHTML = '<span class="grace-chip empty">暂无（自动可正常起作用）</span>';
+        return;
+    }
+    box.innerHTML = graces.map(d => `<span class="grace-chip">${GRACE_LABEL[d]} 手动优先中</span>`).join('');
+}
+
 async function loadHomeMode() {
     try {
         HOME_MODE = await api('/api/automation/home_mode');
     } catch (e) { return; }
+    renderManualGrace(HOME_MODE.manual_graces);
     const badge = document.getElementById('homeModeBadge');
     if (!badge) return;
     badge.textContent = '当前模式：' + (HOME_MODE.mode_label || HOME_MODE.mode);
@@ -384,17 +473,10 @@ async function loadHomeMode() {
     if (fanBtn) fanBtn.textContent = '🌀 风扇：' + HOME_MODE.fan_label;
     const lightBtn = document.getElementById('lightLevelBtn');
     if (lightBtn) lightBtn.textContent = '💡 灯光：' + HOME_MODE.light_label;
-    const awayOnly = document.getElementById('awayOnlyChk');
-    if (awayOnly) awayOnly.checked = !!HOME_MODE.auto_away_only;
     const detail = document.getElementById('homeModeDetail');
     if (detail) {
         const bits = [];
-        if (HOME_MODE.person_present) bits.push('👤 有人在家');
-        if (HOME_MODE.auto_paused) bits.push('⏸ 自动调节已暂停（人走后恢复）');
-        if (HOME_MODE.pir_near_door) bits.push('门口有人 ' + HOME_MODE.pir_dwell_seconds + 's');
-        if (HOME_MODE.door_close_in > 0) bits.push('关门倒计时 ' + HOME_MODE.door_close_in + 's');
-        if (HOME_MODE.smoke_active) bits.push('⚠️ 烟雾报警中');
-        if (HOME_MODE.rain_wet) bits.push('🌧 检测到雨水');
+        if (HOME_MODE.person_present) bits.push('👤 判定有人在家');
         if (HOME_MODE.last_reason) bits.push(HOME_MODE.last_reason);
         detail.textContent = bits.join('　|　');
     }
@@ -415,12 +497,6 @@ async function putHomeMode(body) {
 
 function setHomeMode(mode) {
     putHomeMode({ mode, reason: '页面切换全屋模式' });
-}
-
-function setAwayOnly(on) {
-    putHomeMode({ auto_away_only: !!on,
-                  reason: on ? '页面开启「仅无人在家时自动调节」'
-                             : '页面关闭「仅无人在家时自动调节」（有人也自动调节）' });
 }
 
 function cycleFanOverride() {
@@ -481,23 +557,30 @@ function chainBlocks(first) {
     return out;
 }
 
+// 传感器触发块可带「持续 N 秒」（0 表示不写进 JSON，即跨阈值立刻触发）
+function withHold(block, json) {
+    const hold = Number(block.getFieldValue('HOLD') || 0);
+    if (hold > 0) json.hold_sec = hold;
+    return json;
+}
+
 function triggerToJson(b) {
     switch (b.type) {
         case 'trig_num':
-            return { kind: 'sensor', sensor: b.getFieldValue('SRC'),
-                     op: b.getFieldValue('OP'), value: Number(b.getFieldValue('VAL')) };
+            return withHold(b, { kind: 'sensor', sensor: b.getFieldValue('SRC'),
+                     op: b.getFieldValue('OP'), value: Number(b.getFieldValue('VAL')) });
         case 'trig_bool':
-            return { kind: 'sensor', sensor: b.getFieldValue('SRC'),
-                     op: '==', value: b.getFieldValue('STATE') === 'true' };
+            return withHold(b, { kind: 'sensor', sensor: b.getFieldValue('SRC'),
+                     op: '==', value: b.getFieldValue('STATE') === 'true' });
         case 'trig_status': {
             const [sensor, value] = b.getFieldValue('PRED').split(':');
-            return { kind: 'sensor', sensor, op: '==', value };
+            return withHold(b, { kind: 'sensor', sensor, op: '==', value });
         }
         case 'trig_event': {
             const evt = b.getFieldValue('EVT');
             const json = { kind: 'event', event: evt };
-            if (evt === 'keypad') json.key = b.getFieldValue('KEY').trim() || '1';
-            if (evt === 'ir') json.command = b.getFieldValue('CMD').trim() || '0x45';
+            if (evt === 'keypad') json.key = b.getFieldValue('KEY') || '1';
+            if (evt === 'ir') json.command = b.getFieldValue('CMD') || '0x45';
             return json;
         }
         case 'trig_interval':
@@ -542,6 +625,22 @@ function actionToJson(b) {
         case 'act_oled':
             if (b.getFieldValue('CLEAR') === 'TRUE') return { device: 'oled', clear: true };
             return { device: 'oled', text: b.getFieldValue('TEXT') };
+        case 'act_home_mode': {
+            const json = { device: 'home_mode' };
+            const mode = b.getFieldValue('MODE');
+            const fan = b.getFieldValue('FAN');
+            const light = b.getFieldValue('LIGHT');
+            if (mode) json.mode = mode;
+            if (fan) json.fan_override = fan;
+            if (light) json.light_level = light;
+            return json;
+        }
+        case 'act_voice': {
+            const json = { device: 'voice', action: b.getFieldValue('ACT') || 'wake' };
+            const text = (b.getFieldValue('TEXT') || '').trim();
+            if (text) json.text = text;
+            return json;
+        }
         default: return null;
     }
 }
@@ -560,6 +659,8 @@ function collectRules() {
         }
         rules.push({
             id: rb.ruleId || null,
+            // 内置默认规则的标记要原样带回，否则「恢复内置规则」会重复添加
+            preset: rb.presetId || undefined,
             name: rb.getFieldValue('NAME').trim(),
             enabled: rb.getFieldValue('ENABLED') === 'TRUE',
             trigger,
@@ -601,27 +702,29 @@ function fillTrigger(trig) {
     if (trig.kind === 'event') {
         const b = createTyped('trig_event');
         b.setFieldValue(trig.event, 'EVT');
-        if (trig.key) b.setFieldValue(trig.key, 'KEY');
-        if (trig.command) b.setFieldValue(trig.command, 'CMD');
+        if (trig.key) b.setFieldValue(optionValue(keypadOptions(), trig.key, '1'), 'KEY');
+        if (trig.command) {
+            b.setFieldValue(optionValue(irKeyOptions(), trig.command, '0x45'), 'CMD');
+        }
         return b;
     }
     // sensor
     const kind = sourceKind(trig.sensor);
+    let b;
     if (kind === 'bool') {
-        const b = createTyped('trig_bool');
+        b = createTyped('trig_bool');
         b.setFieldValue(trig.sensor, 'SRC');
         b.setFieldValue(trig.value === true || trig.value === 'true' ? 'true' : 'false', 'STATE');
-        return b;
-    }
-    if (kind === 'enum') {
-        const b = createTyped('trig_status');
+    } else if (kind === 'enum') {
+        b = createTyped('trig_status');
         b.setFieldValue(`${trig.sensor}:${trig.value}`, 'PRED');
-        return b;
+    } else {
+        b = createTyped('trig_num');
+        b.setFieldValue(trig.sensor, 'SRC');
+        b.setFieldValue(trig.op || '>', 'OP');
+        b.setFieldValue(String(trig.value), 'VAL');
     }
-    const b = createTyped('trig_num');
-    b.setFieldValue(trig.sensor, 'SRC');
-    b.setFieldValue(trig.op || '>', 'OP');
-    b.setFieldValue(String(trig.value), 'VAL');
+    b.setFieldValue(String(trig.hold_sec || 0), 'HOLD');
     return b;
 }
 
@@ -668,6 +771,17 @@ function fillAction(a) {
             b.setFieldValue(a.clear ? 'TRUE' : 'FALSE', 'CLEAR');
             b.setFieldValue(a.text ?? 'Temp {temperature}C', 'TEXT');
             break;
+        case 'home_mode':
+            b = createTyped('act_home_mode');
+            b.setFieldValue(a.mode || '', 'MODE');
+            b.setFieldValue(a.fan_override || '', 'FAN');
+            b.setFieldValue(a.light_level || '', 'LIGHT');
+            break;
+        case 'voice':
+            b = createTyped('act_voice');
+            b.setFieldValue(a.action || 'wake', 'ACT');
+            b.setFieldValue(a.text || '', 'TEXT');
+            break;
         default: return null;
     }
     return b;
@@ -690,6 +804,7 @@ function renderRules(rules) {
         rb.initSvg();
         rb.render();
         rb.ruleId = rule.id;
+        rb.presetId = rule.preset || null;
         rb.setFieldValue(rule.name || '新规则', 'NAME');
         rb.setFieldValue(rule.enabled === false ? 'FALSE' : 'TRUE', 'ENABLED');
         rb.setFieldValue(rule.match === 'any' ? 'any' : 'all', 'MATCH');
@@ -739,6 +854,19 @@ async function saveAll() {
         showNotification(e.message, 'error');
     } finally {
         SAVE_PENDING = false;
+    }
+}
+
+// 找回被删掉的内置默认规则（preset），不影响用户自己添加的规则
+async function restorePresets() {
+    if (!confirm('把被删掉的内置默认规则补回来？（你自己添加或改过的规则不受影响）')) return;
+    try {
+        const r = await api('/api/automation/rules/restore', { method: 'POST' });
+        renderRules(r.rules || []);
+        showNotification(r.message || '内置规则已恢复', 'success');
+        refreshPreview();
+    } catch (e) {
+        showNotification(e.message, 'error');
     }
 }
 

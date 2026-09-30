@@ -1,7 +1,7 @@
 """人脸识别 API：帧识别、引擎配置、已知人脸、香橙派结果推送。"""
 import base64
 
-from flask import Blueprint, current_app, jsonify, request
+from flask import Blueprint, jsonify, request
 
 from .. import extensions
 from ..extensions import db, face_engine
@@ -115,44 +115,24 @@ def face_notify():
         image_path=image_path, device_source=device_source)
 
     if matched:
-        command_status = None
-        door_failure = None
-        door_cfg = current_app.config.get("SMART_HOME_CFG", {}).get("door", {})
-        bridge = extensions.bridge
-        # 桥在线走自有 MCP；桥离线但配置了联动（语音助手 POST /tool）也可静默开门
-        if door_cfg.get("open_on_face_grant", True) and bridge is not None:
-            ok, msg = bridge.control_door("open")
-            if ok:
-                command_status = msg
-                # 刷脸开门也要落到仪表盘：门状态 + 历史。人脸链路走 relay 不经
-                # devices 路由，这里补上。不切「手动」——刷脸是门禁自动联动，
-                # 而非用户在面板上的手动操作。
-                try:
-                    db.update_status(door_status="open")
-                    db.add_door_window_event("door", "前门(人脸授权)", "open")
-                except Exception:                    # noqa: BLE001
-                    pass
-            else:
-                door_failure = msg
+        # 开门动作已下沉为默认积木规则 face_open_door（face_granted 事件驱动，
+        # 用户可停用/编辑）。此处只校验身份（安全边界）与记录，不再直接下发硬件。
+        # door 直连开着时若有人想纯鉴权不开门，去掉那条积木规则即可。
         db.add_access_log(matched["name"], "face", "granted",
-                          credential=face_id, command_status=command_status)
+                          credential=face_id, command_status=None)
         if event_id:
             db.update_face_event_status(event_id, "granted", verified=True)
-        # 通知自动化引擎（可触发「授权人脸 → 开灯/迎客」等自定义规则）
+        # 通知自动化引擎：触发 face_granted 事件 → 默认积木规则开门/迎客等
         if extensions.automation is not None:
             extensions.automation.on_event(
                 {"event": "face", "status": "granted",
                  "person": matched["name"], "face_id": face_id})
-        result = {
+        return jsonify({
             "granted": True, "person": matched["name"], "face_id": face_id,
-            "event_id": event_id, "command_status": command_status,
+            "event_id": event_id,
             "message": f"欢迎 {matched['name']}!",
             "message_en": f"Welcome {matched['name']}!",
-        }
-        if door_failure:
-            # 身份已授权但开门链路不可用（无板/语音助手未起），告知调用方
-            result["door_warning"] = door_failure
-        return jsonify(result)
+        })
 
     db.add_access_log("未知人员", "face", "denied", credential=face_id)
     if event_id:

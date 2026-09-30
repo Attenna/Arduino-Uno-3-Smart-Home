@@ -7,7 +7,7 @@ import traceback
 
 from flask import Flask, jsonify
 
-from .api import access, automation, camera, devices, face, ha, pages, status
+from .api import access, automation, camera, devices, face, ha, pages, status, voice
 from .config import ensure_dirs, load_config
 from .extensions import init_bridge, shutdown_bridge
 
@@ -21,7 +21,7 @@ def create_app(config: dict | None = None, start_hardware: bool = True):
     app = Flask(__name__)
     app.config["SMART_HOME_CFG"] = cfg
 
-    for module in (pages, status, devices, access, face, camera, ha, automation):
+    for module in (pages, status, devices, access, face, camera, voice, ha, automation):
         app.register_blueprint(module.bp)
 
     # ==================== 全局异常处理 ====================

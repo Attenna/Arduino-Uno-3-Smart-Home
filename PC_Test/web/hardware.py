@@ -295,6 +295,38 @@ class McpHardwareBridge:
                 logger.debug("command_ack_listener 异常", exc_info=True)
         return True, text
 
+    # ==================== 语音助手联动（面板 → 语音） ====================
+    # 语音助手（voice_assistant.py）自带 TriggerHTTPServer：/trigger 免唤醒词直接
+    # 进入指令模式，/state 查状态，/say 直接下发文本指令。它的地址就是 relay 地址
+    # （两个部署形态都由 SMART_HOME_HW_RELAY 指向语音助手）。
+
+    def voice_request(self, path: str, payload: dict | None = None,
+                      timeout: float = 3.0) -> tuple[bool, str]:
+        """请求语音助手 HTTP 接口，返回 (是否成功, 文本)。未配置 relay 时明确失败。"""
+        if not self.relay_url:
+            return False, "未配置语音助手地址（SMART_HOME_HW_RELAY / door.relay_url）"
+        url = f"{self.relay_url}{path}"
+        data = json.dumps(payload).encode("utf-8") if payload is not None else None
+        req = urllib.request.Request(
+            url, data=data,
+            headers={"Content-Type": "application/json",
+                     "X-Trigger-Source": "web"},
+            method="POST" if data is not None else "GET")
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                body = json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            try:
+                body = json.loads(e.read().decode("utf-8"))
+                return False, str(body.get("error") or f"语音助手 HTTP {e.code}")
+            except Exception:
+                return False, f"语音助手 HTTP {e.code}"
+        except Exception as e:
+            return False, f"语音助手不可达（{self.relay_url}）: {e}"
+        if not body.get("ok", True):
+            return False, str(body.get("error") or "语音助手拒绝了请求")
+        return True, json.dumps(body, ensure_ascii=False)
+
     def _relay_call(self, name: str, args: dict, timeout: float = 10.0) -> tuple[bool, str]:
         """经语音助手 POST /tool 转发硬件调用（串口归语音进程时的联动通道）。"""
         url = f"{self.relay_url}/tool"

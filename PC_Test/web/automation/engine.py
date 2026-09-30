@@ -13,9 +13,12 @@
                                                     bridge ─relay─▶ voice ─▶ Module B
 
 设计要点：
-- 传感器触发为**上升沿**：条件由假变真的瞬间只触发一次（跨阈值防刷屏）；
+- 传感器触发为**边沿触发**：条件由假变真的瞬间触发一次（跨阈值防刷屏）；
+  触发块可加 ``hold_sec``（「持续 N 秒」），条件连续保持满 N 秒才触发；
+- 条件由真变假时，**只有规则写了「否则」动作**才走 else_actions
+  （雨停恢复 45° 这类状态回切；没写否则的规则自然回落不动作）；
 - 每条规则有 cooldown 冷却与独立的动作锁（动作序列执行中不重入）；
-- 条件不成立时执行 else_actions（「状态切换」，如温度回落自动关风扇）；
+- 内置联动已全部下沉为默认规则积木（见 default_rules.py），代码里不再写死策略；
 - 引擎任何异常只写日志，绝不能拖垮 bridge 轮询线程。
 """
 from __future__ import annotations
@@ -29,7 +32,9 @@ from datetime import datetime
 from pathlib import Path
 
 from .capabilities import CONDITION_SOURCES, EVENT_TRIGGERS
-from .home_mode import (FAN_LABELS_EN, LIGHT_LABELS_EN, MODE_LABELS_EN,
+from .default_rules import DEFAULT_RULES, PRESETS_VERSION
+from .home_mode import (FAN_LABELS, FAN_LABELS_EN, LIGHT_LABELS,
+                        LIGHT_LABELS_EN, MODE_LABELS, MODE_LABELS_EN,
                         HomeModeManager)
 from .oled_carousel import (DEFAULT_PAGES, PAGES_VERSION, OledCarousel,
                             is_legacy_default_pages)
@@ -53,6 +58,8 @@ class AutomationEngine:
         self._event_seq = 0
         # 每条规则的运行期状态
         self._prev_trigger: dict[str, bool] = {}     # 上次触发条件真假（边沿）
+        self._hold_since: dict[str, float] = {}      # 「持续 N 秒」起算时刻
+        self._hold_fired: dict[str, bool] = {}       # 本轮持续是否已触发过
         self._last_fire: dict[str, float] = {}       # 上次开火时间（冷却）
         self._last_event_id: dict[str, int] = {}
         self._last_interval: dict[str, float] = {}
@@ -60,6 +67,8 @@ class AutomationEngine:
         self._action_locks: dict[str, threading.Lock] = {}
         self._stopping = False
         self._tick_thread: threading.Thread | None = None
+        # 已注入过的内置默认规则（preset id）；用户删掉的不会再被强行加回来
+        self._presets_seen: set[str] = set()
 
         # ── OLED 轮播（默认关闭，避免扰民） ──
         self.oled_path = Path(rules_path).parent / "oled_carousel.json"
@@ -93,15 +102,68 @@ class AutomationEngine:
     # ==================== 规则持久化 ====================
 
     def load(self) -> None:
-        if not self.rules_path.exists():
-            self.rules = []
-            return
+        raw = None
+        if self.rules_path.exists():
+            try:
+                raw = json.loads(self.rules_path.read_text(encoding="utf-8"))
+            except Exception as e:                       # noqa: BLE001
+                logger.error("[自动化] 规则文件读取失败，保留空规则: %s", e)
+                raw = []
+        data = raw if isinstance(raw, dict) else {"rules": raw}
+        self._presets_seen = {str(x) for x in (data.get("presets_seen") or [])}
         try:
-            data = json.loads(self.rules_path.read_text(encoding="utf-8"))
-            self.rules = validate_rules(data)
-        except Exception as e:
-            logger.error("[自动化] 规则文件读取失败，保留空规则: %s", e)
+            self.rules = validate_rules(data.get("rules") or [])
+        except Exception as e:                           # noqa: BLE001
+            logger.error("[自动化] 规则校验失败，保留空规则: %s", e)
             self.rules = []
+        if self.seed_presets():
+            self._write_rules()
+
+    def seed_presets(self, force: bool = False) -> int:
+        """把内置默认规则补进规则集，返回新增条数。
+
+        - 老版本升级（规则集里没有 preset 标记）→ 一次性补齐全部默认规则；
+        - 用户主动删掉的不会被强行加回来；force=True（页面「恢复内置规则」）才补回。
+        """
+        added = 0
+        with self._lock:
+            have = {r.get("preset") for r in self.rules if r.get("preset")}
+            for preset in DEFAULT_RULES:
+                pid = preset.get("preset")
+                if pid in have:
+                    continue
+                if not force and pid in self._presets_seen:
+                    continue
+                rule = dict(preset)
+                rule["id"] = None
+                self.rules.append(rule)
+                self._presets_seen.add(pid)
+                added += 1
+            if added:
+                self.rules = validate_rules(self.rules)
+                for rule in self.rules:
+                    if not rule["id"]:
+                        rule["id"] = uuid.uuid4().hex[:8]
+        if added:
+            logger.info("[自动化] 已注入内置默认规则 %d 条", added)
+        return added
+
+    def restore_presets(self) -> list[dict]:
+        """页面「恢复内置规则」：把用户删掉/改名的默认规则按原样补回并落盘。"""
+        with self._lock:
+            self.seed_presets(force=True)
+            self._write_rules()
+            return list(self.rules)
+
+    def _write_rules(self) -> None:
+        self.rules_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.rules_path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps({
+            "presets_version": PRESETS_VERSION,
+            "presets_seen": sorted(self._presets_seen),
+            "rules": self.rules,
+        }, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.replace(self.rules_path)
 
     def save_rules(self, rules: list[dict]) -> list[dict]:
         """校验并落盘新规则集（整表替换），返回补全 id 后的规则。"""
@@ -112,14 +174,13 @@ class AutomationEngine:
                 if not rule["id"]:
                     rule["id"] = uuid.uuid4().hex[:8]
             self.rules = clean
-            self.rules_path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = self.rules_path.with_suffix(".json.tmp")
-            tmp.write_text(json.dumps({"rules": clean}, ensure_ascii=False, indent=2),
-                           encoding="utf-8")
-            tmp.replace(self.rules_path)
+            # 页面保存的规则里带 preset 标记的，同样计入「已注入过」
+            self._presets_seen |= {r["preset"] for r in clean if r.get("preset")}
+            self._write_rules()
             # 清理已删除规则的运行期状态
             new_ids = {r["id"] for r in clean}
-            for store in (self._prev_trigger, self._last_fire, self._last_event_id,
+            for store in (self._prev_trigger, self._hold_since, self._hold_fired,
+                          self._last_fire, self._last_event_id,
                           self._last_interval, self._last_time_key):
                 for dead in old_ids - new_ids:
                     store.pop(dead, None)
@@ -148,7 +209,6 @@ class AutomationEngine:
             self._events.append((seq, dict(event or {})))
             if len(self._events) > 100:
                 self._events = self._events[-100:]
-            self.home_mode.on_event(event)
             for rule in list(self._iter_enabled()):
                 if rule["trigger"]["kind"] == "event":
                     self._evaluate_event_rule(rule, seq, event)
@@ -320,10 +380,11 @@ class AutomationEngine:
                     yield rule
 
     def _context(self) -> dict:
-        """传感器快照 + SQLite 中的执行器当前状态 + 全屋模式。"""
+        """传感器快照 + SQLite 中的执行器当前状态 + 全屋模式/人在家判定。"""
         ctx = dict(self._snapshot)
         try:
             ctx["home_mode"] = self.home_mode.cfg["mode"]
+            ctx["person_present"] = self.home_mode.person_present()
         except Exception:                            # noqa: BLE001
             pass
         try:
@@ -370,53 +431,79 @@ class AutomationEngine:
         return all(results) if rule["match"] == "all" else any(results)
 
     def _evaluate_sensor_rule(self, rule: dict) -> None:
-        trig = rule["trigger"]
-        ctx = self._context()
-        now_true = self._compare(ctx.get(trig["sensor"]), trig["op"], trig["value"])
-        was_true = self._prev_trigger.get(rule["id"], False)
-        self._prev_trigger[rule["id"]] = now_true
-        # 上升沿触发
-        if now_true and not was_true:
+        with self._lock:
+            trig = rule["trigger"]
+            ctx = self._context()
+            now_true = self._compare(ctx.get(trig["sensor"]), trig["op"], trig["value"])
+            was_true = self._prev_trigger.get(rule["id"], False)
+            self._prev_trigger[rule["id"]] = now_true
             label = CONDITION_SOURCES.get(trig["sensor"], {}).get("label", trig["sensor"])
-            self._fire(rule, reason=f"{label} {trig['op']} {trig['value']}")
+            reason = f"{label} {trig['op']} {trig['value']}"
+
+            if not now_true:
+                self._hold_since.pop(rule["id"], None)
+                self._hold_fired.pop(rule["id"], None)
+                # 下降沿：只有写了「否则」动作的规则才回切（雨停恢复 45° 这类）
+                if was_true and rule.get("else_actions"):
+                    self._fire(rule, reason=f"{reason} 已恢复", force_hold=False)
+                return
+
+            hold_sec = float(trig.get("hold_sec") or 0)
+            if hold_sec <= 0:
+                if not was_true:
+                    self._fire(rule, reason=reason)
+                return
+            # 「持续 N 秒」：连续保持满 N 秒触发一次，中断（条件转假）则重新计时
+            start = self._hold_since.get(rule["id"])
+            if start is None:
+                self._hold_since[rule["id"]] = time.time()
+                return
+            if time.time() - start >= hold_sec and not self._hold_fired.get(rule["id"]):
+                self._hold_fired[rule["id"]] = True
+                self._fire(rule, reason=f"{reason} 持续 {hold_sec:g} 秒")
 
     def _evaluate_event_rule(self, rule: dict, seq: int, event: dict) -> None:
-        # 只消费本规则没见过的事件；当前事件即新事件
-        if seq <= self._last_event_id.get(rule["id"], 0):
-            return
-        self._last_event_id[rule["id"]] = seq
-        trig = rule["trigger"]
-        want = EVENT_TRIGGERS[trig["event"]].get("payload", {})
-        if not all(event.get(k) == v for k, v in want.items()):
-            return
-        if trig.get("key") and str(event.get("key", "")) != trig["key"]:
-            return
-        if trig.get("command"):
-            try:
-                want_cmd = int(str(trig["command"]), 16) if str(trig["command"]).startswith("0x") \
-                    else int(trig["command"])
-                if int(event.get("command", -1)) != want_cmd:
-                    return
-            except (TypeError, ValueError):
+        with self._lock:
+            # 只消费本规则没见过的事件；当前事件即新事件
+            if seq <= self._last_event_id.get(rule["id"], 0):
                 return
-        label = EVENT_TRIGGERS[trig["event"]]["label"]
-        self._fire(rule, reason=label)
+            self._last_event_id[rule["id"]] = seq
+            trig = rule["trigger"]
+            want = EVENT_TRIGGERS[trig["event"]].get("payload", {})
+            if not all(event.get(k) == v for k, v in want.items()):
+                return
+            if trig.get("key") and str(event.get("key", "")) != trig["key"]:
+                return
+            if trig.get("command"):
+                try:
+                    want_cmd = int(str(trig["command"]), 16) if str(trig["command"]).startswith("0x") \
+                        else int(trig["command"])
+                    if int(event.get("command", -1)) != want_cmd:
+                        return
+                except (TypeError, ValueError):
+                    return
+            label = EVENT_TRIGGERS[trig["event"]]["label"]
+            self._fire(rule, reason=label)
 
-    def _fire(self, rule: dict, reason: str) -> None:
-        now = time.time()
-        if now - self._last_fire.get(rule["id"], 0.0) < float(rule.get("cooldown", 3)):
-            return
-        self._last_fire[rule["id"]] = now
-        lock = self._action_locks.setdefault(rule["id"], threading.Lock())
-        if not lock.acquire(blocking=False):
-            logger.info("[自动化] 规则「%s」上一轮动作未完成，跳过", rule["name"])
-            return
-        ctx = self._context()
-        hold = self._conditions_hold(rule, ctx)
-        branch = rule["actions"] if hold else rule.get("else_actions", [])
-        threading.Thread(
-            target=self._run_actions, args=(rule, branch, hold, reason, lock),
-            name=f"auto-{rule['id']}", daemon=True).start()
+    def _fire(self, rule: dict, reason: str, force_hold: bool | None = None) -> None:
+        with self._lock:
+            now = time.time()
+            if now - self._last_fire.get(rule["id"], 0.0) < float(rule.get("cooldown", 3)):
+                return
+            ctx = self._context()
+            hold = self._conditions_hold(rule, ctx) if force_hold is None else force_hold
+            branch = rule["actions"] if hold else rule.get("else_actions", [])
+            if not branch:
+                # 条件不成立且没写「否则」动作：这条规则这次什么都不做（不记冷却、不记日志）
+                return
+            self._last_fire[rule["id"]] = now
+            lock = self._action_locks.setdefault(rule["id"], threading.Lock())
+            if not lock.acquire(blocking=False):
+                logger.info("[自动化] 规则「%s」上一轮动作未完成，跳过", rule["name"])
+                return
+            threading.Thread(
+                target=self._run_actions, args=(rule, branch, hold, reason, lock),
+                name=f"auto-{rule['id']}", daemon=True).start()
 
     # ==================== 动作执行 ====================
 
@@ -439,9 +526,58 @@ class AutomationEngine:
 
     def _perform(self, action: dict) -> tuple[bool, str]:
         device = action["device"]
+        # 手动优先：控制器设备刚被手动设置过（冷却窗口内）→ 自动动作让位跳过，
+        # 绝不把用户刚设的状态改回去（「网页控制失败/风扇自启」的根治点）。
+        if device in ("door", "window", "light", "fan"):
+            if self.home_mode.within_manual_grace(device):
+                label = {"door": "门", "window": "窗", "light": "灯",
+                         "fan": "风扇"}.get(device, device)
+                return True, f"{label}处于手动冷却窗口，自动动作让位（跳过）"
         if device == "delay":
             time.sleep(float(action["seconds"]))
             return True, f"等待 {action['seconds']:g}s"
+        if device == "home_mode":
+            # 纯状态机，不碰硬件：即使桥离线也照常生效
+            kw = {}
+            mode = action.get("mode")
+            if mode == "toggle":
+                mode = self.home_mode.toggled_mode()      # 手动↔自动 翻转
+            if mode:
+                kw["mode"] = mode
+            fan = action.get("fan_override")
+            if fan == "cycle":
+                # 循环下一档；None 表示回到自动，必须显式下发
+                kw["fan_override"] = self.home_mode.next_fan_override()
+            elif fan:
+                kw["fan_override"] = None if fan == "auto" else fan
+            light = action.get("light_level")
+            if light == "cycle":
+                light = self.home_mode.next_light_level()
+            if light:
+                kw["light_level"] = light
+            self.home_mode.configure(reason="积木规则", **kw)
+            parts = []
+            if "mode" in kw:
+                parts.append(f"模式={MODE_LABELS.get(kw['mode'], kw['mode'])}")
+            if "fan_override" in kw:
+                parts.append(f"风扇={FAN_LABELS.get(kw['fan_override'], kw['fan_override'])}")
+            if "light_level" in kw:
+                parts.append(f"灯光={LIGHT_LABELS.get(kw['light_level'], kw['light_level'])}")
+            return True, "全屋模式：" + "，".join(parts)
+        if device == "voice":
+            # 语音助手自带 HTTP 触发口：wake 免唤醒词进入指令模式（遥控器按键 1
+            # 之类的「半自动」就是这条），say 直接让它播报/执行一句话
+            if self.bridge is None or not getattr(self.bridge, "relay_url", ""):
+                return False, "语音助手未配置（SMART_HOME_HW_RELAY）"
+            act = action.get("action") or "wake"
+            if act == "wake":
+                ok, msg = self.bridge.voice_request("/trigger")
+                return (True, "语音助手已唤醒") if ok else (False, msg)
+            text = str(action.get("text") or "").strip()
+            if not text:
+                return False, "语音指令文本不能为空"
+            ok, msg = self.bridge.voice_request("/say", {"text": text})
+            return (True, f"语音助手已接收：{text}") if ok else (False, msg)
         if not self.bridge or not self.bridge.online and not self.bridge.relay_url:
             return False, "硬件桥离线"
         if device in ("door", "window"):
@@ -454,9 +590,9 @@ class AutomationEngine:
             if ok:
                 self.db.update_status(**{f"{device}_status": db_status})
                 self.db.add_door_window_event(device, label, db_status)
-                # 需求3：门舵机动作结合 PIR 判定「进门→全屋自动 / 出门→全屋关闭」
-                if device == "door" and status == "open":
-                    self.home_mode.note_door_action("rule")
+                if device == "window":
+                    # 同步去重缓存，否则档位覆盖会立刻把窗户改回原状态
+                    self.home_mode.note_rule_action("window", status=status)
             return ok, msg
         if device == "light":
             status = action["status"]
@@ -465,12 +601,15 @@ class AutomationEngine:
             if ok:
                 self.db.update_status(light_status=status, light_brightness=brightness)
                 self.db.add_light_event("客厅主灯(自动化)", status, brightness)
+                self.home_mode.note_rule_action("light", status=status,
+                                                brightness=brightness)
             return ok, msg
         if device == "fan":
             speed = action["speed"]
             ok, msg = self.bridge.control_fan(speed)
             if ok:
                 self.db.update_status(fan_speed=speed)
+                self.home_mode.note_rule_action("fan", speed=speed)
             return ok, msg
         if device == "buzzer":
             return self.bridge.call_tool("buzzer", {

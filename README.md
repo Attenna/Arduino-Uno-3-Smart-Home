@@ -29,11 +29,10 @@ SmartHome/
 ├── gateway/                   # Orange Pi 串口↔MQTT 网关
 ├── homeassistant/             # Home Assistant 配置
 ├── docker/                    # Docker Compose（Mosquitto + HA）
-└── PC_Test/                   # PC 端工具集（串口调试 + 本地自动化 DSL）
+└── PC_Test/                   # PC 端工具集（串口调试 + Web 积木自动化）
     ├── README.md              #   工具总览与快速开始
     ├── test_serial.py         #   串口调试控制台
-    ├── run_automation.py      #   自动化 DSL 运行器
-    └── automation/            #   AST 自动化引擎 + .auto 脚本
+    └── web/automation/        #   积木式自动化引擎（/automation 页面编排规则）
 ```
 
 > 仓库中仍保留旧的 `Module_A/`、`Module_B/` 目录（`.ino` 单文件工程），

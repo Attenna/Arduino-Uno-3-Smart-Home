@@ -177,13 +177,14 @@ class TriggerHTTPServer:
     """
 
     def __init__(self, host: str, port: int, bus: TriggerBus, get_state, submit_text,
-                 call_tool=None):
+                 call_tool=None, on_wake=None):
         import http.server
         import threading
         from urllib.parse import urlparse, parse_qs
 
         bus_ref, state_ref, say_ref = bus, get_state, submit_text
         tool_ref = call_tool  # 同步回调：(name, arguments) -> (ok: bool, text: str)
+        wake_ref = on_wake    # 同步回调：(source) -> None；缺省退回 bus.fire()
 
         class _Handler(http.server.BaseHTTPRequestHandler):
             def log_message(self, *a):
@@ -199,7 +200,10 @@ class TriggerHTTPServer:
 
             def _fire(self):
                 who = self.headers.get("X-Trigger-Source", "http")
-                bus_ref.fire(who)
+                if wake_ref is not None:
+                    wake_ref(who)
+                else:
+                    bus_ref.fire(who)
                 self._json(200, {"ok": True, "state": state_ref()})
 
             def _say(self, text: str, who: str):
@@ -501,6 +505,28 @@ class VoiceAssistant:
             callback=self._audio_callback)
         self.stream.start()
 
+    def _manual_wake(self, who: str = "http") -> None:
+        """外部（HTTP / 面板按钮 / 自动化按键）触发的唤醒。
+
+        麦克风在跑时走 TriggerBus，由音频回调在下一帧消费（低延迟、线程安全）；
+        麦克风被禁用（SMART_HOME_DISABLE_MIC）时没有音频循环来消费，
+        直接切状态机——保证「跳过唤醒词」这条链路在无声卡部署下依然生效。
+        """
+        if self.stream is not None:
+            self.trigger.fire(who)
+        else:
+            self._on_wake(who, time.time(), manual=True)
+            # 没有音频回调来兜底超时，自己起个定时器把状态收回 IDLE，
+            # 否则面板会一直显示「聆听指令中」
+            import threading
+            threading.Timer(self.command_timeout, self._idle_if_command).start()
+
+    def _idle_if_command(self):
+        """无麦克风部署下 COMMAND 状态的超时回收（音频回调不在时使用）。"""
+        if self.state == "COMMAND":
+            self.state = "IDLE"
+            self._emit_state("IDLE")
+
     def _emit_state(self, new_state):
         """状态变化时打印醒目状态行。"""
         if new_state != self._last_state:
@@ -770,7 +796,8 @@ class VoiceAssistant:
                             int(tcfg.get("port", 8101)),
                             self.trigger, lambda: self.state,
                             lambda text, who: self.submit_text(text, source=who),
-                            call_tool=_direct_call_tool)
+                            call_tool=_direct_call_tool,
+                            on_wake=self._manual_wake)
                     except Exception as e:
                         print(f"[触发] HTTP 接口启动失败（不影响语音）: {e}", flush=True)
 

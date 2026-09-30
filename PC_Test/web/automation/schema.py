@@ -55,8 +55,16 @@ def validate_trigger(trig: dict) -> dict:
             value = value == "true"
         elif not isinstance(value, (int, float, str)):
             raise ValidationError("触发阈值必须是数字或 true/false")
-        return {"kind": "sensor", "sensor": trig["sensor"],
-                "op": trig["op"], "value": value}
+        clean = {"kind": "sensor", "sensor": trig["sensor"],
+                 "op": trig["op"], "value": value}
+        # 「持续 N 秒」：条件连续保持该时长才触发（逗留报警/烟雾确认这类需求）
+        hold = trig.get("hold_sec")
+        if hold not in (None, "", 0):
+            hold = _as_number(hold, "传感器触发块的持续时长")
+            if not 1 <= hold <= 86400:
+                raise ValidationError("持续时长需在 1~86400 秒之间")
+            clean["hold_sec"] = hold
+        return clean
     if kind == "event":
         _require(trig, ("event",), "事件触发块")
         event = trig["event"]
@@ -152,6 +160,37 @@ def validate_action(action: dict, where: str = "动作块") -> dict:
             if len(text) > 200:
                 raise ValidationError("OLED 文本过长（最多 200 字符）")
             clean["text"] = text
+    elif device == "home_mode":
+        # 三项都可选，但至少要设一项；空串 = 该项不改
+        mode = str(action.get("mode") or "").strip()
+        if mode:
+            if mode not in ("auto", "manual", "away", "toggle"):
+                raise ValidationError("全屋模式只能是 auto/manual/away/toggle")
+            clean["mode"] = mode
+        fan = str(action.get("fan_override") or "").strip()
+        if fan:
+            if fan not in ("auto", "on", "off", "cycle"):
+                raise ValidationError("风扇档位只能是 auto(回到自动)/on/off/cycle(循环下一档)")
+            clean["fan_override"] = fan
+        light = str(action.get("light_level") or "").strip()
+        if light:
+            if light not in ("auto", "hold", "dark", "half", "bright", "cycle"):
+                raise ValidationError("灯光档位只能是 auto/hold/dark/half/bright/cycle")
+            clean["light_level"] = light
+        if len(clean) == 1:
+            raise ValidationError("全屋模式动作至少要设置一项（模式/风扇档位/灯光档位）")
+    elif device == "voice":
+        act = str(action.get("action") or "wake").strip()
+        if act not in ("wake", "say"):
+            raise ValidationError("语音助手动作只能是 wake(唤醒)/say(播报)")
+        clean["action"] = act
+        text = str(action.get("text") or "").strip()
+        if act == "say" and not text:
+            raise ValidationError("语音播报需要填写文本")
+        if len(text) > 200:
+            raise ValidationError("语音文本过长（最多 200 字符）")
+        if text:
+            clean["text"] = text
     return clean
 
 
@@ -172,7 +211,7 @@ def validate_rule(rule: dict) -> dict:
                     for a in (rule.get("else_actions") or [])]
     raw_cooldown = rule.get("cooldown", 3)
     cooldown = 3.0 if raw_cooldown is None else float(raw_cooldown)
-    return {
+    clean = {
         "id": str(rule.get("id") or "").strip() or None,   # None 时由引擎补 id
         "name": name[:50],
         "enabled": bool(rule.get("enabled", True)),
@@ -183,6 +222,11 @@ def validate_rule(rule: dict) -> dict:
         "else_actions": else_actions,
         "cooldown": max(0.0, min(cooldown, 3600.0)),
     }
+    # 内置默认规则带 preset 标记（仅用于「是否已注入过」的判断，用户可自由改名/删除）
+    preset = str(rule.get("preset") or "").strip()
+    if preset:
+        clean["preset"] = preset[:40]
+    return clean
 
 
 def validate_rules(payload) -> list[dict]:
@@ -191,6 +235,6 @@ def validate_rules(payload) -> list[dict]:
         payload = payload.get("rules")
     if not isinstance(payload, list):
         raise ValidationError("规则列表格式错误")
-    if len(payload) > 50:
-        raise ValidationError("规则数量不能超过 50 条")
+    if len(payload) > 80:
+        raise ValidationError("规则数量不能超过 80 条")
     return [validate_rule(r) for r in payload]

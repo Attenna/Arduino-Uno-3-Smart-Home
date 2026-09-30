@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title data-i18n="system.title">智能家居控制系统</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <!-- 导航栏 -->
+    <nav class="navbar">
+        <div class="nav-brand">
+            <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/>
+                <polyline points="9 22 9 12 15 12 15 22"/>
+            </svg>
+            <span data-i18n="system.title">智能家居控制系统</span>
+        </div>
+        <div class="nav-links">
+            <a href="/" class="nav-link"><span data-i18n="nav.dashboard">仪表盘</span></a>
+            <a href="/history" class="nav-link"><span data-i18n="nav.history">历史数据</span></a>
+            <a href="/access" class="nav-link"><span data-i18n="nav.access">门禁管理</span></a>
+            <a href="/hardware" class="nav-link"><span data-i18n="nav.hardware">硬件管理</span></a>
+            <a href="/voice" class="nav-link active"><span data-i18n="nav.voice">语音助手</span></a>
+            <a href="/automation" class="nav-link"><span data-i18n="nav.automation">自动化</span></a>
+        </div>
+        <div class="nav-status">
+            <span id="voiceDot" class="status-dot"></span>
+            <span id="voiceNavText" data-i18n="voice.checking">检测中…</span>
+            <span id="currentTime" class="time-display">--:--:--</span>
+        </div>
+        <button class="lang-switch" onclick="setLang(I18N.currentLang === 'zh' ? 'en' : 'zh')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"/>
+                <line x1="2" y1="12" x2="22" y2="12"/>
+                <path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/>
+            </svg>
+            <span data-i18n="nav.lang">EN</span>
+        </button>
+    </nav>
+
+    <div id="notification" class="notification hidden"></div>
+
+    <main class="main-content">
+        <div class="voice-grid">
+            <!-- 唤醒卡 -->
+            <div class="card">
+                <div class="card-header">
+                    <svg class="card-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/>
+                        <path d="M19 10v2a7 7 0 01-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/>
+                    </svg>
+                    <h3 data-i18n="voice.wake_title">唤醒语音助手</h3>
+                    <span class="card-badge" id="voiceStateBadge">--</span>
+                </div>
+                <div class="card-body">
+                    <p class="voice-hint" data-i18n="voice.wake_hint">
+                        点击下面按钮即可跳过唤醒词，直接进入指令模式，随后说出你的指令即可。
+                    </p>
+                    <button class="voice-wake-btn" id="wakeBtn" onclick="wakeVoice()">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/>
+                            <path d="M19 10v2a7 7 0 01-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/>
+                        </svg>
+                        <span data-i18n="voice.wake_btn">唤醒并说话</span>
+                    </button>
+                    <div class="voice-state-line">
+                        <span data-i18n="voice.state">当前状态</span>：
+                        <strong id="voiceStateText">--</strong>
+                    </div>
+                    <div class="voice-state-line" id="voiceErrorLine" style="display:none">
+                        <span data-i18n="voice.error">错误</span>：<span id="voiceError"></span>
+                    </div>
+                </div>
+                <div class="card-footer" data-i18n="voice.wake_footer">
+                    也可以直接对麦克风说唤醒词；本条链路对遥控器/键盘按键同样可用（见「自动化」）。
+                </div>
+            </div>
+
+            <!-- 文本指令卡 -->
+            <div class="card">
+                <div class="card-header">
+                    <svg class="card-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
+                    </svg>
+                    <h3 data-i18n="voice.text_title">文本指令（免麦克风）</h3>
+                </div>
+                <div class="card-body">
+                    <p class="voice-hint" data-i18n="voice.text_hint">
+                        输入一句话直接交给语音助手的大模型处理，适合调试或无声环境。
+                    </p>
+                    <div class="form-row">
+                        <div class="form-group" style="flex:1">
+                            <label data-i18n="voice.text_label">指令文本</label>
+                            <input type="text" id="sayText" class="input-field"
+                                   placeholder="打开客厅灯" onkeydown="if(event.key==='Enter')sayVoice()">
+                        </div>
+                    </div>
+                    <div class="btn-group" style="margin-top:12px">
+                        <button class="btn" onclick="sayVoice()" data-i18n="voice.text_btn">发送指令</button>
+                    </div>
+                    <div id="sayResult" class="voice-say-result"></div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script src="{{ url_for('static', filename='js/lang.js') }}?v=20260930"></script>
+    <script src="{{ url_for('static', filename='js/voice.js') }}?v=20260930"></script>
+</body>
+</html>

@@ -155,6 +155,58 @@ body {
 .face-live-hint.hidden {
     display: none;
 }
+/* ==================== 语音助手页 ==================== */
+.voice-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+}
+@media (max-width: 900px) {
+    .voice-grid { grid-template-columns: 1fr; }
+}
+.voice-hint {
+    color: var(--text-secondary);
+    font-size: 13px;
+    margin-bottom: 16px;
+    line-height: 1.6;
+}
+.voice-wake-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    width: 100%;
+    padding: 22px;
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--bg-primary);
+    background: linear-gradient(135deg, var(--accent-cyan), var(--accent-blue));
+    border: none;
+    border-radius: var(--radius);
+    cursor: pointer;
+    transition: var(--transition);
+    box-shadow: 0 0 20px rgba(0, 229, 255, 0.25);
+}
+.voice-wake-btn:hover { transform: translateY(-2px); box-shadow: 0 0 28px rgba(0, 229, 255, 0.45); }
+.voice-wake-btn:active { transform: scale(0.98); }
+.voice-wake-btn:disabled { opacity: 0.55; cursor: not-allowed; transform: none; }
+.voice-wake-btn svg { width: 26px; height: 26px; }
+.voice-state-line {
+    margin-top: 12px;
+    font-size: 14px;
+    color: var(--text-secondary);
+}
+.voice-state-line strong { color: var(--accent-cyan); }
+.voice-say-result {
+    margin-top: 12px;
+    font-size: 13px;
+    color: var(--accent-green);
+    font-family: 'Courier New', monospace;
+    word-break: break-all;
+}
+.face-live-hint.hidden {
+    display: none;
+}
 .face-result-display {
     min-height: 180px;
     display: flex;
