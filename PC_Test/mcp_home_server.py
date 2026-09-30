@@ -193,32 +193,72 @@ class HomeController:
 
     # ── B 板发命令 + 收响应 ──
     def _send_b(self, cmd: dict) -> str:
+        """发命令给 Module B；超时则重开串口自愈后重试。
+
+        2026-09-30 实测故障：B 板一旦复位（DTR 抖动 / 舵机堵转掉电）或串口
+        状态错乱，后续所有指令都会 100% 返回「B 板响应超时」，直到语音容器
+        重启才恢复。这里在超时后主动 close+open 串口——Uno 会因 DTR 复位并
+        重新启动，等待其就绪后重试，使故障自愈而无需人工重启容器。
+        """
         if self.ser_b is None:
             return "error: Module B 未连接，无法执行硬件操作"
         line = json.dumps(cmd, ensure_ascii=False) + "\n"
         with self._b_lock:
-            try:
-                self.ser_b.reset_input_buffer()
-                self.ser_b.write(line.encode("utf-8"))
-                # 读一行 response（800ms 超时，Serial.timeout 已设）
-                deadline = time.time() + 0.8
-                while time.time() < deadline:
-                    raw = self.ser_b.readline()
-                    if not raw:
-                        continue
-                    text = raw.decode("utf-8", "replace").strip()
-                    if not text:
-                        continue
-                    try:
-                        resp = json.loads(text)
-                    except json.JSONDecodeError:
-                        return f"ok (非JSON回显: {text})"
-                    if resp.get("result") == "ok":
-                        return "ok"
-                    return f"error: B 板返回 {resp}"
-                return "error: B 板响应超时"
-            except Exception as e:
-                return f"error: 串口写入失败 {e}"
+            result = "error: B 板响应超时"
+            for attempt in range(2):
+                result = self._send_b_once(line)
+                if not result.startswith("error: B 板响应超时"):
+                    return result
+                if attempt == 0:
+                    self._reopen_b()
+            return result
+
+    def _send_b_once(self, line: str) -> str:
+        """单次下发：写命令并等 0.8s 读一行 JSON 响应（调用方需持有 _b_lock）。"""
+        try:
+            self.ser_b.reset_input_buffer()
+            self.ser_b.write(line.encode("utf-8"))
+            deadline = time.time() + 0.8
+            while time.time() < deadline:
+                raw = self.ser_b.readline()
+                if not raw:
+                    continue
+                text = raw.decode("utf-8", "replace").strip()
+                if not text:
+                    continue
+                try:
+                    resp = json.loads(text)
+                except json.JSONDecodeError:
+                    return f"ok (非JSON回显: {text})"
+                if resp.get("result") == "ok":
+                    return "ok"
+                return f"error: B 板返回 {resp}"
+            return "error: B 板响应超时"
+        except Exception as e:
+            return f"error: 串口写入失败 {e}"
+
+    def _reopen_b(self) -> None:
+        """重开 B 板串口（调用方需持有 _b_lock）。
+
+        Uno 在串口 open 时会因 DTR 拉低而复位，需留足 2s 等 bootloader 退出
+        再清空启动横幅，否则复位期间写入的命令会被丢弃。
+        """
+        port = getattr(self.ser_b, "port", None)
+        try:
+            self.ser_b.close()
+        except Exception:                            # noqa: BLE001
+            pass
+        if not port:
+            print("[B] 串口重开失败：未知端口名", file=sys.stderr)
+            return
+        try:
+            time.sleep(0.2)
+            self.ser_b = serial.Serial(port, BAUD, timeout=1)
+            time.sleep(2.0)
+            self.ser_b.reset_input_buffer()
+            print(f"[B] 响应超时，串口已重开自愈: {port}", file=sys.stderr)
+        except Exception as e:                       # noqa: BLE001
+            print(f"[B] 串口重开失败: {e}", file=sys.stderr)
 
     # ── 工具实现 ──
     def handle_light(self, action, value=None, r=None, g=None, b=None) -> str:

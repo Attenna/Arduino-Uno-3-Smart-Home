@@ -243,6 +243,39 @@ class HomeModeManager:
         else:
             self._set_mode(MODE_AWAY, "未检测到人时门舵机动作，判定为出门")
 
+    def note_manual_control(self, device: str, reason: str = "", **state) -> None:
+        """面板/语音手动操作硬件后的状态机同步（用户策略：手动操作 → 全屋转手动）。
+
+        做两件事：
+        1. 把去重缓存 ``_last_*`` 更新为手动值——否则自动调节会误判「已下发过」
+           而静默不再下发（实测：自动模式下面板开灯后，自动逻辑 4 秒都没关灯）；
+        2. 任何手动操作都把全屋切到「手动」，并清掉该设备此前的红外强制档位，
+           使用户刚设的状态不被自动逻辑/旧档位覆盖（触摸键或页面「自动」可恢复）。
+        """
+        label = {"light": "灯光", "fan": "风扇", "door": "门",
+                 "window": "窗户"}.get(device, device)
+        dirty = False
+        with self._lock:
+            if device == "fan":
+                self._last_fan = max(0, min(100, int(state.get("speed", 0) or 0)))
+                if self.cfg["fan_override"] is not None:
+                    self.cfg["fan_override"] = None      # 清掉红外强制档
+                    dirty = True
+            elif device == "light":
+                status = "on" if state.get("status") == "on" else "off"
+                brightness = max(0, min(100, int(state.get("brightness", 0) or 0)))
+                self._last_light = (status, brightness)
+                if self.cfg["light_level"] in ("dark", "half", "bright"):
+                    self.cfg["light_level"] = "auto"     # 清掉红外档位
+                    dirty = True
+            elif device == "window":
+                raw = str(state.get("status") or "close")
+                self._last_window = "open" if raw == "open" else "close"
+            if dirty:
+                self._save()
+        self._set_mode(MODE_MANUAL,
+                       reason or f"手动控制{label}，全屋切到手动模式并保持当前状态")
+
     def on_face_granted(self, person: str = "") -> None:
         """需求2/3：门禁通过 → 开门 + 10s 后自动关门 + 判定进门。"""
         now = time.time()

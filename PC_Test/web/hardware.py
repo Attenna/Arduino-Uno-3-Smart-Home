@@ -29,6 +29,20 @@ from .config import MCP_SERVER_PATH, PC_TEST_DIR
 logger = logging.getLogger(__name__)
 
 
+def _looks_like_error(text: str) -> bool:
+    """判断 MCP 返回文本是否为失败。
+
+    注意：MCP 框架在工具内部抛异常时仍返回 ``isError`` 之外的成功封装，
+    文本形如 ``Error executing tool xxx: ...``（大写 E），只判 ``startswith("error")``
+    会把它当成功，导致前端显示"已打开"但硬件根本没动。
+    """
+    t = (text or "").strip()
+    if not t:
+        return True
+    low = t.lower()
+    return low.startswith("error") or "b 板响应超时" in low
+
+
 class McpHardwareBridge:
     def __init__(self, cfg: dict, db):
         self.db = db
@@ -271,7 +285,7 @@ class McpHardwareBridge:
             text = future.result(timeout=timeout)
         except Exception as e:
             return False, f"硬件调用失败: {e}"
-        if text.startswith("error"):
+        if _looks_like_error(text):
             return False, text
         # B 板不自报状态：任何执行器工具成功 ACK 都视为输出板在线
         if name in ("door", "window", "light", "fan", "buzzer") and self.command_ack_listener:
@@ -299,14 +313,18 @@ class McpHardwareBridge:
                 return False, f"硬件联动失败: relay HTTP {e.code}"
         except Exception as e:
             return False, f"硬件联动失败（语音助手不可达 {self.relay_url}）: {e}"
-        if body.get("ok"):
-            if name in ("door", "window", "light", "fan", "buzzer") and self.command_ack_listener:
-                try:
-                    self.command_ack_listener(name, args or {})
-                except Exception:
-                    logger.debug("command_ack_listener 异常", exc_info=True)
-            return True, str(body.get("result") or "ok")
-        return False, str(body.get("error") or body.get("result") or "硬件联动被拒绝")
+        if not body.get("ok"):
+            return False, str(body.get("error") or body.get("result") or "硬件联动被拒绝")
+        # relay 的 ok 只代表「工具被调用」，B 板超时等失败会写在 result 里
+        text = str(body.get("result") or "ok")
+        if _looks_like_error(text):
+            return False, text
+        if name in ("door", "window", "light", "fan", "buzzer") and self.command_ack_listener:
+            try:
+                self.command_ack_listener(name, args or {})
+            except Exception:
+                logger.debug("command_ack_listener 异常", exc_info=True)
+        return True, text
 
     # ── 设备语义映射：Web 百分比/状态 → B 板 MCP 工具参数 ──
 

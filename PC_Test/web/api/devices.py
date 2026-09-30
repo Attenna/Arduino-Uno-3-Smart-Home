@@ -4,12 +4,32 @@
 JSON 命令；只有收到 B 板 ACK 后才更新 system_status 并写历史，保证 UI 状态
 与真实硬件一致。串口离线时返回 503，不产生虚假状态。
 """
+import logging
+
 from flask import Blueprint, jsonify, request
 
 from .. import extensions
 from ..extensions import db
 
+logger = logging.getLogger(__name__)
+
 bp = Blueprint("devices", __name__)
+
+
+def _note_manual(device, **state):
+    """告知全屋状态机这是一次手动操作：切到「手动」并同步去重缓存。
+
+    用户策略：自动/离家中从面板（或语音）手动操作任一设备，全屋转为「手动」，
+    保持刚设的状态不被自动逻辑覆盖；再按触摸键或页面「自动」即恢复自动调节。
+    """
+    automation = getattr(extensions, "automation", None)
+    home_mode = getattr(automation, "home_mode", None) if automation else None
+    if home_mode is None:
+        return
+    try:
+        home_mode.note_manual_control(device, **state)
+    except Exception:                                # noqa: BLE001
+        logger.debug("通知全屋模式失败", exc_info=True)
 
 
 def _hardware_error(text):
@@ -43,6 +63,7 @@ def control_door():
         return _hardware_error(msg)
     db.update_status(door_status=new_status)
     db.add_door_window_event("door", "前门", new_status)
+    _note_manual("door", reason="面板手动开关门，全屋切到手动模式并保持当前状态")
     action = "opened" if new_status == "open" else "closed"
     return jsonify({
         "door_status": new_status,
@@ -69,6 +90,7 @@ def control_window():
         return _hardware_error(msg)
     db.update_status(window_status=new_status)
     db.add_door_window_event("window", "客厅窗户", new_status)
+    _note_manual("window", status=new_status)
     action = "opened" if new_status == "open" else "closed"
     return jsonify({
         "window_status": new_status,
@@ -106,6 +128,7 @@ def control_light():
         return _hardware_error(msg)
     db.update_status(light_status=light_status, light_brightness=brightness)
     db.add_light_event("客厅主灯", light_status, brightness)
+    _note_manual("light", status=light_status, brightness=brightness)
     return jsonify({
         "light_status": light_status,
         "light_brightness": brightness,
@@ -136,6 +159,7 @@ def control_fan():
     if not ok:
         return _hardware_error(msg)
     db.update_status(fan_speed=speed)
+    _note_manual("fan", speed=speed)
     return jsonify({
         "fan_speed": speed,
         "message": f"风扇速度已设为 {speed}%",
