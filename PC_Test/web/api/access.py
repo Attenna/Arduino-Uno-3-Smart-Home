@@ -1,6 +1,7 @@
 """门禁：授权人员、通行日志、人脸/RFID 凭证校验。"""
 from flask import Blueprint, jsonify, request
 
+from .. import extensions
 from ..extensions import db, face_engine
 
 bp = Blueprint("access", __name__)
@@ -32,6 +33,11 @@ def verify_access():
     if person:
         db.add_access_log(person["name"], verify_type, "granted",
                           credential=credential)
+        # 需求2/3：门禁通过 → 交由全屋模式执行「开锁 + 10 秒后自动关门 + 判定进门」
+        if extensions.automation is not None:
+            extensions.automation.on_event(
+                {"event": "face", "status": "granted", "person": person["name"],
+                 "face_id": credential})
         return jsonify({
             "granted": True, "person": person["name"],
             "message": f"验证通过，欢迎 {person['name']}!",

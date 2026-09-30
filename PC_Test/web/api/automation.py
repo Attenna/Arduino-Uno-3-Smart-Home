@@ -56,6 +56,30 @@ def run_rule(rule_id):
     return jsonify(result), (200 if result.get("ok") else 400)
 
 
+@bp.route("/api/automation/home_mode", methods=["GET"])
+def get_home_mode():
+    """全屋模式状态（自动/手动/离家 + 风扇/灯光覆盖档位 + 逗留/关门倒计时）。"""
+    engine = extensions.automation
+    if engine is None:
+        return jsonify({"error": "自动化引擎未启动"}), 503
+    return jsonify(engine.home_mode.config())
+
+
+@bp.route("/api/automation/home_mode", methods=["PUT"])
+def put_home_mode():
+    """设置全屋模式。body: {mode?, fan_override?, light_level?, enabled?, 阈值...}。"""
+    engine = extensions.automation
+    if engine is None:
+        return jsonify({"error": "自动化引擎未启动"}), 503
+    try:
+        data = request.get_json(force=True) or {}
+        reason = str(data.pop("reason", "") or "页面设置")
+        cfg = engine.home_mode.configure(reason=reason, **data)
+    except Exception as e:                               # noqa: BLE001
+        return jsonify({"error": f"全屋模式设置失败：{e}"}), 500
+    return jsonify({"ok": True, "config": cfg, "message": "全屋模式设置已生效"})
+
+
 @bp.route("/api/automation/logs", methods=["GET"])
 def get_logs():
     limit = request.args.get("limit", 30, type=int)

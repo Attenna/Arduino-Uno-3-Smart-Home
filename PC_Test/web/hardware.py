@@ -315,7 +315,8 @@ class McpHardwareBridge:
         return self.call_tool("door", {"action": action})
 
     def control_window(self, status: str) -> tuple[bool, str]:
-        action = "open" if status == "open" else "close"
+        """status: open/close/normal(恢复 45° 半开)。"""
+        action = {"open": "open", "close": "close", "normal": "normal"}.get(status, "close")
         return self.call_tool("window", {"action": action})
 
     def control_light(self, status: str, brightness_pct: int) -> tuple[bool, str]:

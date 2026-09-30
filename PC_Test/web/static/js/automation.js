@@ -187,7 +187,8 @@ function defineBlocks() {
     Blockly.Blocks['act_window'] = {
         init: function () {
             this.appendDummyInput().appendField('🪟 窗户')
-                .appendField(new Blockly.FieldDropdown([['打开', 'open'], ['关闭', 'close']]), 'STATUS');
+                .appendField(new Blockly.FieldDropdown(
+                    [['打开', 'open'], ['关闭', 'close'], ['半开 45°', 'normal']]), 'STATUS');
             this.setPreviousStatement(true, 'ACT');
             this.setNextStatement(true, 'ACT');
             this.setColour(120);
@@ -361,7 +362,68 @@ async function bootWorkspace() {
     refreshPreview();
     refreshLogs();
     loadOledConfig();
+    loadHomeMode();
     setInterval(refreshLogs, 5000);
+    setInterval(loadHomeMode, 5000);
+}
+
+// ==================== 全屋模式（自动/手动/离家 + 强制覆盖） ====================
+
+let HOME_MODE = null;
+
+async function loadHomeMode() {
+    try {
+        HOME_MODE = await api('/api/automation/home_mode');
+    } catch (e) { return; }
+    const badge = document.getElementById('homeModeBadge');
+    if (!badge) return;
+    badge.textContent = '当前模式：' + (HOME_MODE.mode_label || HOME_MODE.mode);
+    badge.className = 'mode-badge mode-' + HOME_MODE.mode;
+    const fanBtn = document.getElementById('fanOverrideBtn');
+    if (fanBtn) fanBtn.textContent = '🌀 风扇：' + HOME_MODE.fan_label;
+    const lightBtn = document.getElementById('lightLevelBtn');
+    if (lightBtn) lightBtn.textContent = '💡 灯光：' + HOME_MODE.light_label;
+    const detail = document.getElementById('homeModeDetail');
+    if (detail) {
+        const bits = [];
+        if (HOME_MODE.pir_near_door) bits.push('门口有人 ' + HOME_MODE.pir_dwell_seconds + 's');
+        if (HOME_MODE.door_close_in > 0) bits.push('关门倒计时 ' + HOME_MODE.door_close_in + 's');
+        if (HOME_MODE.smoke_active) bits.push('⚠️ 烟雾报警中');
+        if (HOME_MODE.rain_wet) bits.push('🌧 检测到雨水');
+        if (HOME_MODE.last_reason) bits.push(HOME_MODE.last_reason);
+        detail.textContent = bits.join('　|　');
+    }
+}
+
+async function putHomeMode(body) {
+    try {
+        const r = await api('/api/automation/home_mode', {
+            method: 'PUT', body: JSON.stringify(body),
+        });
+        HOME_MODE = r.config;
+        loadHomeMode();
+        showNotification(r.message || '全屋模式设置已生效', 'success');
+    } catch (e) {
+        showNotification(e.message, 'error');
+    }
+}
+
+function setHomeMode(mode) {
+    putHomeMode({ mode, reason: '页面切换全屋模式' });
+}
+
+function cycleFanOverride() {
+    const cur = HOME_MODE ? HOME_MODE.fan_override : null;
+    const next = cur === null ? 'off' : (cur === 'off' ? 'on' : null);
+    putHomeMode({ fan_override: next, reason: '页面切换风扇覆盖' });
+}
+
+function cycleLightLevel() {
+    const order = ['hold', 'dark', 'half', 'bright', 'auto'];
+    const cur = HOME_MODE ? HOME_MODE.light_level : 'auto';
+    const idx = order.indexOf(cur);
+    putHomeMode({ light_level: order[(idx + 1) % order.length],
+                  reason: '页面切换灯光档位' });
 }
 
 // ==================== OLED 轮播设置 ====================

@@ -16,9 +16,13 @@ import re
 import time
 from typing import Any, Callable, Dict, List, Optional
 
-__all__ = ["OledCarousel", "DEFAULT_PAGES"]
+__all__ = ["OledCarousel", "DEFAULT_PAGES", "DEFAULT_PAGES_OLD",
+           "DEFAULT_PAGES_V0", "PAGES_VERSION", "is_legacy_default_pages"]
 
-# 默认页面模板（覆盖常见传感器 + 执行器状态 + 最近自动化）
+# 默认页面版本：升级后自动替换磁盘上的旧默认页（避免老配置卡住新文案）
+PAGES_VERSION = 3
+
+# 默认页面模板（覆盖常见传感器 + 全屋模式 + 执行器状态 + 最近自动化）
 # OLED 每行 16 个 ASCII 列宽，1 个汉字约占 2 列，故每行控制在 ~8 个汉字。
 DEFAULT_PAGES: List[Dict[str, Any]] = [
     {
@@ -31,22 +35,31 @@ DEFAULT_PAGES: List[Dict[str, Any]] = [
         ],
     },
     {
-        "title": "安防",
+        "title": "全屋模式",
         "lines": [
-            "【安全状态】",
-            "烟雾：{smoke}",
-            "雨水：{rain}",
-            "人体：{motion}",
+            "【全屋模式】",
+            "当前模式：{home_mode}",
+            "风扇：{home_fan}",
+            "灯光：{home_light}",
         ],
     },
     {
-        "title": "执行器",
+        "title": "设备",
         "lines": [
             "【设备状态】",
             "门：{b_door}",
             "窗：{b_window}",
             "风扇：{b_fan}%",
             "灯光：{light_lv}%",
+        ],
+    },
+    {
+        "title": "安防",
+        "lines": [
+            "【安全状态】",
+            "烟雾：{smoke}",
+            "雨水：{rain}",
+            "人体：{motion}",
         ],
     },
     {
@@ -58,10 +71,38 @@ DEFAULT_PAGES: List[Dict[str, Any]] = [
     },
 ]
 
+# v1 默认页（旧文案，无「全屋模式」页）。磁盘配置与之完全一致说明用户没自定义过，
+# 升级到 PAGES_VERSION=2 时自动替换为新默认页。
+DEFAULT_PAGES_OLD: List[Dict[str, Any]] = [
+    {"title": "环境", "lines": ["【环境状态】", "当前温度：{temperature}度",
+                                "当前湿度：{humidity}%", "当前光照：{light}"]},
+    {"title": "安防", "lines": ["【安全状态】", "烟雾：{smoke}", "雨水：{rain}",
+                                "人体：{motion}"]},
+    {"title": "执行器", "lines": ["【设备状态】", "门：{b_door}", "窗：{b_window}",
+                                  "风扇：{b_fan}%", "灯光：{light_lv}%"]},
+    {"title": "最近自动化", "lines": ["【最近自动化】", "{recent_auto}"]},
+]
+
+# v0 默认页（最早的 web 版短文案，3 页，无全屋模式页）。
+DEFAULT_PAGES_V0: List[Dict[str, Any]] = [
+    {"title": "环境", "lines": ["温度 {temperature}C", "湿度 {humidity}%",
+                                "光照 {light}", "烟 {smoke} 雨 {rain}",
+                                "人 {motion} 触 {touch}"]},
+    {"title": "执行器", "lines": ["门 {b_door} 窗 {b_window}",
+                                  "扇 {b_fan} 灯 {light_lv}",
+                                  "蜂鸣 {b_buzzer}"]},
+    {"title": "最近自动化", "lines": ["{recent_auto}"]},
+]
+
+
+def is_legacy_default_pages(pages: Any) -> bool:
+    """判断磁盘上的页面是否就是历史版本的「默认页」（说明用户没自定义过）。"""
+    return pages in (DEFAULT_PAGES_OLD, DEFAULT_PAGES_V0)
+
 # 把状态值翻译成友好中文（open/closed、on/off、True/False 等）
 _VALUE_LABELS = {
-    "open": "开", "closed": "关", "opening": "开中", "closing": "关中",
-    "on": "开", "off": "关", "true": "是", "false": "否",
+    "open": "全开", "closed": "关", "opening": "开中", "closing": "关中",
+    "normal": "半开45", "on": "开", "off": "关", "true": "是", "false": "否",
 }
 
 _PLACEHOLDER = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")

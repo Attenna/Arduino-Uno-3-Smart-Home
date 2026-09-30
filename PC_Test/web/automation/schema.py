@@ -118,8 +118,8 @@ def validate_action(action: dict, where: str = "动作块") -> dict:
         clean["status"] = status
     elif device == "window":
         status = action.get("status", "open")
-        if status not in ("open", "close"):
-            raise ValidationError("窗动作只能是 open/close")
+        if status not in ("open", "close", "normal"):
+            raise ValidationError("窗动作只能是 open/close/normal(半开45°)")
         clean["status"] = status
     elif device == "light":
         status = action.get("status", "on")

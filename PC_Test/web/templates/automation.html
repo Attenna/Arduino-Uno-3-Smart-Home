@@ -5,22 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>自动化规则 - 智能家居</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-    <!-- Blockly 自托管（内网/校园网无外网也可用）；本地缺失时依次回退两个 CDN -->
-    <script src="{{ url_for('static', filename='vendor/blockly/blockly.min.js') }}?v=20260930"></script>
-    <script>
-        if (typeof Blockly === 'undefined') {
-            document.write('<script src="https://cdn.jsdelivr.net/npm/blockly@10.4.3/blockly.min.js"><\/script>');
-        }
-    </script>
-    <script>
-        if (typeof Blockly === 'undefined') {
-            document.write('<script src="https://unpkg.com/blockly@10.4.3/blockly.min.js"><\/script>');
-        }
-    </script>
+    <!-- Blockly 全量自托管（内网/校园网无外网也可用）；不再回退外网 CDN，避免控制台报错 -->
+    <script src="{{ url_for('static', filename='vendor/blockly/blockly.min.js') }}?v=20260930c"></script>
     <!-- 简体中文内置文案（自定义积木本身已是中文）；Blockly 未加载则跳过 -->
     <script>
         if (typeof Blockly !== 'undefined') {
-            document.write('<script src="{{ url_for('static', filename='vendor/blockly/zh-hans.js') }}"><\/script>');
+            document.write('<script src="{{ url_for('static', filename='vendor/blockly/zh-hans.js') }}?v=20260930c"><\/script>');
         }
     </script>
     <style>
@@ -50,6 +40,11 @@
         .auto-log th { color: var(--text-secondary); font-weight: 500; }
         .log-wrap { max-height: 300px; overflow-y: auto; }
         .mini-btn { font-size: 12px; padding: 4px 10px; }
+        .mode-badge { font-weight: 600; font-size: 14px; padding: 8px 12px; border-radius: var(--radius-sm);
+                      background: rgba(0,229,255,.10); color: var(--accent-cyan); }
+        .mode-badge.mode-manual { background: rgba(255,145,0,.12); color: var(--accent-orange); }
+        .mode-badge.mode-away { background: rgba(255,23,68,.12); color: var(--accent-red); }
+        .mode-hint { font-size: 12px; color: var(--text-secondary); line-height: 1.7; }
         .missing-box { position: absolute; inset: 20px; z-index: 5; display: flex; align-items: center; justify-content: center;
                        background: var(--bg-card); border: 1px dashed var(--accent-orange);
                        color: var(--accent-orange); border-radius: var(--radius-sm); text-align: center; padding: 20px; }
@@ -118,6 +113,30 @@
 
             <div style="display:flex;flex-direction:column;gap:16px">
                 <div class="card">
+                    <div class="card-header"><h3>🏠 全屋模式</h3></div>
+                    <div class="card-body" style="display:flex;flex-direction:column;gap:10px">
+                        <div id="homeModeBadge" class="mode-badge">当前模式：--</div>
+                        <div style="display:flex;gap:8px;flex-wrap:wrap">
+                            <button class="btn mini-btn" onclick="setHomeMode('auto')">🤖 自动</button>
+                            <button class="btn mini-btn" onclick="setHomeMode('manual')">✋ 手动</button>
+                            <button class="btn mini-btn" onclick="setHomeMode('away')">🚪 离家</button>
+                        </div>
+                        <div style="display:flex;gap:8px;flex-wrap:wrap">
+                            <button class="btn mini-btn" id="fanOverrideBtn"
+                                    onclick="cycleFanOverride()">🌀 风扇：--</button>
+                            <button class="btn mini-btn" id="lightLevelBtn"
+                                    onclick="cycleLightLevel()">💡 灯光：--</button>
+                        </div>
+                        <span id="homeModeDetail" class="mode-hint"></span>
+                        <span class="mode-hint">
+                            <b>红外遥控</b>：键1 循环「强制关→强制开→自动」风扇；键2/3 循环
+                            「保持→暗→半亮→全亮→自动」灯光。<b>触摸传感器</b>按下可切换 手动/自动。
+                            自动模式下：温度 &gt; 阈值开风扇（全速）、按光敏自动调灯光；
+                            雨水自动关窗、雨停恢复 45°，烟雾报警，任何模式下都生效。
+                        </span>
+                    </div>
+                </div>
+                <div class="card">
                     <div class="card-header"><h3>🖥️ OLED 轮播设置</h3></div>
                     <div class="card-body" style="display:flex;flex-direction:column;gap:10px">
                         <label style="display:flex;align-items:center;gap:8px;font-size:14px">
@@ -152,6 +171,6 @@
     </main>
 
     <script src="{{ url_for('static', filename='js/lang.js') }}?v=20260930"></script>
-    <script src="{{ url_for('static', filename='js/automation.js') }}?v=20260930"></script>
+    <script src="{{ url_for('static', filename='js/automation.js') }}?v=20260930b"></script>
 </body>
 </html>

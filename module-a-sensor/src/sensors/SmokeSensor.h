@@ -5,6 +5,7 @@
 
 // MQ-2 烟雾传感器（数字报警 + 模拟量）
 // 数字输出由 MQ-2 模块上的电位器设定阈值，报警状态来自硬件比较器。
+// DO 低电平有效：无烟 HIGH、超阈值 LOW。
 class SmokeSensor {
 public:
     void begin();

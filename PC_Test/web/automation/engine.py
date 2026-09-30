@@ -29,7 +29,9 @@ from datetime import datetime
 from pathlib import Path
 
 from .capabilities import CONDITION_SOURCES, EVENT_TRIGGERS
-from .oled_carousel import DEFAULT_PAGES, OledCarousel
+from .home_mode import MODE_LABELS, HomeModeManager
+from .oled_carousel import (DEFAULT_PAGES, PAGES_VERSION, OledCarousel,
+                            is_legacy_default_pages)
 from .schema import validate_rules
 
 logger = logging.getLogger(__name__)
@@ -66,6 +68,11 @@ class AutomationEngine:
         self._oled_carousel = OledCarousel(emitter=self._oled_emit,
                                            on_log=self._oled_log)
         self._oled_thread: threading.Thread | None = None
+
+        # ── 全屋模式状态机（自动/手动/离家 + 红外强制覆盖） ──
+        # 承载十条全屋联动需求里跨设备、带时序的部分（见 home_mode.py）
+        self.home_mode = HomeModeManager(
+            bridge, db, Path(rules_path).parent / "home_mode.json")
 
     # ==================== 生命周期 ====================
 
@@ -125,6 +132,7 @@ class AutomationEngine:
         try:
             self._snapshot = dict(snap or {})
             self._snapshot_ts = time.time()
+            self.home_mode.on_snapshot(self._snapshot)
             for rule in list(self._iter_enabled()):
                 if rule["trigger"]["kind"] == "sensor":
                     self._evaluate_sensor_rule(rule)
@@ -139,6 +147,7 @@ class AutomationEngine:
             self._events.append((seq, dict(event or {})))
             if len(self._events) > 100:
                 self._events = self._events[-100:]
+            self.home_mode.on_event(event)
             for rule in list(self._iter_enabled()):
                 if rule["trigger"]["kind"] == "event":
                     self._evaluate_event_rule(rule, seq, event)
@@ -153,6 +162,7 @@ class AutomationEngine:
             try:
                 now = time.time()
                 minute = datetime.now().strftime("%H:%M")
+                self.home_mode.tick()
                 for rule in list(self._iter_enabled()):
                     trig = rule["trigger"]
                     if trig["kind"] == "interval":
@@ -203,6 +213,7 @@ class AutomationEngine:
             tmp.write_text(json.dumps({
                 "enabled": self.oled_enabled,
                 "interval": self.oled_interval,
+                "pages_version": PAGES_VERSION,
                 "pages": self.oled_pages or DEFAULT_PAGES,
             }, ensure_ascii=False, indent=2), encoding="utf-8")
             tmp.replace(self.oled_path)
@@ -219,7 +230,13 @@ class AutomationEngine:
                     cfg = json.loads(self.oled_path.read_text(encoding="utf-8"))
                     self.oled_enabled = bool(cfg.get("enabled", False))
                     self.oled_interval = float(cfg.get("interval", 5.0))
+                    # 默认页随代码升级：磁盘里是旧版默认页时自动换新文案，
+                    # 并默认开启轮播（需求7：OLED 实时显示全屋状态，可在页面关掉）
                     pages = cfg.get("pages")
+                    if int(cfg.get("pages_version", 0) or 0) < PAGES_VERSION \
+                            and is_legacy_default_pages(pages):
+                        pages = None
+                        self.oled_enabled = True
                     self.oled_pages = pages if isinstance(pages, list) and pages else None
                     self._oled_carousel.pages = self.oled_pages or DEFAULT_PAGES
                     self._oled_carousel.interval = self.oled_interval
@@ -243,6 +260,13 @@ class AutomationEngine:
     def _oled_data(self) -> dict:
         """A 板快照 + B 板执行器状态 + 最近自动化，组成扁平数据源。"""
         data = dict(self._snapshot)
+        try:
+            hm = self.home_mode.config()
+            data["home_mode"] = MODE_LABELS[hm["mode"]]
+            data["home_fan"] = hm["fan_label"]
+            data["home_light"] = hm["light_label"]
+        except Exception:                            # noqa: BLE001
+            pass
         try:
             status = self.db.get_current_status()
             data["b_door"] = status.get("door_status")
@@ -291,8 +315,12 @@ class AutomationEngine:
                     yield rule
 
     def _context(self) -> dict:
-        """传感器快照 + SQLite 中的执行器当前状态。"""
+        """传感器快照 + SQLite 中的执行器当前状态 + 全屋模式。"""
         ctx = dict(self._snapshot)
+        try:
+            ctx["home_mode"] = self.home_mode.cfg["mode"]
+        except Exception:                            # noqa: BLE001
+            pass
         try:
             status = self.db.get_current_status()
             for key in ("door_status", "window_status", "light_status", "fan_speed"):
@@ -412,15 +440,18 @@ class AutomationEngine:
         if not self.bridge or not self.bridge.online and not self.bridge.relay_url:
             return False, "硬件桥离线"
         if device in ("door", "window"):
-            # 积木/硬件动作用 open/close；DB 与页面约定 open/closed
+            # 积木动作用 open/close（窗另有 normal=45°）；DB 与页面约定 open/closed/normal
             status = action["status"]
-            db_status = "open" if status == "open" else "closed"
+            db_status = {"open": "open", "close": "closed"}.get(status, "normal")
             method = self.bridge.control_door if device == "door" else self.bridge.control_window
             label = "前门(自动化)" if device == "door" else "客厅窗户(自动化)"
             ok, msg = method(status)
             if ok:
                 self.db.update_status(**{f"{device}_status": db_status})
                 self.db.add_door_window_event(device, label, db_status)
+                # 需求3：门舵机动作结合 PIR 判定「进门→全屋自动 / 出门→全屋关闭」
+                if device == "door" and status == "open":
+                    self.home_mode.note_door_action("rule")
             return ok, msg
         if device == "light":
             status = action["status"]

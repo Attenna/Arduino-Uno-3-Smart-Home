@@ -33,7 +33,7 @@ BAUD = 115200
 # ---- 矩阵键盘开门密码（正式版硬件：仅 "1" 键，密码 1111 = 连按 4 次）----
 KEYPAD_CODE = "1111"          # 开门密码
 KEYPAD_WINDOW_S = 10.0        # 全部按键必须在该时间窗口内完成，超时清空
-KEYPAD_OPEN_HOLD_S = 3.0      # 触发后开门保持秒数，到时自动关门
+KEYPAD_OPEN_HOLD_S = 10.0     # 触发后开门保持秒数，到时自动关门（需求2：门禁通过 10 秒后关门）
 
 
 # ==================== 串口探测 / 连接（移植自 link_server.py）====================
@@ -159,11 +159,27 @@ class HomeController:
         if granted:
             print(f"[键盘] 密码 {KEYPAD_CODE} 正确，执行静默开门",
                   file=sys.stderr)
+            self._report_granted_event()
             threading.Thread(target=self._open_door_by_keypad,
                              daemon=True, name="keypad-door").start()
         else:
             print(f"[键盘] 按键 {key!r}，当前序列 {seq!r}"
                   f"（{len(seq)}/{len(KEYPAD_CODE)}）", file=sys.stderr)
+
+    def _report_granted_event(self):
+        """键盘密码开门上报为「门禁通过」事件，供 web 全屋模式判定进门。
+
+        复用 A 板 event 通道（recent_events），web 侧 _ingest_event →
+        automation.on_event({"event":"face","status":"granted"}) →
+        home_mode.on_face_granted()，由 Linux 统一记录日志与延时关门。
+        """
+        with self._snapshot_lock:
+            self._events.append({
+                "event": "face", "status": "granted",
+                "person": f"键盘密码({KEYPAD_CODE})",
+                "face_id": f"keypad:{KEYPAD_CODE}",
+                "timestamp": int(time.time() * 1000),
+            })
 
     def _open_door_by_keypad(self):
         """键盘密码开门：蜂鸣 2 短声提示 → 开门 → 延时自动关门。"""
