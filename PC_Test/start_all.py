@@ -180,7 +180,10 @@ def main() -> int:
         if want_web:
             web_args = ["run_web.py", "--no-serial", "--port", str(args.web_port)]
             # 人脸开门/设备控制经语音助手 /tool 转发（不抢串口）
-            relay_env = {"SMART_HOME_HW_RELAY": f"http://127.0.0.1:{args.voice_port}"}
+            relay_env = {"SMART_HOME_HW_RELAY": f"http://127.0.0.1:{args.voice_port}",
+                         # 人脸识别页面的实时画面：同源代理到相机进程的 MJPEG
+                         "SMART_HOME_CAMERA_URL":
+                             f"http://127.0.0.1:{args.camera_port}/video_feed"}
             _PROCESSES["web"] = spawn("web", web_args, env_extra=relay_env)
 
         if want_camera:

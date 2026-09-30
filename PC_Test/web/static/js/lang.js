@@ -148,6 +148,8 @@ const I18N = {
             // 人脸识别展示面板
             'access.live_face': '实时人脸识别',
             'access.listening': '监听中',
+            'access.stream_loading': '正在连接摄像头实时画面...',
+            'access.stream_unavailable': '摄像头画面不可用（检查摄像头服务是否运行）',
             'access.waiting_push': '等待香橙派推送识别结果...',
             'access.waiting_sub': '人脸识别在香橙派上独立运行',
             'access.confidence': '置信度',
@@ -362,6 +364,8 @@ const I18N = {
             // Face Recognition Display Panel
             'access.live_face': 'Live Face Recognition',
             'access.listening': 'Listening',
+            'access.stream_loading': 'Connecting to live camera...',
+            'access.stream_unavailable': 'Camera stream unavailable (check the camera service)',
             'access.waiting_push': 'Waiting for Orange Pi to push recognition result...',
             'access.waiting_sub': 'Face recognition runs independently on Orange Pi',
             'access.confidence': 'Confidence',

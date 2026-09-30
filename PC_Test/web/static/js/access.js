@@ -11,7 +11,39 @@ document.addEventListener('DOMContentLoaded', () => {
     loadAccessLogs();
     loadFaceEvents();
     startFacePolling();
+    startFaceStream();
 });
+
+// ==================== 摄像头实时画面 ====================
+// 后端 /api/camera/stream 同源代理 camera_stream 的 MJPEG；断流自动重连。
+
+let faceStreamRetry = null;
+
+function startFaceStream() {
+    const img = document.getElementById('faceLiveImg');
+    const hint = document.getElementById('faceLiveHint');
+    if (!img) return;
+
+    img.onload = () => {
+        // MJPEG 首帧到达即触发 load
+        if (hint) hint.classList.add('hidden');
+    };
+    img.onerror = () => {
+        if (hint) {
+            hint.classList.remove('hidden');
+            hint.textContent = t('access.stream_unavailable');
+        }
+        clearTimeout(faceStreamRetry);
+        faceStreamRetry = setTimeout(() => loadFaceStream(), 5000);
+    };
+    loadFaceStream();
+}
+
+function loadFaceStream() {
+    const img = document.getElementById('faceLiveImg');
+    if (!img) return;
+    img.src = `/api/camera/stream?t=${Date.now()}`;
+}
 
 // 时钟
 function updateClock() {

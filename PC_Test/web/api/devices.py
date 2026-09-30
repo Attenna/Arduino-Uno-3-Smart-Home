@@ -32,6 +32,36 @@ def _note_manual(device, **state):
         logger.debug("通知全屋模式失败", exc_info=True)
 
 
+def _record_door(new_status, who="面板"):
+    db.update_status(door_status=new_status)
+    db.add_door_window_event("door", "前门", new_status)
+    _note_manual("door", reason=f"{who}手动开关门，全屋切到手动模式并保持当前状态")
+
+
+def _record_window(new_status):
+    db.update_status(window_status=new_status)
+    db.add_door_window_event("window", "客厅窗户", new_status)
+    _note_manual("window", status=new_status)
+
+
+def _record_light(status, brightness):
+    db.update_status(light_status=status, light_brightness=brightness)
+    db.add_light_event("客厅主灯", status, brightness)
+    _note_manual("light", status=status, brightness=brightness)
+
+
+def _record_fan(speed):
+    db.update_status(fan_speed=speed)
+    _note_manual("fan", speed=speed)
+
+
+def _pct(value, default=0):
+    try:
+        return max(0, min(100, int(value)))
+    except (TypeError, ValueError):
+        return default
+
+
 def _hardware_error(text):
     return jsonify({"error": "硬件控制失败", "error_en": "Hardware command failed",
                     "detail": text}), 503
@@ -61,9 +91,7 @@ def control_door():
     ok, msg = _hw_call("control_door", new_status)
     if not ok:
         return _hardware_error(msg)
-    db.update_status(door_status=new_status)
-    db.add_door_window_event("door", "前门", new_status)
-    _note_manual("door", reason="面板手动开关门，全屋切到手动模式并保持当前状态")
+    _record_door(new_status)
     action = "opened" if new_status == "open" else "closed"
     return jsonify({
         "door_status": new_status,
@@ -88,9 +116,7 @@ def control_window():
     ok, msg = _hw_call("control_window", new_status)
     if not ok:
         return _hardware_error(msg)
-    db.update_status(window_status=new_status)
-    db.add_door_window_event("window", "客厅窗户", new_status)
-    _note_manual("window", status=new_status)
+    _record_window(new_status)
     action = "opened" if new_status == "open" else "closed"
     return jsonify({
         "window_status": new_status,
@@ -120,15 +146,13 @@ def get_light_status():
 def control_light():
     data = request.get_json(silent=True) or {}
     light_status = data.get("status", "off")
-    brightness = max(0, min(100, int(data.get("brightness", 0) or 0)))
+    brightness = _pct(data.get("brightness"), 0)
     if light_status == "on" and brightness == 0:
         brightness = 100
     ok, msg = _hw_call("control_light", light_status, brightness)
     if not ok:
         return _hardware_error(msg)
-    db.update_status(light_status=light_status, light_brightness=brightness)
-    db.add_light_event("客厅主灯", light_status, brightness)
-    _note_manual("light", status=light_status, brightness=brightness)
+    _record_light(light_status, brightness)
     return jsonify({
         "light_status": light_status,
         "light_brightness": brightness,
@@ -154,17 +178,58 @@ def get_fan_status():
 
 @bp.route("/api/fan", methods=["POST"])
 def control_fan():
-    speed = max(0, min(100, int((request.get_json(silent=True) or {}).get("speed", 0) or 0)))
+    speed = _pct((request.get_json(silent=True) or {}).get("speed"), 0)
     ok, msg = _hw_call("control_fan", speed)
     if not ok:
         return _hardware_error(msg)
-    db.update_status(fan_speed=speed)
-    _note_manual("fan", speed=speed)
+    _record_fan(speed)
     return jsonify({
         "fan_speed": speed,
         "message": f"风扇速度已设为 {speed}%",
         "message_en": f"Fan speed set to {speed}%",
     })
+
+
+# ==================== 语音动作回传（与面板等效）====================
+
+@bp.route("/api/devices/manual_report", methods=["POST"])
+def manual_report():
+    """语音助手执行完硬件动作后回传，做与面板一致的记账。
+
+    语音进程独占串口、直连 MCP，web 侧看不到它的调用，因此仪表盘状态/历史/
+    全屋模式都会落后于真实硬件。语音在动作成功后把「哪个设备变成什么状态」
+    回传到这里：本接口**只记账、不下发硬件**（动作已经执行完毕），使语音与
+    面板产生等效效果——相同状态、相同历史记录、同样切到「手动」模式。
+    """
+    data = request.get_json(silent=True) or {}
+    device = str(data.get("device", "")).lower()
+    who = "语音" if data.get("source") == "voice" else str(data.get("source") or "外部")
+
+    if device == "door":
+        status = "open" if data.get("status") == "open" else "closed"
+        _record_door(status, who=who)
+        return jsonify({"ok": True, "door_status": status})
+    if device == "window":
+        status = data.get("status")
+        if status not in ("open", "closed", "normal"):
+            return jsonify({"error": "无效状态"}), 400
+        _record_window(status)
+        return jsonify({"ok": True, "window_status": status})
+    if device == "light":
+        status = "on" if data.get("status") == "on" else "off"
+        brightness = _pct(data.get("brightness"), 0)
+        if status == "on" and brightness == 0:
+            brightness = 100
+        _record_light(status, brightness)
+        return jsonify({"ok": True, "light_status": status,
+                        "light_brightness": brightness})
+    if device == "fan":
+        speed = _pct(data.get("speed"), 0)
+        _record_fan(speed)
+        return jsonify({"ok": True, "fan_speed": speed})
+
+    return jsonify({"error": f"不支持的设备: {device or '(空)'}",
+                    "error_en": f"Unsupported device: {device or '(empty)'}"}), 400
 
 
 # ==================== 空调（虚拟设备：Module B 无空调执行器）====================

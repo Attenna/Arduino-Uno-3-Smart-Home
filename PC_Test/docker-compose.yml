@@ -67,6 +67,8 @@ services:
       # 多麦克风时用 docker compose exec voice python voice_assistant.py --list-mic
       # 查到索引后填到 .env 的 MIC_INDEX
       - SMART_HOME_MIC_INDEX=${MIC_INDEX:-}
+      # 语音动作回传仪表盘（状态/历史/全屋模式切手动，与面板等效）
+      - SMART_HOME_WEB_URL=http://web:5000
     ports:
       - "${VOICE_PORT:-8101}:8101"
     restart: unless-stopped
@@ -89,6 +91,8 @@ services:
       - TZ=${TZ:-Asia/Shanghai}
       # 硬件控制/人脸开门 → voice 容器 POST /tool（静默，不经语音播报）
       - SMART_HOME_HW_RELAY=http://voice:8101
+      # 摄像头实时画面 → camera 容器的 MJPEG（人脸识别页面走 /api/camera/stream 同源代理）
+      - SMART_HOME_CAMERA_URL=http://camera:8080/video_feed
     ports:
       - "${WEB_PORT:-5000}:5000"
     restart: unless-stopped

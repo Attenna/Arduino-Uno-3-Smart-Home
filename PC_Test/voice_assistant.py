@@ -25,6 +25,7 @@ import os
 import re
 import sys
 import time
+import urllib.request
 from typing import Optional
 
 import yaml
@@ -33,6 +34,77 @@ import yaml
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 PC_TEST_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+# ==================== 语音动作回传 web（与面板等效）====================
+# 语音进程独占串口、直连 MCP，web 仪表盘看不到这些调用，状态/历史/全屋模式会
+# 落后于真实硬件。动作成功后把结果回传 web（只记账、不重复下发硬件），使语音
+# 与面板效果一致。容器内用 SMART_HOME_WEB_URL=http://web:5000。
+WEB_URL = os.environ.get("SMART_HOME_WEB_URL", "http://127.0.0.1:5000").rstrip("/")
+
+
+def _pct255(value, default=0):
+    """MCP 工具用 0~255 表示亮度/转速，面板用百分比。"""
+    try:
+        return max(0, min(100, round(int(value) * 100 / 255)))
+    except (TypeError, ValueError):
+        return default
+
+
+def voice_action_payload(name, args):
+    """把 MCP 工具调用翻译成面板等效的记账请求；无关工具返回 None。"""
+    args = args or {}
+    action = str(args.get("action", "")).lower()
+
+    if name == "door":
+        if action not in ("open", "close"):
+            return None
+        return {"device": "door", "status": "open" if action == "open" else "closed"}
+
+    if name == "window":
+        if action not in ("open", "close", "normal"):
+            return None
+        status = {"open": "open", "close": "closed", "normal": "normal"}[action]
+        return {"device": "window", "status": status}
+
+    if name == "light":
+        if action == "off":
+            return {"device": "light", "status": "off", "brightness": 0}
+        if action in ("on", "white", "red", "green", "blue",
+                      "yellow", "purple", "cyan", "rgb"):
+            # 彩色指令面板不跟踪颜色，只记为「开」+亮度
+            brightness = _pct255(args.get("value"), 100) or 100
+            return {"device": "light", "status": "on", "brightness": brightness}
+        return None
+
+    if name == "fan":
+        if action == "off":
+            return {"device": "fan", "speed": 0}
+        if action == "on":
+            return {"device": "fan", "speed": 100}
+        if action == "set_speed":
+            return {"device": "fan", "speed": _pct255(args.get("value"), 50)}
+        return None
+
+    return None
+
+
+def report_voice_action(name, args, timeout=3.0):
+    """把语音动作回传 web；失败只提示，不影响语音主流程。"""
+    payload = voice_action_payload(name, args)
+    if payload is None:
+        return
+    payload["source"] = "voice"
+    try:
+        req = urllib.request.Request(
+            f"{WEB_URL}/api/devices/manual_report",
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            headers={"Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            resp.read()
+        print(f"[回传] 已同步到仪表盘: {payload}", flush=True)
+    except Exception as e:                               # noqa: BLE001
+        print(f"[回传] 仪表盘同步失败（不影响硬件动作）: {e}", flush=True)
 
 
 # ==================== 配置加载 ====================
@@ -614,6 +686,11 @@ class VoiceAssistant:
                 except Exception as e:
                     result_text = f"error: 工具执行异常 {e}"
                 print(f"[工具] {name} -> {result_text}", flush=True)
+                if not result_text.lower().startswith("error"):
+                    # 与面板等效：把动作结果同步给仪表盘（状态/历史/切手动）。
+                    # 只对语音自己发起的调用回传；web 经 /tool 转发的不回传，
+                    # 否则面板的自动调节会被误判成「用户手动操作」。
+                    await asyncio.to_thread(report_voice_action, name, args)
                 messages.append({"role": "tool", "tool_call_id": tc["id"],
                                  "content": result_text})
         self.tts.flush()

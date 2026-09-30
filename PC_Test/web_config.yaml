@@ -23,6 +23,12 @@ door:
   # start_all.py 会用环境变量 SMART_HOME_HW_RELAY 自动注入；手动联跑时可在此填写。
   # relay_url: "http://127.0.0.1:8101"
 
+# ── 摄像头实时画面（人脸识别页面 /api/camera/stream 同源代理）──────────────
+# 环境变量 SMART_HOME_CAMERA_URL 优先于这里（Docker 里为 http://camera:8080/video_feed，
+# 桌面 start_all.py 会自动注入 http://127.0.0.1:<camera_port>/video_feed）。
+camera:
+  stream_url: "http://127.0.0.1:8080/video_feed"
+
 # ── 人脸识别 ────────────────────────────────────────────────────────────
 # simulation_mode=true：无模型时返回模拟人脸（FACE001/002/003），前端可演示。
 # false：加载 models/face/yolov8n-face.pt 做真实 YOLOv8 人脸检测；
