@@ -106,15 +106,25 @@ _A_REOPEN_BASE_DELAY = 1.0     # 首次重连等待（秒），之后指数退�
 _A_REOPEN_MAX_DELAY = 10.0
 _A_ERR_SUMMARY_INTERVAL = 30.0  # 持续故障时摘要日志最小间隔（秒）
 
+# B 板：命令响应超时 / 空闲心跳 / 连续失败多少次才重开
+_B_CMD_TIMEOUT = 0.8
+_B_HEARTBEAT_S = 10.0
+_B_HB_FAILS_TO_REOPEN = 3       # 单次抖动不重开：重开会经 DTR 复位 B 板
+
 
 class HomeController:
     """独占 A/B 串口；A 板后台读线程缓存状态；B 板同步发命令。"""
 
-    def __init__(self, ser_a=None, ser_b=None, port_a: Optional[str] = None):
+    def __init__(self, ser_a=None, ser_b=None, port_a: Optional[str] = None,
+                 port_b: Optional[str] = None):
         self.ser_a = ser_a
         # port_a 仅 A 板读线程重连用（必须是 by-id 等稳定路径）
         self.port_a = port_a
         self.ser_b = ser_b
+        # port_b 记下稳定路径，句柄损坏后仍能重开（原先只能从当前句柄取端口名，
+        # 句柄一旦被清成 None 就再也开不回来）
+        self.port_b = port_b or (getattr(ser_b, "port", None)
+                                 if ser_b is not None else None)
         self._b_lock = threading.Lock()
         self._snapshot_lock = threading.Lock()
         self._snapshot: dict = {}
@@ -130,10 +140,49 @@ class HomeController:
         self._a_err_first_ts = 0.0
         self._a_err_last_log = 0.0
         self._a_reopen_delay = _A_REOPEN_BASE_DELAY
+
+        # ── B 板：常驻读取线程 + 等待者表（与 A 板同构）──
+        # B 板串口也必须**只有一个读者**。原先"发一条等一条"内联读，没有命令时
+        # B 板的主动上报（复位横幅 ready / 引脚自愈 alert / state）无人消费，会被
+        # 清缓冲静默丢掉。现在读写彻底分开：
+        #   写：_send_b 持 _b_lock → 登记等待者 → 写 → 等事件（超时/被唤醒）
+        #   读：_read_b_loop 常驻消费，按 type 分类，命中等待者就唤醒
+        self._b_thread: Optional[threading.Thread] = None
+        self._b_maint_thread: Optional[threading.Thread] = None
+        self._b_stop = threading.Event()
+        self._b_resp_lock = threading.Lock()
+        self._b_resp_event = threading.Event()
+        self._b_resp: Optional[dict] = None
+        self._b_expect: tuple = ()
+        self._b_waiter = False
+        self._b_last_frame_ts = 0.0
+        self._b_last_cmd_ts = 0.0
+        self._b_hb_fails = 0
+        # B 板故障状态（仅读线程访问）
+        self._b_err_count = 0
+        self._b_err_first_ts = 0.0
+        self._b_err_last_log = 0.0
+        # 串口健康度（供 get_serial_health）
+        self._b_reopen_count = 0
+        self._b_reset_count = 0        # 收到的 ready 帧数 = B 板复位/重启次数
+        self._b_last_reset_ts = 0.0
+        self._b_alert_count = 0
+        self._b_last_alert = ""
+        self._b_last_alert_ts = 0.0
+        self._b_last_state: dict = {}
+
         if self.ser_a is not None:
             self._a_thread = threading.Thread(
                 target=self._read_a_loop, daemon=True, name="module-a-reader")
             self._a_thread.start()
+        if self.ser_b is not None:
+            self._b_thread = threading.Thread(
+                target=self._read_b_loop, daemon=True, name="module-b-reader")
+            self._b_thread.start()
+            self._b_maint_thread = threading.Thread(
+                target=self._b_maintenance_loop, daemon=True,
+                name="module-b-maintenance")
+            self._b_maint_thread.start()
 
     # ── A 板读取线程 ──
     def _note_a_ok(self) -> None:
@@ -303,104 +352,210 @@ class HomeController:
               file=sys.stderr)
 
     # ── B 板发命令 + 收响应 ──
-    def _send_b(self, cmd: dict) -> str:
-        """发命令给 Module B；超时则重开串口自愈后重试。
+    def _send_b(self, cmd: dict, allow_reopen: bool = True,
+                expect: tuple = ("response",)) -> str:
+        """发命令给 Module B；超时则（可选）重开串口自愈后重试一次。
 
-        2026-09-30 实测故障：B 板一旦复位（DTR 抖动 / 舵机堵转掉电）或串口
-        状态错乱，后续所有指令都会 100% 返回「B 板响应超时」，直到语音容器
-        重启才恢复。这里在超时后主动 close+open 串口——Uno 会因 DTR 复位并
-        重新启动，等待其就绪后重试，使故障自愈而无需人工重启容器。
+        响应由常驻读取线程 _read_b_loop 收下并按等待者唤醒，本方法只负责
+        「登记等待者 → 写 → 等事件」。心跳走 allow_reopen=False + expect=("state",)：
+        重开会经 DTR 复位 B 板，单次抖动不该触发。
         """
         if self.ser_b is None:
             return "error: Module B 未连接，无法执行硬件操作"
         line = json.dumps(cmd, ensure_ascii=False) + "\n"
         with self._b_lock:
-            result = "error: B 板响应超时"
-            for attempt in range(2):
-                result = self._send_b_once(line)
-                if not result.startswith("error: B 板响应超时"):
-                    return result
-                if attempt == 0:
-                    self._reopen_b()
+            result = self._send_b_once(line, expect=expect)
+            if allow_reopen and result.startswith("error: B 板响应超时"):
+                self._reopen_b()
+                result = self._send_b_once(line, expect=expect)
             return result
 
-    def _log_b_async(self) -> None:
-        """把串口里已到达的异步帧（ready 复位横幅 / alert 引脚自愈告警 / state）捞出来打日志。
+    def _send_b_once(self, line: str, expect: tuple = ("response",),
+                     timeout: float = _B_CMD_TIMEOUT) -> str:
+        """写一条命令并等它的响应帧（调用方需持有 _b_lock）。
 
-        这些帧不参与命令响应匹配。必须在 reset_input_buffer() 丢掉之前读走，否则
-        风扇引脚自愈告警会被静默吞掉、失去取证价值。只读已到达的字节，不阻塞；
-        半行/噪声解析失败就忽略，不制造误导日志。
+        只等 ``expect`` 里列出的帧类型：普通命令等 response，心跳等 state（B 板的
+        system/status 回的是 state 帧，不是 response）。迟到的旧响应不会被当成本次
+        结果——读取线程见「无等待者」就直接丢弃并记录。
         """
         if self.ser_b is None:
-            return
+            return "error: Module B 未连接"
+        with self._b_resp_lock:
+            self._b_resp = None
+            self._b_expect = expect
+            self._b_waiter = True
+            self._b_resp_event.clear()
         try:
-            n = self.ser_b.in_waiting
-            if not n:
-                return
-            data = self.ser_b.read(n)
+            self.ser_b.write(line.encode("utf-8"))
+            self._b_last_cmd_ts = time.time()
         except Exception as e:                       # noqa: BLE001
-            print(f"[B] 读取异步帧失败: {e}", file=sys.stderr, flush=True)
-            return
-        for raw in data.split(b"\n"):
+            with self._b_resp_lock:
+                self._b_waiter = False
+                self._b_expect = ()
+            return f"error: 串口写入失败 {e}"
+        got = self._b_resp_event.wait(timeout)
+        with self._b_resp_lock:
+            self._b_waiter = False
+            self._b_expect = ()
+            resp = self._b_resp
+            self._b_resp = None
+        if not got or resp is None:
+            return "error: B 板响应超时"
+        if resp.get("type") != "response":
+            return "ok"                     # state 等非 response 帧即代表链路通
+        if resp.get("result") == "ok":
+            return "ok"
+        return f"error: B 板返回 {resp}"
+
+    # ── B 板常驻读取线程（串口唯一读者）──
+    def _note_b_error(self, e: Exception) -> None:
+        """B 板读异常限频：首条立即、持续时按窗口打摘要，避免刷屏掩盖问题。"""
+        now = time.time()
+        if self._b_err_count == 0:
+            self._b_err_count = 1
+            self._b_err_first_ts = now
+            self._b_err_last_log = now
+            print(f"[B] 读线程异常: {e}", file=sys.stderr, flush=True)
+        else:
+            self._b_err_count += 1
+            if now - self._b_err_last_log >= _A_ERR_SUMMARY_INTERVAL:
+                self._b_err_last_log = now
+                print(f"[B] 读异常持续中：近 {self._b_err_count} 次 / "
+                      f"{now - self._b_err_first_ts:.0f}s，最近: "
+                      f"{type(e).__name__}: {str(e)[:80]}",
+                      file=sys.stderr, flush=True)
+
+    def _read_b_loop(self) -> None:
+        """B 板唯一读者：把所有上行帧按 type 分类，命中等待者就唤醒。
+
+        不重开串口（重开由 _send_b 超时路径或心跳线程持 _b_lock 执行）；异常限频记录
+        后继续读，句柄被重开后自动续上新的 self.ser_b。
+        """
+        while not self._b_stop.is_set():
+            ser = self.ser_b
+            if ser is None:
+                self._b_stop.wait(0.5)
+                continue
+            try:
+                raw = ser.readline()
+            except Exception as e:                   # noqa: BLE001
+                self._note_b_error(e)
+                self._b_stop.wait(0.5)
+                continue
+            if not raw:
+                continue
             text = raw.decode("utf-8", "replace").strip()
             if not text:
                 continue
+            if self._b_err_count:
+                print(f"[B] 读取恢复正常（此前连续 {self._b_err_count} 次异常）",
+                      file=sys.stderr, flush=True)
+                self._b_err_count = 0
+            self._b_last_frame_ts = time.time()
             try:
                 msg = json.loads(text)
             except json.JSONDecodeError:
+                print(f"[B] 非JSON行: {text[:120]}", file=sys.stderr, flush=True)
                 continue
-            mtype = msg.get("type")
-            if mtype == "alert":
-                print(f"[B] ⚠ 告警: {text}", file=sys.stderr, flush=True)
-            elif mtype == "response":
-                print(f"[B] 迟到的响应(上一命令超时遗留): {text}",
-                      file=sys.stderr, flush=True)
-            else:
-                print(f"[B] 异步帧: {text}", file=sys.stderr, flush=True)
+            self._dispatch_b_frame(msg, text)
 
-    def _send_b_once(self, line: str) -> str:
-        """单次下发：写命令并等 0.8s 读命令响应（调用方需持有 _b_lock）。
+    def _dispatch_b_frame(self, msg: dict, text: str) -> None:
+        """按 type 分类一帧：response/state 唤醒等待者，ready/alert 记账并上报。"""
+        mtype = msg.get("type")
+        if mtype == "response":
+            with self._b_resp_lock:
+                if self._b_waiter and "response" in self._b_expect:
+                    self._b_resp = msg
+                    self._b_resp_event.set()
+                    return
+            print(f"[B] 迟到的响应（已无等待者，丢弃）: {text}",
+                  file=sys.stderr, flush=True)
+        elif mtype == "state":
+            self._b_last_state = msg
+            with self._b_resp_lock:
+                if self._b_waiter and "state" in self._b_expect:
+                    self._b_resp = msg
+                    self._b_resp_event.set()
+        elif mtype == "ready":
+            # 上电或串口 DTR 复位都会发这条：计数即 B 板复位次数
+            self._b_reset_count += 1
+            self._b_last_reset_ts = time.time()
+            print(f"[B] 复位/就绪 #{self._b_reset_count}: {text}",
+                  file=sys.stderr, flush=True)
+        elif mtype == "alert":
+            self._b_alert_count += 1
+            self._b_last_alert = text
+            self._b_last_alert_ts = time.time()
+            print(f"[B] ⚠ 告警: {text}", file=sys.stderr, flush=True)
+        else:
+            print(f"[B] 未知帧: {text[:120]}", file=sys.stderr, flush=True)
 
-        只认 ``type == "response"``：B 板复位横幅(ready)/引脚自愈告警(alert)/状态(state)
-        都是异步帧，既不能当命令结果，也不能因为混进来就误判成失败——跳过并记录，
-        继续等真正的响应。
+    # ── B 板空闲心跳：久无流量时周期探测，连续失败才退避重开 ──
+    def _b_maintenance_loop(self) -> None:
+        """空闲期维护：超过一个心跳周期没有 B 板流量，就发一次只读 system/status。
+
+        连续失败 _B_HB_FAILS_TO_REOPEN 次才重开（单次抖动不重开，避免 DTR 反复复位
+        B 板）；心跳是只读命令，不改变任何执行器状态。
         """
-        try:
-            self._log_b_async()          # 先捞走残留异步帧，再发本次命令
-            self.ser_b.write(line.encode("utf-8"))
-            deadline = time.time() + 0.8
-            while time.time() < deadline:
-                raw = self.ser_b.readline()
-                if not raw:
-                    continue
-                text = raw.decode("utf-8", "replace").strip()
-                if not text:
-                    continue
-                try:
-                    resp = json.loads(text)
-                except json.JSONDecodeError:
-                    return f"ok (非JSON回显: {text})"
-                if resp.get("type") != "response":
-                    print(f"[B] 异步帧: {text}", file=sys.stderr, flush=True)
-                    continue
-                if resp.get("result") == "ok":
-                    return "ok"
-                return f"error: B 板返回 {resp}"
-            return "error: B 板响应超时"
-        except Exception as e:
-            return f"error: 串口写入失败 {e}"
+        while not self._b_stop.wait(_B_HEARTBEAT_S):
+            if time.time() - self._b_last_frame_ts < _B_HEARTBEAT_S:
+                continue                      # 刚才有帧，等价于一次心跳
+            text = self._send_b({"cmd": "system", "action": "status"},
+                                allow_reopen=False, expect=("state",))
+            if text.startswith("error"):
+                self._b_hb_fails += 1
+                print(f"[B] 心跳失败 {self._b_hb_fails}/{_B_HB_FAILS_TO_REOPEN} 次: "
+                      f"{text}", file=sys.stderr, flush=True)
+                if self._b_hb_fails >= _B_HB_FAILS_TO_REOPEN:
+                    self._b_hb_fails = 0
+                    with self._b_lock:
+                        self._reopen_b()
+            elif self._b_hb_fails:
+                print(f"[B] 心跳恢复正常（此前连续失败 {self._b_hb_fails} 次）",
+                      file=sys.stderr, flush=True)
+                self._b_hb_fails = 0
+
+    def serial_health(self) -> str:
+        """串口链路健康度快照（只读，供 get_serial_health / 排障）。"""
+        now = time.time()
+        return json.dumps({
+            "a": {
+                "connected": self.ser_a is not None,
+                "read_err_streak": self._a_err_count,
+            },
+            "b": {
+                "connected": self.ser_b is not None,
+                "port": self.port_b,
+                "reopen_count": self._b_reopen_count,
+                "reset_count": self._b_reset_count,
+                "last_reset_ago_s": (round(now - self._b_last_reset_ts, 1)
+                                     if self._b_last_reset_ts else None),
+                "alert_count": self._b_alert_count,
+                "last_alert": self._b_last_alert,
+                "last_alert_ago_s": (round(now - self._b_last_alert_ts, 1)
+                                     if self._b_last_alert_ts else None),
+                "heartbeat_fails": self._b_hb_fails,
+                "read_err_streak": self._b_err_count,
+                "last_frame_ago_s": (round(now - self._b_last_frame_ts, 1)
+                                     if self._b_last_frame_ts else None),
+                "last_state": self._b_last_state,
+            },
+        }, ensure_ascii=False)
 
     def _reopen_b(self) -> None:
         """重开 B 板串口（调用方需持有 _b_lock）。
 
-        Uno 在串口 open 时会因 DTR 拉低而复位，需留足 2s 等 bootloader 退出
-        再清空启动横幅，否则复位期间写入的命令会被丢弃。
+        Uno 在串口 open 时会因 DTR 拉低而复位，需留足 2s 等 bootloader 退出再发命令，
+        否则复位期间写入的命令会被丢弃。端口名优先用构造时记下的 port_b，句柄被清成
+        None 后仍能重开。**不清输入缓冲**：复位横幅(ready)要留给读取线程计数上报，
+        帧分类已经由读取线程负责，不再需要靠清缓冲来避免误匹配。
         """
-        port = getattr(self.ser_b, "port", None)
+        port = self.port_b or getattr(self.ser_b, "port", None)
         try:
             self.ser_b.close()
         except Exception:                            # noqa: BLE001
             pass
+        self._b_reopen_count += 1
         if not port:
             print("[B] 串口重开失败：未知端口名", file=sys.stderr)
             self.ser_b = None
@@ -409,8 +564,8 @@ class HomeController:
             time.sleep(0.2)
             self.ser_b = serial.Serial(port, BAUD, timeout=1)
             time.sleep(2.0)
-            self.ser_b.reset_input_buffer()
-            print(f"[B] 响应超时，串口已重开自愈: {port}", file=sys.stderr)
+            print(f"[B] 串口已重开自愈（第 {self._b_reopen_count} 次）: {port}",
+                  file=sys.stderr)
         except Exception as e:                       # noqa: BLE001
             print(f"[B] 串口重开失败: {e}", file=sys.stderr)
             # 重开失败：清掉损坏句柄，后续调用明确返回「Module B 未连接」
@@ -653,6 +808,13 @@ async def get_sensor_status() -> str:
     return await asyncio.to_thread(HOME.handle_get_sensor_status)
 
 
+@mcp.tool()
+async def get_serial_health() -> str:
+    """查询串口链路健康度（只读，排障用）：A/B 板连接状态、B 板复位次数、最近引脚告警、心跳失败数。"""
+    _audit("get_serial_health")
+    return await asyncio.to_thread(HOME.serial_health)
+
+
 # ==================== 入口 ====================
 
 def main():
@@ -687,9 +849,9 @@ def main():
         if not ser_a and not ser_b:
             print("[警告] 未连接任何 Arduino 模块；工具将返回错误信息。", file=sys.stderr)
 
-    HOME = HomeController(ser_a=ser_a, ser_b=ser_b, port_a=port_a)
-    print("[MCP] 暴露 10 个工具：light/door/window/fan/buzzer/oled/display/ir/ac"
-          "/get_sensor_status", file=sys.stderr)
+    HOME = HomeController(ser_a=ser_a, ser_b=ser_b, port_a=port_a, port_b=port_b)
+    print("[MCP] 暴露 11 个工具：light/door/window/fan/buzzer/oled/display/ir/ac"
+          "/get_sensor_status/get_serial_health", file=sys.stderr)
     print("[MCP] stdio 传输已就绪，等待 client。", file=sys.stderr)
     mcp.run(transport="stdio")
 
