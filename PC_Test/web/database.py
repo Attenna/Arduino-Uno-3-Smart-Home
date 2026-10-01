@@ -110,6 +110,11 @@ class SmartHomeDB:
                                             'ac_swing_ud','ac_swing_lr','ac_eco','ac_fzc')}
             extra.update({k: 'TEXT' for k in ('buzzer_status','sensor_last_seen','output_last_seen',
                                               'ac_status','ac_mode','ac_fan')})
+            # B 板硬件回读（P1）：与上面的「命令下发值」并列存放。两者不一致就说明
+            # 指令没真正落到硬件上（"面板 0% 但风扇在转"这类静默失效），面板据此告警。
+            extra.update({k: 'INTEGER' for k in ('rb_fan_speed','rb_light_brightness')})
+            extra.update({k: 'TEXT' for k in ('rb_door_status','rb_window_status',
+                                              'rb_buzzer_status','rb_seen_at')})
             extra.update({k: 'REAL' for k in ('ac_temperature','ac_timer')})
             columns = {r['name'] for r in c.execute('PRAGMA table_info(system_status)')}
             for key, kind in extra.items():
@@ -212,6 +217,20 @@ class SmartHomeDB:
             with self.connection() as c:
                 self._update(c, values)
         return self.get_current_status()
+
+    def set_output_readback(self, values: dict, seen_at=None) -> None:
+        """写入 B 板「硬件回读」快照（独立于命令下发值，便于对比出不一致）。
+
+        values 用 rb_ 前缀列；只接受白名单键，空输入直接忽略（不写坏数据）。
+        """
+        allowed = {'rb_fan_speed', 'rb_door_status', 'rb_window_status',
+                   'rb_light_brightness', 'rb_buzzer_status'}
+        data = {k: v for k, v in (values or {}).items() if k in allowed}
+        if not data:
+            return
+        data['rb_seen_at'] = seen_at or utcnow()
+        with self.connection() as c:
+            self._update(c, data)
 
     def ingest_sensor(self, message):
         if message.get('module') != 'sensor' or message.get('type') != 'data':

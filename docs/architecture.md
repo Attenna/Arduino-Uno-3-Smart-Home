@@ -77,7 +77,7 @@
 
 **关键设计：串口归属唯一**。A/B 串口同一时刻只能一个进程占用，因此：
 
-- **串口归 voice 容器**：`mcp_home_server.py` 作为其子进程独占串口，暴露 11 个工具；
+- **串口归 voice 容器**：`mcp_home_server.py` 作为其子进程独占串口，暴露 12 个工具；
 - **web 容器不碰串口**（以 `--no-serial` 看板模式运行）：
   - 设备控制 / 人脸自动开门 → 经内网 `POST http://voice:8101/tool` 静默转发（不经 LLM、不发语音）；
   - 摄像头画面 → 经 `http://camera:8080/video_feed` 同源代理；

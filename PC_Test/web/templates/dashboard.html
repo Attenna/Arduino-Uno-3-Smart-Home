@@ -30,7 +30,7 @@
             <span data-i18n="system.online">系统在线</span>
             <span id="currentTime" class="time-display">--:--:--</span>
         </div>
-        <button class="lang-switch" onclick="setLang(I18N.currentLang === 'zh' ? 'en' : 'zh')" ><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <button class="lang-switch" onclick="toggleDashboardLang()" ><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <circle cx="12" cy="12" r="10"/>
                 <line x1="2" y1="12" x2="22" y2="12"/>
                 <path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/>
@@ -44,6 +44,11 @@
 
     <!-- 主内容区域 -->
     <main class="main-content">
+        <!-- 硬件回读一致性指示器：B 板回读值 vs 命令下发值（后端已做防误报） -->
+        <div id="mismatchIndicator" class="mismatch-indicator na">
+            <div class="mismatch-row" data-i18n="mismatch.unavailable">硬件回读不可用</div>
+        </div>
+
         <!-- 第一行: 核心状态卡片 -->
         <div class="dashboard-grid">
             <!-- 温湿度卡片 -->
@@ -109,6 +114,11 @@
                             <input type="range" id="fanSpeed" min="0" max="100" value="0" class="slider slider-fan">
                             <span class="slider-value" id="fanSpeedValue">0%</span>
                         </div>
+                    </div>
+                    <!-- B 板硬件回读（真值）；无回读时隐藏 -->
+                    <div class="fan-readback hidden" id="fanReadback">
+                        <span data-i18n="fan.readback">回读</span>
+                        <span id="fanReadbackValue">--%</span>
                     </div>
                     <div class="btn-group">
                         <button class="btn btn-sm" onclick="setFan(0)" data-i18n="fan.off">关闭</button>
@@ -323,6 +333,6 @@
     </main>
 
     <script src="{{ url_for('static', filename='js/lang.js') }}"></script>
-    <script src="{{ url_for('static', filename='js/main.js') }}?v=20261001c"></script>
+    <script src="{{ url_for('static', filename='js/main.js') }}?v=20261002a"></script>
 </body>
 </html>

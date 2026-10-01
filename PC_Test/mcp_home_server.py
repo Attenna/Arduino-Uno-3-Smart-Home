@@ -172,6 +172,7 @@ class HomeController:
         self._b_last_alert = ""
         self._b_last_alert_ts = 0.0
         self._b_last_state: dict = {}
+        self._b_last_state_ts = 0.0
 
         if self.ser_a is not None:
             self._a_thread = threading.Thread(
@@ -493,6 +494,7 @@ class HomeController:
                   file=sys.stderr, flush=True)
         elif mtype == "state":
             self._b_last_state = msg
+            self._b_last_state_ts = time.time()
             with self._b_resp_lock:
                 if self._b_waiter and "state" in self._b_expect:
                     self._b_resp = msg
@@ -563,6 +565,19 @@ class HomeController:
                                      if self._b_last_frame_ts else None),
                 "last_state": self._b_last_state,
             },
+        }, ensure_ascii=False)
+
+    def output_state(self) -> str:
+        """B 板（执行器）硬件回读快照：来自心跳 system/status 的 state 帧。
+
+        与「命令下发值」不同，这是 B 板自己的实际电平。用它对比指令值，就能暴露
+        「面板显示 0% 而风扇在转」这类静默失效（以前 B 板不上报，根本看不出来）。
+        """
+        now = time.time()
+        return json.dumps({
+            "state": dict(self._b_last_state),
+            "age_s": (round(now - self._b_last_state_ts, 1)
+                      if self._b_last_state_ts else None),
         }, ensure_ascii=False)
 
     def _reopen_b(self) -> None:
@@ -840,6 +855,13 @@ async def get_serial_health() -> str:
     return await asyncio.to_thread(HOME.serial_health)
 
 
+@mcp.tool()
+async def get_output_state() -> str:
+    """查询 B 板（执行器）硬件回读状态：门/窗/风扇/灯/蜂鸣器的实际电平 + 观测时刻（只读）。"""
+    _audit("get_output_state")
+    return await asyncio.to_thread(HOME.output_state)
+
+
 # ==================== 入口 ====================
 
 def main():
@@ -875,8 +897,8 @@ def main():
             print("[警告] 未连接任何 Arduino 模块；工具将返回错误信息。", file=sys.stderr)
 
     HOME = HomeController(ser_a=ser_a, ser_b=ser_b, port_a=port_a, port_b=port_b)
-    print("[MCP] 暴露 11 个工具：light/door/window/fan/buzzer/oled/display/ir/ac"
-          "/get_sensor_status/get_serial_health", file=sys.stderr)
+    print("[MCP] 暴露 12 个工具：light/door/window/fan/buzzer/oled/display/ir/ac"
+          "/get_sensor_status/get_serial_health/get_output_state", file=sys.stderr)
     print("[MCP] stdio 传输已就绪，等待 client。", file=sys.stderr)
     mcp.run(transport="stdio")
 

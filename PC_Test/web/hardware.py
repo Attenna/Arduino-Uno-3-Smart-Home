@@ -52,6 +52,9 @@ class McpHardwareBridge:
         self.port_a = serial_cfg.get("port_a") or "auto"
         self.port_b = serial_cfg.get("port_b") or "auto"
         self.poll_interval = float(cfg.get("sensor_poll_interval", 2.0))
+        # B 板硬件回读轮询间隔：与 voice 侧心跳（10s）同频即可——回读值来自心跳
+        # 缓存的 state 帧，这里只是搬运，不额外占用串口。
+        self.readback_interval = float(cfg.get("readback_interval", 10.0))
         # 串口归语音助手时（如 start_all 联动启动），硬件调用经其 POST /tool 转发。
         # 环境变量 SMART_HOME_HW_RELAY 优先，其次 web_config.yaml: door.relay_url。
         relay = (os.environ.get("SMART_HOME_HW_RELAY")
@@ -209,6 +212,7 @@ class McpHardwareBridge:
         voice 不可用时按指数退避（2→4→…→30s），避免故障期高频打爆/刷日志。
         """
         fail_streak = 0
+        last_readback = 0.0
         while not self._stopping:
             ok, text = self._relay_call("get_sensor_status", {}, timeout=15)
             if ok:
@@ -220,6 +224,15 @@ class McpHardwareBridge:
                     self._ingest_events(payload.get("recent_events") or [])
                 except json.JSONDecodeError:
                     pass
+                # 硬件回读（低频）：把 B 板实际电平写进 rb_* 列，供面板对比出不一致
+                if time.time() - last_readback >= self.readback_interval:
+                    last_readback = time.time()
+                    readback = self.read_output_state()
+                    if readback:
+                        try:
+                            self.db.set_output_readback(readback)
+                        except Exception as e:           # noqa: BLE001
+                            logger.debug("[硬件桥] 硬件回读写库失败: %s", e)
             else:
                 fail_streak += 1
                 self._set_online(False, text)
@@ -236,6 +249,38 @@ class McpHardwareBridge:
         if fail_streak <= 0:
             return float(base)
         return min(float(base) * (2 ** fail_streak), 30.0)
+
+    def read_output_state(self) -> dict | None:
+        """读 B 板「硬件回读」快照，归一化成与命令下发值同构的 rb_* 字段。
+
+        B 板的 state 帧给的是原始电平（fan 0/255、light 0~255、door open/closed），
+        这里换算成百分比/文本，才能和 db.fan_speed、light_brightness 直接对比。
+        取值失败返回 None，绝不写坏数据。
+        """
+        ok, text = self.call_tool("get_output_state", {}, timeout=5)
+        if not ok:
+            return None
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError:
+            return None
+        state = payload.get("state") or {}
+        if not state:
+            return None
+
+        def _pct(raw, full):
+            try:
+                return max(0, min(100, round(int(raw) * 100 / full)))
+            except (TypeError, ValueError):
+                return None
+
+        return {
+            "rb_fan_speed": _pct(state.get("fan"), 255),
+            "rb_light_brightness": _pct(state.get("light"), 255),
+            "rb_door_status": state.get("door"),
+            "rb_window_status": state.get("window"),
+            "rb_buzzer_status": state.get("buzzer"),
+        }
 
     def _ingest_snapshot(self, snap: dict) -> None:
         ts = snap.get("timestamp")

@@ -41,6 +41,18 @@ const I18N = {
             'fan.low': '低速',
             'fan.medium': '中速',
             'fan.high': '高速',
+            'fan.readback': '回读',
+
+            // 硬件回读一致性（B 板真值 vs 命令下发值）
+            'mismatch.unavailable': '硬件回读不可用',
+            'mismatch.ok': '硬件回读一致',
+            'mismatch.title': '硬件与指令不一致',
+            'mismatch.cmd': '指令',
+            'mismatch.rb': '回读',
+            'mismatch.dev_fan': '风扇',
+            'mismatch.dev_light': '灯光',
+            'mismatch.dev_door': '门',
+            'mismatch.dev_window': '窗',
 
             // 门窗
             'door.title': '门窗状态',
@@ -285,6 +297,18 @@ const I18N = {
             'fan.low': 'Low',
             'fan.medium': 'Medium',
             'fan.high': 'High',
+            'fan.readback': 'Readback',
+
+            // Hardware readback consistency (B-board truth vs commanded value)
+            'mismatch.unavailable': 'Hardware readback unavailable',
+            'mismatch.ok': 'Hardware readback in sync',
+            'mismatch.title': 'Hardware ≠ command',
+            'mismatch.cmd': 'cmd',
+            'mismatch.rb': 'readback',
+            'mismatch.dev_fan': 'Fan',
+            'mismatch.dev_light': 'Light',
+            'mismatch.dev_door': 'Door',
+            'mismatch.dev_window': 'Window',
 
             // Door & Window
             'door.title': 'Door & Window Status',

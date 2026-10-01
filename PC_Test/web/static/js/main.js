@@ -6,6 +6,7 @@ let currentLang = localStorage.getItem('smart_home_lang') || 'zh';
 let isOnline = true;           // 网络连接状态
 let lastStatusUpdate = Date.now();
 let pendingRequests = new Set(); // 跟踪进行中请求，防止并发堆积
+let lastStatus = null;         // 缓存最近一次 /api/status，供语言切换时重渲染指示器
 
 // 空调最后一次成功下发的状态（来自 /api/status 回显），供"合并式"操作补齐
 let acState = { power: false, mode: 'auto', temperature: 26, fan: 'auto',
@@ -254,6 +255,7 @@ async function loadStatus() {
     }
 
     lastStatusUpdate = Date.now();
+    lastStatus = data;
     updateDashboard(data);
 }
 
@@ -272,6 +274,17 @@ function updateDashboard(data) {
     if (fanSlider && document.activeElement !== fanSlider) fanSlider.value = fanSpeed;
     const fanLabel = document.getElementById('fanSpeedValue');
     if (fanLabel) fanLabel.textContent = fanSpeed + '%';
+    // 风扇硬件回读（B 板真值）：仅在有回读时显示小号文字
+    const fanRbRow = document.getElementById('fanReadback');
+    const fanRbVal = document.getElementById('fanReadbackValue');
+    if (fanRbRow && fanRbVal) {
+        if (data.rb_fan_speed === null || data.rb_fan_speed === undefined) {
+            fanRbRow.classList.add('hidden');
+        } else {
+            fanRbRow.classList.remove('hidden');
+            fanRbVal.textContent = data.rb_fan_speed + '%';
+        }
+    }
     const blades = document.getElementById('fanBlades');
     if (blades) {
         blades.classList.remove('spinning', 'spinning-slow', 'spinning-medium', 'spinning-fast');
@@ -352,10 +365,64 @@ function updateDashboard(data) {
     const acPowerBtn = document.getElementById('acPowerBtn');
     if (acPowerBtn) acPowerBtn.textContent = t(acState.power ? 'ac.power_off' : 'ac.power_on');
 
+    // 硬件回读一致性指示器
+    updateMismatchIndicator(data);
+
     // 统计
     if (data.statistics) {
         updateStats(data.statistics);
     }
+}
+
+// ==================== 硬件回读一致性指示器 ====================
+// B 板回读值 vs 命令下发值。后端已做防误报（回读过期/刚下发不判定），前端只负责
+// 让不一致"一眼可见"：非空即告警，空且回读可见为轻量正常态，无回读则明确不可用。
+
+// 门/窗用可读开合文案，风扇/灯光用百分比
+function formatReadback(device, value) {
+    if (device === 'door' || device === 'window') {
+        return value === 'open' ? t('status.open') : t('status.closed');
+    }
+    return value + '%';
+}
+
+// 设备名走 i18n；未知设备回退后端下发的 label
+function mismatchDeviceLabel(device, fallback) {
+    const key = 'mismatch.dev_' + device;
+    const text = t(key);
+    return text === key ? (fallback || device) : text;
+}
+
+function updateMismatchIndicator(data) {
+    const el = document.getElementById('mismatchIndicator');
+    if (!el) return;
+    const list = Array.isArray(data.device_mismatch) ? data.device_mismatch : [];
+
+    if (list.length > 0) {
+        // 告警态：逐条显示「⚠ 硬件与指令不一致：<设备> 指令 X / 回读 Y」
+        el.className = 'mismatch-indicator danger';
+        el.innerHTML = list.map(item => {
+            const name = mismatchDeviceLabel(item.device, item.label);
+            return '<div class="mismatch-row">\u26a0 ' + t('mismatch.title') + '：'
+                + name + ' ' + t('mismatch.cmd') + ' ' + formatReadback(item.device, item.commanded)
+                + ' / ' + t('mismatch.rb') + ' ' + formatReadback(item.device, item.readback)
+                + '</div>';
+        }).join('');
+    } else if (data.rb_seen_at) {
+        // 正常态：低调提示，不抢视觉
+        el.className = 'mismatch-indicator ok';
+        el.innerHTML = '<div class="mismatch-row">\u2713 ' + t('mismatch.ok') + '</div>';
+    } else {
+        // 无回读：无法判断一致性
+        el.className = 'mismatch-indicator na';
+        el.innerHTML = '<div class="mismatch-row">' + t('mismatch.unavailable') + '</div>';
+    }
+}
+
+// 语言切换：切换后立即用缓存状态重渲染指示器，避免告警文案被 applyI18n 重置为默认值
+function toggleDashboardLang() {
+    setLang(I18N.currentLang === 'zh' ? 'en' : 'zh');
+    if (lastStatus) updateMismatchIndicator(lastStatus);
 }
 
 function updateStats(stats) {

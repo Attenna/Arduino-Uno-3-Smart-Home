@@ -405,7 +405,7 @@ curl http://<host>:8101/trigger
 
 # 4. MCP 工具（mcp_home_server.py）
 
-`mcp_home_server.py` 以 stdio 方式提供 MCP 服务，独占 A/B 串口，共 **11 个工具**。
+`mcp_home_server.py` 以 stdio 方式提供 MCP 服务，独占 A/B 串口，共 **12 个工具**。
 也可经语音助手 `POST /tool` 以 HTTP 方式调用（工具名/参数相同）。
 
 | 工具 | 主要参数 | 作用 |
@@ -421,6 +421,7 @@ curl http://<host>:8101/trigger
 | `ac` | `power`,`mode`,`temperature`,`fan`,`swing_ud`,`swing_lr` | 美的空调（生成状态帧走 send_midea） |
 | `get_sensor_status` | 无 | 查询全部传感器 + 最近事件 |
 | `get_serial_health` | 无 | 串口链路健康度：A/B 连接、B 板复位次数、最近引脚告警、心跳失败数（只读排障） |
+| `get_output_state` | 无 | B 板（执行器）硬件回读状态：门/窗/风扇/灯/蜂鸣器实际电平 + 观测时刻（只读） |
 
 调用示例（经 `/tool`）：
 
