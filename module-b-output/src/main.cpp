@@ -23,6 +23,14 @@ void setup() {
     pinMode(BUZZER_PIN, OUTPUT);
     digitalWrite(BUZZER_PIN, BUZZER_ACTIVE_LOW ? HIGH : LOW);
 
+    // 风扇两脚同理：复位后到 Fan::begin()（排在 door/window 之后）之间 D7/D8
+    // 是高阻，半桥驱动器输入悬空时可能出现毫秒级误导通——表现为 B 板复位/
+    // 欠压瞬间风扇自己"冲"一下。这里复位后第一时间锁成 OUTPUT+LOW（停转）。
+    pinMode(FAN_INA, OUTPUT);
+    pinMode(FAN_INB, OUTPUT);
+    digitalWrite(FAN_INA, LOW);
+    digitalWrite(FAN_INB, LOW);
+
     dispatcher.begin();
     protocol.begin(dispatcher);
     protocol.sendReady();

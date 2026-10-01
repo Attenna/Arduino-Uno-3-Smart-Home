@@ -642,6 +642,10 @@ class AutomationEngine:
             if action.get("manual_grace_s") is not None:
                 kw["manual_grace_s"] = float(action["manual_grace_s"])
             self.home_mode.configure(reason="积木规则", **kw)
+            # 覆盖档以前靠 1s tick 下发；手动模式下 tick 已被禁用，因此规则若
+            # 显式带了覆盖档，这里立即执行一次（去重缓存保证目标未变不打串口）
+            if "fan_override" in kw or "light_level" in kw:
+                self.home_mode.apply_overrides_now(reason="积木规则")
             parts = []
             if "mode" in kw:
                 parts.append(f"模式={MODE_LABELS.get(kw['mode'], kw['mode'])}")

@@ -313,10 +313,19 @@ class HomeModeManager:
 
         关键：每个需要下发的设备先查 ``within_manual_grace``——若该设备刚被
         手动操作过（冷却窗口内）则**跳过**，绝不把用户的设置改回去。
+
+        另一条硬边界：**手动模式下整个 tick 不下发任何覆盖档**。手动模式的
+        语义是「用户全权」——历史遗留行为是在手动模式下若 fan_override=on，
+        冷却窗口（30s）一过 tick 就把风扇强开到 100%，用户早已忘了页面上留着
+        覆盖档，表现为「风扇自己转起来」。覆盖档的持续保证只在自动/离家模式
+        生效；手动模式下用户在页面切换覆盖档时由 API 立即执行一次
+        （见 `apply_overrides_now()`），不持续抢占。
         """
         try:
             with self._lock:
                 if not self.cfg["enabled"]:
+                    return
+                if self.cfg["mode"] == MODE_MANUAL:
                     return
                 now = time.time()
                 override = self.cfg["fan_override"]
@@ -329,6 +338,27 @@ class HomeModeManager:
                                       f"档位覆盖：灯光{LIGHT_LABELS[level]}")
         except Exception as e:                       # noqa: BLE001
             logger.debug("[全屋模式] 滴答处理异常: %s", e)
+
+    def apply_overrides_now(self, reason: str = "页面切换覆盖档") -> None:
+        """页面/积木把覆盖档写入配置后**立即执行一次**。
+
+        tick() 在手动模式下被整体禁用，因此手动模式下用户在页面点「强制关/开」
+        不能靠下一秒 tick 生效——由 PUT home_mode 显式调本方法：只执行这一次，
+        成功后是否持续保证由模式决定（自动/离家 tick 续保，手动不再抢占）。
+        去重缓存（_last_fan/_last_light）保证目标未变时不会真的打串口。
+        """
+        with self._lock:
+            if not self.cfg["enabled"]:
+                return
+            override = self.cfg["fan_override"]
+            level = self.cfg["light_level"]
+        if override in ("on", "off"):
+            self._apply_fan(
+                100 if override == "on" else 0,
+                f"{reason}：强制{'开' if override == 'on' else '关'}风扇")
+        if level in LEVEL_PCT:
+            self._apply_light("on", LEVEL_PCT[level],
+                              f"{reason}：灯光{LIGHT_LABELS[level]}")
 
     # ==================== 模式切换 ====================
 

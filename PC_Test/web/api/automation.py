@@ -86,6 +86,12 @@ def put_home_mode():
         data = request.get_json(force=True) or {}
         reason = str(data.pop("reason", "") or "页面设置")
         cfg = engine.home_mode.configure(reason=reason, **data)
+        # 手动模式下 tick 不重发覆盖档；页面显式切换风扇/灯光覆盖档时立即执行
+        # 一次（_apply_* 去重保证目标未变不下发串口）
+        if "fan_override" in data or "light_level" in data:
+            engine.home_mode.apply_overrides_now(
+                reason="页面切换" + ("风扇覆盖" if "fan_override" in data
+                                    else "灯光档位"))
     except Exception as e:                               # noqa: BLE001
         return jsonify({"error": f"全屋模式设置失败：{e}"}), 500
     return jsonify({"ok": True, "config": cfg, "message": "全屋模式设置已生效"})
