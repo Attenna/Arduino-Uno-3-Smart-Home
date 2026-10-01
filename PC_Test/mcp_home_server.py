@@ -101,11 +101,19 @@ def nec_code(address: int, command: int) -> int:
 
 # ==================== 智能家居控制器（持有串口）====================
 
+# A 板读线程自愈参数
+_A_REOPEN_BASE_DELAY = 1.0     # 首次重连等待（秒），之后指数退避
+_A_REOPEN_MAX_DELAY = 10.0
+_A_ERR_SUMMARY_INTERVAL = 30.0  # 持续故障时摘要日志最小间隔（秒）
+
+
 class HomeController:
     """独占 A/B 串口；A 板后台读线程缓存状态；B 板同步发命令。"""
 
-    def __init__(self, ser_a=None, ser_b=None):
+    def __init__(self, ser_a=None, ser_b=None, port_a: Optional[str] = None):
         self.ser_a = ser_a
+        # port_a 仅 A 板读线程重连用（必须是 by-id 等稳定路径）
+        self.port_a = port_a
         self.ser_b = ser_b
         self._b_lock = threading.Lock()
         self._snapshot_lock = threading.Lock()
@@ -116,18 +124,90 @@ class HomeController:
         self._ac_lock = threading.Lock()
         self._ac = midea_ac.AcState()  # 美的空调当前状态（本进程内维护）
         self._a_thread: Optional[threading.Thread] = None
+        self._a_stop = threading.Event()
+        # A 板故障状态（仅读线程访问，无需加锁）
+        self._a_err_count = 0
+        self._a_err_first_ts = 0.0
+        self._a_err_last_log = 0.0
+        self._a_reopen_delay = _A_REOPEN_BASE_DELAY
         if self.ser_a is not None:
             self._a_thread = threading.Thread(
                 target=self._read_a_loop, daemon=True, name="module-a-reader")
             self._a_thread.start()
 
     # ── A 板读取线程 ──
+    def _note_a_ok(self) -> None:
+        """读到字节：若此前处于故障态，打印一条恢复摘要并复位计数/退避。"""
+        if self._a_err_count:
+            dur = time.time() - self._a_err_first_ts
+            print(f"[A] 读取恢复正常（此前连续 {self._a_err_count} 次异常，"
+                  f"持续 {dur:.0f}s）", file=sys.stderr, flush=True)
+        self._a_err_count = 0
+        self._a_err_first_ts = 0.0
+        self._a_err_last_log = 0.0
+        self._a_reopen_delay = _A_REOPEN_BASE_DELAY
+
+    def _note_a_error(self, e: Exception) -> None:
+        """记录一次读异常：首条立即打印，持续故障期限频打印摘要，避免刷屏掩盖问题。"""
+        now = time.time()
+        if self._a_err_count == 0:
+            self._a_err_count = 1
+            self._a_err_first_ts = now
+            self._a_err_last_log = now
+            print(f"[A] 读线程异常: {e}", file=sys.stderr, flush=True)
+        else:
+            self._a_err_count += 1
+            if now - self._a_err_last_log >= _A_ERR_SUMMARY_INTERVAL:
+                self._a_err_last_log = now
+                dur = now - self._a_err_first_ts
+                print(f"[A] 读异常持续中：近 {self._a_err_count} 次 / {dur:.0f}s，"
+                      f"最近错误: {type(e).__name__}: {str(e)[:80]}",
+                      file=sys.stderr, flush=True)
+
+    def _reopen_a(self) -> bool:
+        """A 板串口进入坏状态后，按指数退避关闭旧句柄并重开 port_a（by-id）。
+
+        CDC-ACM 瞬断/USB 重枚举后旧 fd 永久不可用，继续 readline 只会无限刷异常；
+        重开 by-id 节点可在设备重新枚举后自动恢复，无需重启容器。
+        """
+        old = self.ser_a
+        try:
+            if old is not None:
+                old.close()
+        except Exception:
+            pass
+        self.ser_a = None
+        if not self.port_a:
+            # auto/无路径模式无法定位设备，等待上层下一轮（限频日志仍会出摘要）
+            self._a_stop.wait(_A_REOPEN_MAX_DELAY)
+            return False
+        while not self._a_stop.is_set():
+            delay = self._a_reopen_delay
+            self._a_reopen_delay = min(delay * 2, _A_REOPEN_MAX_DELAY)
+            if self._a_stop.wait(delay):
+                return False
+            try:
+                ser = serial.Serial(self.port_a, BAUD, timeout=1)
+                time.sleep(0.2)
+                ser.reset_input_buffer()
+                self.ser_a = ser
+                self._a_reopen_delay = _A_REOPEN_BASE_DELAY
+                print(f"[A] 串口重连成功 {self.port_a} @ {BAUD}",
+                      file=sys.stderr, flush=True)
+                return True
+            except Exception as e:
+                print(f"[A] 重连失败（{self.port_a}）：{type(e).__name__}: "
+                      f"{str(e)[:80]}；{self._a_reopen_delay:.0f}s 后重试",
+                      file=sys.stderr, flush=True)
+        return False
+
     def _read_a_loop(self):
-        while True:
+        while not self._a_stop.is_set():
             try:
                 raw = self.ser_a.readline()
                 if not raw:
-                    continue
+                    continue  # timeout=1 的正常空读
+                self._note_a_ok()
                 line = raw.decode("utf-8", "replace").strip()
                 if not line:
                     continue
@@ -159,8 +239,13 @@ class HomeController:
                     if ev_name == "keypad":
                         self._handle_keypad(msg.get("key", ""))
                 # response / who 忽略
+            except (serial.SerialException, OSError) as e:
+                # 设备级错误（USB 断连/重枚举/多访问者）：关闭旧句柄并退避重开
+                self._note_a_error(e)
+                self._reopen_a()
             except Exception as e:
-                print(f"[A] 读线程异常: {e}", file=sys.stderr)
+                # 其他未知异常：限频记录并轻度等待，避免紧密空转
+                self._note_a_error(e)
                 time.sleep(0.5)
 
     # ── 矩阵键盘：密码聚合开门 ──
@@ -519,6 +604,7 @@ def main():
     args = p.parse_args()
 
     ser_a = ser_b = None
+    port_a = port_b = None
     if not args.no_serial:
         port_a = args.port_a
         port_b = args.port_b
@@ -535,7 +621,7 @@ def main():
         if not ser_a and not ser_b:
             print("[警告] 未连接任何 Arduino 模块；工具将返回错误信息。", file=sys.stderr)
 
-    HOME = HomeController(ser_a=ser_a, ser_b=ser_b)
+    HOME = HomeController(ser_a=ser_a, ser_b=ser_b, port_a=port_a)
     print("[MCP] 暴露 10 个工具：light/door/window/fan/buzzer/oled/display/ir/ac"
           "/get_sensor_status", file=sys.stderr)
     print("[MCP] stdio 传输已就绪，等待 client。", file=sys.stderr)
