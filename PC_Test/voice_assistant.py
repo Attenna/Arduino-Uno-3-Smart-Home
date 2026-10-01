@@ -243,8 +243,17 @@ class TriggerHTTPServer:
                     self._json(400, {"ok": False, "error": "arguments 必须是对象"})
                     return
                 try:
+                    t0 = time.time()
                     ok, text = tool_ref(name, arguments)
+                    dt_ms = (time.time() - t0) * 1000
+                    # 周期状态轮询（get_sensor_status 成功)每 2s 一次，不打访问日志；
+                    # 真实控制动作、以及任何失败，记录来源 IP + 耗时便于审计/定位洪泛
+                    if name != "get_sensor_status" or not ok:
+                        print(f"[HTTP] /tool {name} from {self.client_address[0]} "
+                              f"-> {'ok' if ok else 'fail'} {dt_ms:.0f}ms", flush=True)
                 except Exception as e:
+                    print(f"[HTTP] /tool {name} from {self.client_address[0]} "
+                          f"-> 异常 {type(e).__name__}: {e}", flush=True)
                     self._json(500, {"ok": False, "error": f"工具调用异常: {e}"})
                     return
                 self._json(200 if ok else 502, {"ok": ok, "name": name, "result": text})

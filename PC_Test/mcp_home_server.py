@@ -489,6 +489,15 @@ mcp = FastMCP("smart-home")
 HOME: Optional[HomeController] = None  # 在 main() 里赋值
 
 
+def _audit(name: str) -> None:
+    """工具调用审计行（stdout 是 stdio 通道，一律走 stderr）。
+
+    mcp SDK 自带的 "Processing request of type CallToolRequest" 不含工具名，
+    调用异常时无法定位是哪个工具/调用方，这里补一行带工具名的审计。
+    """
+    print(f"[MCP] -> {name}", file=sys.stderr, flush=True)
+
+
 @mcp.tool()
 async def light(
     action: Literal["off", "white", "red", "green", "blue",
@@ -502,18 +511,21 @@ async def light(
 
     注意：B 板固件没有 "on" 分支，开灯请用 white（或彩色预设）。
     """
+    _audit("light")
     return await asyncio.to_thread(HOME.handle_light, action, value, r, g, b)
 
 
 @mcp.tool()
 async def door(action: Literal["open", "close"]) -> str:
     """控制门。action：open(开门)/close(关门)。"""
+    _audit("door")
     return await asyncio.to_thread(HOME.handle_door, action)
 
 
 @mcp.tool()
 async def window(action: Literal["open", "close", "normal"]) -> str:
     """控制窗。action：open/close/normal(恢复半开)。"""
+    _audit("window")
     return await asyncio.to_thread(HOME.handle_window, action)
 
 
@@ -521,6 +533,7 @@ async def window(action: Literal["open", "close", "normal"]) -> str:
 async def fan(action: Literal["on", "off", "set_speed"],
               value: Optional[int] = None) -> str:
     """控制风扇。action：on(全速)/off(停)/set_speed(需 value 0-255)。"""
+    _audit("fan")
     return await asyncio.to_thread(HOME.handle_fan, action, value)
 
 
@@ -530,6 +543,7 @@ async def buzzer(action: Literal["on", "off", "beep"],
                  on_ms: Optional[int] = None,
                  off_ms: Optional[int] = None) -> str:
     """控制蜂鸣器。action：on(持续)/off(停)/beep(间歇，count 次数/on_ms 响时/off_ms 停时)。"""
+    _audit("buzzer")
     return await asyncio.to_thread(HOME.handle_buzzer, action, count, on_ms, off_ms)
 
 
@@ -538,6 +552,7 @@ async def oled(action: Literal["show_text", "clear"],
                line: Optional[int] = None,
                text: Optional[str] = None) -> str:
     """OLED 显示。action：show_text(需 line 0-7 与 text)/clear(清屏)。"""
+    _audit("oled")
     return await asyncio.to_thread(HOME.handle_oled, action, line, text)
 
 
@@ -547,6 +562,7 @@ async def display(action: Literal["show_time", "show_number", "clear"],
                   minute: Optional[int] = None,
                   value: Optional[int] = None) -> str:
     """数码管显示。action：show_time(需 hour 0-23/minute 0-59)/show_number(需 value)/clear。"""
+    _audit("display")
     return await asyncio.to_thread(HOME.handle_display, action, hour, minute, value)
 
 
@@ -559,6 +575,7 @@ async def ir(code: Optional[int] = None,
     二选一：code 为十进制 32 位码；或 address(0-255)+command(0-255) 由服务端按 NEC
     帧序拼码（推荐，避免手算）。本系统不支持红外自学习/回环转发。
     """
+    _audit("ir")
     return await asyncio.to_thread(HOME.handle_ir, code, address, command)
 
 
@@ -581,6 +598,7 @@ async def ac(
     所以只在设定值发生变化时才补发，实际朝向取决于空调当时的状态。
     注意：设置模式/温度/风速会连带把空调开机（状态帧自带开机效果），无需先 power=true。
     """
+    _audit("ac")
     return await asyncio.to_thread(
         HOME.handle_ac, power=power, mode=mode, temperature=temperature,
         fan=fan, swing_ud=swing_ud, swing_lr=swing_lr)
@@ -589,6 +607,7 @@ async def ac(
 @mcp.tool()
 async def get_sensor_status() -> str:
     """查询当前传感器状态：温度、湿度、光照、烟雾、雨、距离、人体运动、土壤湿度等 + 最近事件。"""
+    _audit("get_sensor_status")
     return await asyncio.to_thread(HOME.handle_get_sensor_status)
 
 
@@ -596,6 +615,11 @@ async def get_sensor_status() -> str:
 
 def main():
     global HOME
+    # mcp SDK 每个请求打一行 "Processing request of type CallToolRequest"（不含工具名），
+    # 轮询场景下每小时上千行纯噪声；工具名审计由 _audit() 负责，这里提到 WARNING。
+    import logging
+    logging.getLogger("mcp").setLevel(logging.WARNING)
+
     p = argparse.ArgumentParser(description="智能家居 MCP server (stdio)")
     p.add_argument("--port-a", help="Module A 串口（auto=探测）")
     p.add_argument("--port-b", help="Module B 串口（auto=探测）")

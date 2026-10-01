@@ -206,10 +206,13 @@ class McpHardwareBridge:
 
         控制指令走 call_tool → _relay_call（Flask 请求线程同步调用），
         本线程负责把 A 板传感器快照/事件持续写进 SQLite，供仪表盘展示。
+        voice 不可用时按指数退避（2→4→…→30s），避免故障期高频打爆/刷日志。
         """
+        fail_streak = 0
         while not self._stopping:
             ok, text = self._relay_call("get_sensor_status", {}, timeout=15)
             if ok:
+                fail_streak = 0
                 self._set_online(True)
                 try:
                     payload = json.loads(text)
@@ -218,12 +221,21 @@ class McpHardwareBridge:
                 except json.JSONDecodeError:
                     pass
             else:
+                fail_streak += 1
                 self._set_online(False, text)
-            # 可中断的间隔睡眠（stop() 时最多 0.2s 退出）
+            # 成功按 poll_interval；连续失败指数退避，封顶 30s（可中断睡眠）
+            interval = self._poll_interval(fail_streak, self.poll_interval)
             waited = 0.0
-            while not self._stopping and waited < self.poll_interval:
+            while not self._stopping and waited < interval:
                 time.sleep(0.2)
                 waited += 0.2
+
+    @staticmethod
+    def _poll_interval(fail_streak: int, base: float) -> float:
+        """轮询节拍：成功 base 秒；第 n 次连续失败 base*2^n，封顶 30s。"""
+        if fail_streak <= 0:
+            return float(base)
+        return min(float(base) * (2 ** fail_streak), 30.0)
 
     def _ingest_snapshot(self, snap: dict) -> None:
         ts = snap.get("timestamp")
