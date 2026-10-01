@@ -54,7 +54,14 @@ services:
       - "${SERIAL_PORT_B:-/dev/ttyUSB1}:${SERIAL_PORT_B:-/dev/ttyUSB1}"
       # ALSA 声卡（麦克风 + 扬声器），整目录透传
       - /dev/snd:/dev/snd
+    # 设备热插拔：Docker 的 devices: 在容器创建时把设备号固化，物理拔插后重新枚举
+    # 会换 ttyACM 序号/设备号，容器里的旧节点永久失效（Errno 6，用户态救不回来）。
+    # 下面两条让容器直接跟随宿主机 /dev：cgroup 放行所有 USB ACM(166)，再靠 /dev
+    # 整目录看到重新枚举后的新节点，这样串口层自愈才能真正把 B 板拉回来。
+    device_cgroup_rules:
+      - "c 166:* rmw"
     volumes:
+      - /dev:/dev
       - ./models:/app/models
       # 改配置无需重建镜像（只读挂载；文件须存在于宿主机）
       - ./voice_config.yaml:/app/voice_config.yaml:ro
