@@ -103,12 +103,107 @@ def _hw_call(method, *args, **kwargs):
     return getattr(bridge, method)(*args, **kwargs)
 
 
-# 风扇指令短时幂等：移动端滑块的 change 在浏览器上可能数百毫秒连发，
-# 同值重复指令在该窗口内直接吞掉——不下发串口、不刷手动冷却、不切全屋模式。
-# 窗口取 2s（略大于前端 300ms 防抖），只挡"瞬时重复"，不影响几秒后刻意重发。
-_FAN_DEDUP_WINDOW_S = 2.0
-_fan_dedup_lock = threading.Lock()
-_fan_last = {"speed": None, "ts": 0.0}
+# ==================== 设备命令收口器 ====================
+
+class _DeviceGate:
+    """所有手动设备控制的单一收口点：串行化 + 合并连点 + 拒绝乱序 + 状态幂等。
+
+    背景：手机弱网 + 串口往返慢（舵机/红外可达数秒）时，一次操作会在几秒内
+    产生多个请求——用户以为没点上而连点、移动端触摸双发、请求延迟到达。若
+    全部照单下发串口，排队的旧命令可能晚于「关闭」执行，表现为风扇「关了又
+    自己开」。收口规则：
+
+    * 同设备命令串行执行，排队期间到达的新目标**覆盖**旧目标（desired-state），
+      硬件只执行最终意图，被合并的请求直接成功返回（不报错、不下发）；
+    * 每个页面实例带 ``_cid`` + 单调 ``_seq``；同一实例迟到的旧 seq 直接丢弃，
+      杜绝弱网下请求乱序到达造成的「旧意图覆盖新意图」；
+    * 目标与数据库当前状态一致则不下发（无时间窗幂等），任何来源的同值重放
+      都不会再动硬件；
+    * 执行失败不推进水位，保留最新 desired，允许前端重试。
+
+    自动化引擎 / 全屋模式走 bridge 直连且自带冷却去重，不经此收口器。
+    """
+
+    DEVICES = ("door", "window", "light", "fan", "ac")
+
+    def __init__(self):
+        self._submit_lock = threading.Lock()
+        self._exec_locks = {d: threading.Lock() for d in self.DEVICES}
+        # desired: (client_id, seq, value)；applied: {client_id: 已服务水位 seq}
+        self._state = {d: {"desired": None, "applied": {}} for d in self.DEVICES}
+
+    def submit(self, device, value, cid, seq, run, get_current=None):
+        """提交一条设备命令。
+
+        run(value) -> (ok, msg)：真正下发并在成功后写库（记录实际执行的值）。
+        get_current() -> 与 value 同构的当前状态，None 表示不做状态幂等。
+        返回 (outcome, value, ok, msg)，outcome ∈ executed/noop/stale。
+        """
+        st = self._state[device]
+        anon = not cid
+        ip = request.remote_addr or "?"
+        with self._submit_lock:
+            if not anon:
+                if seq <= st["applied"].get(cid, 0):
+                    logger.info("设备收口 %s 丢弃旧命令 seq=%s（已服务）ip=%s",
+                                device, seq, ip)
+                    return "stale", (get_current() if get_current else None), True, ""
+                d = st["desired"]
+                if d is not None and d[0] == cid and d[1] > seq:
+                    logger.info("设备收口 %s 丢弃旧命令 seq=%s（已有更新意图排队）ip=%s",
+                                device, seq, ip)
+                    return "stale", (get_current() if get_current else None), True, ""
+            token = cid if not anon else "\x00anon"
+            order = seq if not anon else time.monotonic_ns()
+            st["desired"] = (token, order, value)
+        with self._exec_locks[device]:
+            with self._submit_lock:
+                d = st["desired"]
+                if d is None:
+                    # 自己排队期间，更新的意图已被先拿到锁的线程完整服务
+                    return "stale", (get_current() if get_current else None), True, ""
+                token2, order2, value2 = d
+                if token2 != "\x00anon" and st["applied"].get(token2, 0) >= order2:
+                    return "stale", (get_current() if get_current else None), True, ""
+                current = get_current() if get_current else None
+            # 状态幂等：硬件/库中已是目标值，任何重放都不再下发
+            if current is not None and current == value2:
+                with self._submit_lock:
+                    if token2 != "\x00anon":
+                        st["applied"][token2] = max(
+                            st["applied"].get(token2, 0), order2)
+                    if st["desired"] == (token2, order2, value2):
+                        st["desired"] = None
+                logger.info("设备收口 %s 同值跳过 value=%r ip=%s", device, value2, ip)
+                return "noop", value2, True, ""
+            t0 = time.monotonic()
+            ok, msg = run(value2)
+            elapsed = time.monotonic() - t0
+            with self._submit_lock:
+                if ok and token2 != "\x00anon":
+                    st["applied"][token2] = max(
+                        st["applied"].get(token2, 0), order2)
+                if ok and st["desired"] == (token2, order2, value2):
+                    st["desired"] = None
+            logger.info("设备收口 %s %s value=%r cid=%s seq=%s %.2fs ip=%s%s",
+                        device, "下发成功" if ok else "下发失败", value2,
+                        token2 if token2 != "\x00anon" else "-",
+                        order2 if token2 != "\x00anon" else "-",
+                        elapsed, ip, f" msg={msg[:120]}" if not ok else "")
+            return "executed", value2, ok, msg
+
+
+gate = _DeviceGate()
+
+
+def _client_token(data):
+    """取前端页面实例标识与单调序号；缺失（curl/旧缓存页）返回 (None, None)。"""
+    cid = str(data.get("_cid") or "")[:40]
+    try:
+        seq = int(data.get("_seq"))
+    except (TypeError, ValueError):
+        return None, None
+    return (cid, seq) if cid else (None, None)
 
 
 # ==================== 门 ====================
@@ -121,19 +216,33 @@ def get_door_status():
 
 @bp.route("/api/door", methods=["POST"])
 def control_door():
-    new_status = (request.get_json(silent=True) or {}).get("status", "closed")
+    data = request.get_json(silent=True) or {}
+    new_status = data.get("status", "closed")
     if new_status not in ("open", "closed"):
         return jsonify({"error": "无效状态，只能是 open 或 closed"}), 400
-    ok, msg = _hw_call("control_door", new_status)
+    cid, seq = _client_token(data)
+
+    def _run(v):
+        ok, msg = _hw_call("control_door", v)
+        if ok:
+            _record_door(v)
+        return ok, msg
+
+    outcome, value, ok, msg = gate.submit(
+        "door", new_status, cid, seq, _run,
+        get_current=lambda: db.get_current_status().get("door_status", "closed"))
     if not ok:
         return _hardware_error(msg)
-    _record_door(new_status)
-    action = "opened" if new_status == "open" else "closed"
-    return jsonify({
-        "door_status": new_status,
-        "message": f"门已{'打开' if new_status == 'open' else '关闭'}",
-        "message_en": f"Door {action}",
-    })
+    shown = value if outcome != "stale" else \
+        db.get_current_status().get("door_status", "closed")
+    if outcome == "executed":
+        message = f"门已{'打开' if shown == 'open' else '关闭'}"
+    elif outcome == "noop":
+        message = f"门已经是{'打开' if shown == 'open' else '关闭'}状态"
+    else:
+        message = f"已按最新操作执行（门已{'打开' if shown == 'open' else '关闭'}）"
+    return jsonify({"door_status": shown, "message": message,
+                    "message_en": f"Door {'opened' if shown == 'open' else 'closed'}"})
 
 
 # ==================== 窗 ====================
@@ -146,19 +255,33 @@ def get_window_status():
 
 @bp.route("/api/window", methods=["POST"])
 def control_window():
-    new_status = (request.get_json(silent=True) or {}).get("status", "closed")
+    data = request.get_json(silent=True) or {}
+    new_status = data.get("status", "closed")
     if new_status not in ("open", "closed"):
         return jsonify({"error": "无效状态"}), 400
-    ok, msg = _hw_call("control_window", new_status)
+    cid, seq = _client_token(data)
+
+    def _run(v):
+        ok, msg = _hw_call("control_window", v)
+        if ok:
+            _record_window(v)
+        return ok, msg
+
+    outcome, value, ok, msg = gate.submit(
+        "window", new_status, cid, seq, _run,
+        get_current=lambda: db.get_current_status().get("window_status", "closed"))
     if not ok:
         return _hardware_error(msg)
-    _record_window(new_status)
-    action = "opened" if new_status == "open" else "closed"
-    return jsonify({
-        "window_status": new_status,
-        "message": f"窗户已{'打开' if new_status == 'open' else '关闭'}",
-        "message_en": f"Window {action}",
-    })
+    shown = value if outcome != "stale" else \
+        db.get_current_status().get("window_status", "closed")
+    if outcome == "executed":
+        message = f"窗户已{'打开' if shown == 'open' else '关闭'}"
+    elif outcome == "noop":
+        message = f"窗户已经是{'打开' if shown == 'open' else '关闭'}状态"
+    else:
+        message = f"已按最新操作执行（窗户已{'打开' if shown == 'open' else '关闭'}）"
+    return jsonify({"window_status": shown, "message": message,
+                    "message_en": f"Window {'opened' if shown == 'open' else 'closed'}"})
 
 
 @bp.route("/api/door_window/history")
@@ -185,17 +308,42 @@ def control_light():
     brightness = _pct(data.get("brightness"), 0)
     if light_status == "on" and brightness == 0:
         brightness = 100
-    ok, msg = _hw_call("control_light", light_status, brightness)
+    if light_status == "off":
+        brightness = 0
+    cid, seq = _client_token(data)
+    target = (light_status, brightness)
+
+    def _run(v):
+        status, level = v
+        ok, msg = _hw_call("control_light", status, level)
+        if ok:
+            _record_light(status, level)
+        return ok, msg
+
+    def _current():
+        row = db.get_current_status()
+        return (row.get("light_status", "off"),
+                int(row.get("light_brightness") or 0))
+
+    outcome, value, ok, msg = gate.submit(
+        "light", target, cid, seq, _run, get_current=_current)
     if not ok:
         return _hardware_error(msg)
-    _record_light(light_status, brightness)
-    return jsonify({
-        "light_status": light_status,
-        "light_brightness": brightness,
-        "message": f"灯光已{'打开' if light_status == 'on' else '关闭'}，亮度: {brightness}%",
-        "message_en": (f"Light {'turned on' if light_status == 'on' else 'turned off'}, "
-                       f"brightness: {brightness}%"),
-    })
+    row = db.get_current_status()
+    status_shown = row.get("light_status", "off")
+    shown = int(row.get("light_brightness") or 0)
+    if outcome == "executed":
+        message = f"灯光已{'打开' if status_shown == 'on' else '关闭'}，亮度: {shown}%"
+        message_en = (f"Light {'turned on' if status_shown == 'on' else 'turned off'}, "
+                      f"brightness: {shown}%")
+    elif outcome == "noop":
+        message = f"灯光已是该状态（{'开' if status_shown == 'on' else '关'}/{shown}%），无需重复操作"
+        message_en = f"Light already at that state ({status_shown}/{shown}%)"
+    else:
+        message = f"已按最新操作执行（灯光 {status_shown}/{shown}%）"
+        message_en = f"Latest command applied (light {status_shown}/{shown}%)"
+    return jsonify({"light_status": status_shown, "light_brightness": shown,
+                    "message": message, "message_en": message_en})
 
 
 @bp.route("/api/light/history")
@@ -214,30 +362,34 @@ def get_fan_status():
 
 @bp.route("/api/fan", methods=["POST"])
 def control_fan():
-    speed = _pct((request.get_json(silent=True) or {}).get("speed"), 0)
-    now = time.monotonic()
-    with _fan_dedup_lock:
-        duplicate = (_fan_last["speed"] == speed
-                     and (now - _fan_last["ts"]) < _FAN_DEDUP_WINDOW_S)
-    if duplicate:
-        return jsonify({
-            "fan_speed": speed,
-            "message": f"风扇已是 {speed}%，无需重复操作",
-            "message_en": f"Fan already at {speed}%",
-        })
-    ok, msg = _hw_call("control_fan", speed)
+    data = request.get_json(silent=True) or {}
+    speed = _pct(data.get("speed"), 0)
+    cid, seq = _client_token(data)
+
+    def _run(v):
+        ok, msg = _hw_call("control_fan", v)
+        if ok:
+            _record_fan(v)
+        return ok, msg
+
+    outcome, value, ok, msg = gate.submit(
+        "fan", speed, cid, seq, _run,
+        get_current=lambda: int(db.get_current_status().get("fan_speed") or 0))
     if not ok:
         return _hardware_error(msg)
-    # 仅 ACK 成功后才占用幂等窗口：失败的指令允许立刻重试
-    with _fan_dedup_lock:
-        _fan_last["speed"] = speed
-        _fan_last["ts"] = now
-    _record_fan(speed)
-    return jsonify({
-        "fan_speed": speed,
-        "message": f"风扇速度已设为 {speed}%",
-        "message_en": f"Fan speed set to {speed}%",
-    })
+    shown = value if outcome != "stale" else \
+        int(db.get_current_status().get("fan_speed") or 0)
+    if outcome == "executed":
+        message = f"风扇速度已设为 {shown}%"
+        message_en = f"Fan speed set to {shown}%"
+    elif outcome == "noop":
+        message = f"风扇已是 {shown}%，无需重复操作"
+        message_en = f"Fan already at {shown}%"
+    else:
+        message = f"已按最新操作执行（风扇 {shown}%）"
+        message_en = f"Latest command applied (fan {shown}%)"
+    return jsonify({"fan_speed": shown, "message": message,
+                    "message_en": message_en})
 
 
 # ==================== 空调（美的红外遥控）====================
@@ -273,11 +425,25 @@ def control_ac():
     if not changed:
         return jsonify({**payload, "message": "空调状态未变化",
                         "message_en": "No change"})
-    ok, msg = _hw_call("control_ac", **payload)
+    cid, seq = _client_token(data)
+
+    def _run(v):
+        payload2, target2 = v
+        ok, msg = _hw_call("control_ac", **payload2)
+        if ok:
+            _record_ac(target2)
+        return ok, msg
+
+    # 空调整帧天然幂等，这里只需串行化 + 连点合并 + seq 防乱序（不做状态比对）
+    outcome, _, ok, msg = gate.submit(
+        "ac", (payload, target), cid, seq, _run, get_current=None)
     if not ok:
         return _hardware_error(msg)
-    _record_ac(target)
-    return jsonify({**payload, "message": "空调已更新",
+    snap = _ac_state_from_db().snapshot()
+    if outcome == "stale":
+        return jsonify({**snap, "message": "已按最新操作执行",
+                        "message_en": "Latest command applied"})
+    return jsonify({**snap, "message": "空调已更新",
                     "message_en": "AC updated"})
 
 

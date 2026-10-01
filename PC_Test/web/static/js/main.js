@@ -16,6 +16,13 @@ let acState = { power: false, mode: 'auto', temperature: 26, fan: 'auto',
 let lastKnownFanSpeed = null;
 let lastKnownLight = null;   // { status: 'on'|'off', brightness: Number }
 
+// 页面实例标识 + 单调命令序号：服务端据此识别「迟到的旧命令」并丢弃，
+// 防止弱网下请求乱序到达（例如先关后开两请求颠倒 → 风扇关了又自己开）。
+// 每个标签页/每次加载都是新实例，互不影响；序号只在本实例内比较。
+const CLIENT_ID = 'cid-' + Math.random().toString(36).slice(2, 10)
+    + '-' + Date.now().toString(36);
+let cmdSeq = 0;
+
 // ==================== 增强型 Fetch 工具 ====================
 
 async function fetchWithTimeout(url, options = {}, timeoutMs = 8000) {
@@ -70,10 +77,13 @@ async function apiGet(url, timeoutMs = 8000) {
 
 async function apiPost(url, data, timeoutMs = 15000) {
     try {
+        // 所有控制类 POST 带页面实例标识与单调序号，服务端命令收口器据此
+        // 丢弃迟到旧命令、合并连点；非设备接口会忽略这两个字段。
+        const payload = { ...(data || {}), _cid: CLIENT_ID, _seq: ++cmdSeq };
         const response = await fetchWithTimeout(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(data)
+            body: JSON.stringify(payload)
         }, timeoutMs);
         if (!response) {
             showNotification(currentLang === 'en'
@@ -138,6 +148,19 @@ function debounce(func, wait) {
         clearTimeout(timeout);
         timeout = setTimeout(later, wait);
     };
+}
+
+// 动作防连点：门/窗/空调经串口往返要数秒，手机上点击没有即时反馈时用户会
+// 连点，移动端触摸还可能对同一元素双发 click。同名动作执行期间（+500ms）
+// 忽略重复触发；风扇/灯光另有 300ms 防抖收口，不走这里。
+const _tapsInFlight = new Set();
+function tapGuard(key, fn, cooldownMs = 500) {
+    if (_tapsInFlight.has(key)) return;
+    _tapsInFlight.add(key);
+    Promise.resolve()
+        .then(fn)
+        .catch(() => {})
+        .finally(() => setTimeout(() => _tapsInFlight.delete(key), cooldownMs));
 }
 
 // ==================== 初始化 ====================
@@ -361,6 +384,8 @@ async function toggleDoor() {
     }
 }
 
+function guardDoor() { tapGuard('door', toggleDoor); }
+
 async function toggleWindow() {
     const data = await apiGet('/api/window');
     const newStatus = (data && data.window_status === 'open') ? 'closed' : 'open';
@@ -371,20 +396,30 @@ async function toggleWindow() {
     }
 }
 
+function guardWindow() { tapGuard('window', toggleWindow); }
+
 // 灯光卡片按钮：全亮/半亮/夜灯/关闭
 // 移动端浏览器拖动 range 时会连续触发 change（不像桌面端只在松手时触发一次），
 // 直接下发会让滑块经过的每个中间值都打到串口。统一用 300ms 防抖收口，
 // 连续操作只下发最后一次；值与状态回显一致则整体跳过。
 const postLightDebounced = debounce(async (status, brightness) => {
+    brightness = Number(brightness) || 0;
     if (lastKnownLight && lastKnownLight.status === status
-        && Number(lastKnownLight.brightness) === Number(brightness)) {
+        && Number(lastKnownLight.brightness) === brightness) {
         return;
     }
-    const result = await apiPost('/api/light', { status, brightness: Number(brightness) || 0 });
+    // 乐观更新：立即收口本地认知，指令在飞期间的同值点击/触摸双发不再进网络；
+    // 失败时 loadStatus() 会用服务端真值回滚界面
+    lastKnownLight = { status, brightness };
+    const bSlider = document.getElementById('brightnessSlider');
+    if (bSlider && document.activeElement !== bSlider) bSlider.value = brightness;
+    const bLabel = document.getElementById('brightnessValue');
+    if (bLabel) bLabel.textContent = brightness + '%';
+    const result = await apiPost('/api/light', { status, brightness });
     if (result) {
         showNotification(getMessage(result));
-        loadStatus();
     }
+    loadStatus();
 }, 300);
 
 function setLight(status, brightness) {
@@ -393,12 +428,20 @@ function setLight(status, brightness) {
 
 // 风扇卡片按钮：关闭/低速/中速/高速（与灯光相同的防抖收口原因）
 const postFanDebounced = debounce(async (speed) => {
+    speed = Number(speed) || 0;
     if (lastKnownFanSpeed === speed) return;
-    const result = await apiPost('/api/fan', { speed: Number(speed) || 0 });
+    // 乐观更新：立即收口本地认知并刷新滑块/标签，指令在飞期间同值点击不再进
+    // 网络；失败时 loadStatus() 用服务端真值回滚
+    lastKnownFanSpeed = speed;
+    const fSlider = document.getElementById('fanSpeed');
+    if (fSlider && document.activeElement !== fSlider) fSlider.value = speed;
+    const fLabel = document.getElementById('fanSpeedValue');
+    if (fLabel) fLabel.textContent = speed + '%';
+    const result = await apiPost('/api/fan', { speed });
     if (result) {
         showNotification(getMessage(result));
-        loadStatus();
     }
+    loadStatus();
 }, 300);
 
 function setFan(speed) {
@@ -427,25 +470,28 @@ function setACFan(fan) { setAC({ fan }); }
 function toggleACOption(key) { setAC({ [key]: !acState[key] }); }
 
 // 远程控制面板：light_on/off、fan_on/off、door_open/close、ac_on/off
-async function remoteControl(action) {
-    // 风扇/灯光复用带防抖与"同值不下发"的收口，避免远程面板连点刷屏
+function remoteControl(action) {
+    // 风扇/灯光复用带防抖、乐观更新与"同值不下发"的收口，避免远程面板连点刷屏
     if (action === 'fan_on')  { setFan(60); return; }
     if (action === 'fan_off') { setFan(0); return; }
     if (action === 'light_on')  { setLight('on', 100); return; }
     if (action === 'light_off') { setLight('off', 0); return; }
-    const posts = {
-        door_open: ['/api/door', { status: 'open' }],
-        door_close:['/api/door', { status: 'closed' }],
-        ac_on:     ['/api/ac', { power: true }],
-        ac_off:    ['/api/ac', { power: false }],
-    };
-    const target = posts[action];
-    if (!target) return;
-    const result = await apiPost(target[0], target[1]);
-    if (result) {
-        showNotification(getMessage(result));
-        loadStatus();
-    }
+    // 门/空调为秒级慢动作：同名动作在执行期间忽略重复点击（触摸双发/连点）
+    tapGuard('rc-' + action, async () => {
+        const posts = {
+            door_open: ['/api/door', { status: 'open' }],
+            door_close:['/api/door', { status: 'closed' }],
+            ac_on:     ['/api/ac', { power: true }],
+            ac_off:    ['/api/ac', { power: false }],
+        };
+        const target = posts[action];
+        if (!target) return;
+        const result = await apiPost(target[0], target[1]);
+        if (result) {
+            showNotification(getMessage(result));
+            loadStatus();
+        }
+    });
 }
 
 // ==================== 通知 ====================

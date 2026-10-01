@@ -65,6 +65,9 @@ class McpHardwareBridge:
         self._session = None
         self._call_lock: asyncio.Lock | None = None
         self._snapshot_lock = threading.Lock()
+        # relay（web → voice /tool）通道必须串行：所有命令共用同一条 USB 串口，
+        # 并发请求会在 A/B 板侧交错导致 ACK 超时与状态错乱（实测门连点触发雪崩）。
+        self._relay_lock = threading.Lock()
         self._online = False
         self._last_error = ""
         self._last_sensor_ts = None
@@ -362,7 +365,20 @@ class McpHardwareBridge:
         return True, json.dumps(body, ensure_ascii=False)
 
     def _relay_call(self, name: str, args: dict, timeout: float = 10.0) -> tuple[bool, str]:
-        """经语音助手 POST /tool 转发硬件调用（串口归语音进程时的联动通道）。"""
+        """经语音助手 POST /tool 转发硬件调用（串口归语音进程时的联动通道）。
+
+        全局串行：所有设备共用一条串口，排队等锁（最多 timeout），拿不到锁
+        快速失败，避免慢指令（舵机/红外数秒）期间请求在串口上交错雪崩。
+        """
+        if not self._relay_lock.acquire(timeout=timeout):
+            return False, "硬件正忙（上一条指令尚未执行完），请稍后再试"
+        try:
+            return self._relay_call_locked(name, args, timeout)
+        finally:
+            self._relay_lock.release()
+
+    def _relay_call_locked(self, name: str, args: dict,
+                           timeout: float) -> tuple[bool, str]:
         url = f"{self.relay_url}/tool"
         payload = json.dumps({"name": name, "arguments": args}).encode("utf-8")
         req = urllib.request.Request(
