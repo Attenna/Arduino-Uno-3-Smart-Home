@@ -138,7 +138,10 @@ ACTION_DEVICES = {
                   "labels": ["白光(可用亮度)", "红", "绿", "蓝", "黄", "紫", "青", "RGB(需 r,g,b)"]},
         "value": {"range": [0, 255], "unit": "白光亮度"},
         "r": {"range": [0, 255]}, "g": {"range": [0, 255]}, "b": {"range": [0, 255]}}},
-    "fan": {"label": "风扇", "params": {"speed": {"range": [0, 100], "unit": "%"}}},
+    "fan": {"label": "风扇", "params": {
+        "op": {"choices": ["set", "on", "off", "toggle"],
+               "labels": ["设置转速", "开启", "关闭", "切换开/关（同一键再按一次反转）"]},
+        "speed": {"range": [0, 100], "unit": "%", "label": "转速（开启/切换为开时使用）"}}},
     "buzzer": {"label": "蜂鸣器", "params": {
         "mode": {"choices": ["beep", "on", "off"], "labels": ["间歇响", "持续响", "停"]},
         "count": {"range": [1, 10], "label": "次数"},

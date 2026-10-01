@@ -260,12 +260,22 @@ function defineBlocks() {
     };
     Blockly.Blocks['act_fan'] = {
         init: function () {
-            this.appendDummyInput().appendField('🌀 风扇')
-                .appendField(new Blockly.FieldNumber(60, 0, 100, 1), 'SPEED')
-                .appendField('%');
+            const opField = new Blockly.FieldDropdown([
+                ['设置转速', 'set'], ['开启', 'on'], ['关闭', 'off'],
+                ['切换开/关（同一键再按一次反转）', 'toggle']]);
+            this.appendDummyInput().appendField('🌀 风扇').appendField(opField, 'OP');
+            this.appendDummyInput('SPEEDROW')
+                .appendField('转速').appendField(new Blockly.FieldNumber(60, 0, 100, 1), 'SPEED')
+                .appendField('%（填 0 = 用上次转速）');
             this.setPreviousStatement(true, 'ACT');
             this.setNextStatement(true, 'ACT');
             this.setColour(120);
+            this.setTooltip('切换开/关：同一个触发（如遥控器同一个键）按一次开、再按关。');
+            // 关闭动作不需要转速，隐藏转速行
+            opField.setValidator((v) => {
+                this.getInput('SPEEDROW').setVisible(v !== 'off');
+                return v;
+            });
         },
     };
     Blockly.Blocks['act_buzzer'] = {
@@ -623,7 +633,14 @@ function summarizeAction(a) {
             return '灯' + (a.status === 'on' ? '开' : '关')
                    + (a.brightness !== undefined ? ` ${a.brightness}%` : '');
         }
-        case 'fan':    return `风扇 ${a.speed}%`;
+        case 'fan': {
+            const fanOp = a.op || 'set';
+            const fanAt = Number(a.speed) > 0 ? `${a.speed}%` : '上次转速';
+            if (fanOp === 'off') return '风扇 关闭';
+            if (fanOp === 'on') return `风扇 开启 ${fanAt}`;
+            if (fanOp === 'toggle') return `风扇 切换开/关（开时 ${fanAt}）`;
+            return `风扇 ${a.speed}%`;
+        }
         case 'buzzer':
             if (a.mode === 'on') return '蜂鸣器 持续响';
             if (a.mode === 'off') return '蜂鸣器 停';
@@ -1109,7 +1126,8 @@ function actionToJson(b) {
             return { device: 'light', status: 'on', brightness: 100, color: 'rgb',
                      r: Number(b.getFieldValue('R')), g: Number(b.getFieldValue('G')),
                      b: Number(b.getFieldValue('B')) };
-        case 'act_fan':    return { device: 'fan', speed: Number(b.getFieldValue('SPEED')) };
+        case 'act_fan':    return { device: 'fan', op: b.getFieldValue('OP') || 'set',
+                                    speed: Number(b.getFieldValue('SPEED')) };
         case 'act_buzzer': return { device: 'buzzer', mode: 'beep',
                                     count: Number(b.getFieldValue('COUNT')),
                                     on_ms: Number(b.getFieldValue('ONMS')),
@@ -1266,7 +1284,14 @@ function fillAction(a) {
                 b.setFieldValue(String(a.brightness === undefined ? 100 : a.brightness), 'BRIGHTNESS');
             }
             break;
-        case 'fan': b = createTyped('act_fan'); b.setFieldValue(String(a.speed === undefined ? 60 : a.speed), 'SPEED'); break;
+        case 'fan': {
+            b = createTyped('act_fan');
+            const fanOp = a.op || 'set';
+            b.setFieldValue(fanOp, 'OP');
+            b.setFieldValue(String(a.speed === undefined ? 60 : a.speed), 'SPEED');
+            b.getInput('SPEEDROW').setVisible(fanOp !== 'off');
+            break;
+        }
         case 'buzzer':
             if (a.mode === 'on' || a.mode === 'off') {
                 b = createTyped('act_buzzer_switch');

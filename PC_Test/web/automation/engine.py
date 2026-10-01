@@ -28,6 +28,7 @@ import logging
 import threading
 import time
 import uuid
+from collections import deque
 from datetime import datetime
 from pathlib import Path
 
@@ -73,6 +74,10 @@ class AutomationEngine:
         # B 板发的 NEC 码会被 A 板接收头当成「有人按了遥控器」，上报的 ir 事件
         # 没有任何来源标记，若不抑制，「发码 X → 收到 X → 再发 X」会永不停止。
         self._ir_echo_until: dict[tuple[int, int], float] = {}
+        # 事件身份去重（纵深防御）：硬件桥已按 ts 去重，这里再挡一层任何来源
+        # （测试 API/人脸回调/上层重放）的同一事件。只对带 ts/timestamp 的事件生效。
+        self._seen_event_keys: set[str] = set()
+        self._seen_event_order: deque[str] = deque()
         self._stopping = False
         self._tick_thread: threading.Thread | None = None
         # 已注入过的内置默认规则（preset id）；用户删掉的不会再被强行加回来
@@ -215,6 +220,16 @@ class AutomationEngine:
             # 红外回声抑制必须在入队/求值之前：否则「发码→收到码→再发码」会自激
             if event.get("event") == "ir" and self._is_ir_echo(event):
                 return
+            # 按事件时间戳去重：同一物理事件（同一 ts）被任何链路重放时直接丢弃
+            ev_ts = event.get("ts") or event.get("timestamp")
+            if ev_ts:
+                ev_key = f"{event.get('event', 'unknown')}@{ev_ts}"
+                if ev_key in self._seen_event_keys:
+                    return
+                self._seen_event_keys.add(ev_key)
+                self._seen_event_order.append(ev_key)
+                while len(self._seen_event_order) > 256:
+                    self._seen_event_keys.discard(self._seen_event_order.popleft())
             self._event_seq += 1
             seq = self._event_seq
             self._events.append((seq, dict(event or {})))
@@ -698,11 +713,36 @@ class AutomationEngine:
                                                 brightness=brightness)
             return ok, msg
         if device == "fan":
-            speed = action["speed"]
-            ok, msg = self.bridge.control_fan(speed)
+            # 风扇状态机：set=绝对转速（旧规则兼容）；on/off 语义动作；
+            # toggle=按 DB 当前转速在开/关间翻转（同一遥控器键按一次开、再按关），
+            # 从关翻到开时用动作给定转速，没给正转速则恢复最近一次非零档位。
+            op = action.get("op", "set")
+            speed = int(action.get("speed", 60))
+            target = speed
+            if op == "off":
+                target = 0
+            elif op in ("on", "toggle"):
+                current = 0
+                try:
+                    current = int(self.db.get_current_status().get("fan_speed") or 0)
+                except Exception:                            # noqa: BLE001
+                    current = 0
+                if op == "toggle" and current > 0:
+                    target = 0
+                elif speed > 0:
+                    target = speed
+                else:
+                    target = self.home_mode.fan_memory
+            target = max(0, min(100, int(target)))
+            ok, msg = self.bridge.control_fan(target)
             if ok:
-                self.db.update_status(fan_speed=speed)
-                self.home_mode.note_rule_action("fan", speed=speed)
+                self.db.update_status(fan_speed=target)
+                self.home_mode.note_rule_action("fan", speed=target)
+                if op == "set":
+                    return ok, msg
+                verb = {"on": "开启", "off": "关闭",
+                        "toggle": "关闭" if target == 0 else "开启"}.get(op, "设置")
+                return True, f"风扇已{verb}（{target}%）"
             return ok, msg
         if device == "buzzer":
             # mode: beep(间歇，默认) / on(持续响) / off(停)

@@ -23,6 +23,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from collections import deque
 
 from .config import MCP_SERVER_PATH, PC_TEST_DIR
 
@@ -67,7 +68,17 @@ class McpHardwareBridge:
         self._online = False
         self._last_error = ""
         self._last_sensor_ts = None
-        self._seen_events: set[str] = set()
+        # 事件去重：MCP 的 get_sensor_status 每轮返回 recent_events 全量（有界 50 条），
+        # 这里必须按稳定身份记住「已处理过」的事件。旧实现用容量 30 的 set + pop()
+        # （无序淘汰）：50 条全量里总有 ≥20 条被淘汰后又当新事件，导致历史红外/键盘
+        # 事件每 2 秒重放一次给自动化引擎（规则反复开关设备）。改为 deque+set 有序
+        # 淘汰，容量远大于 MCP 窗口；身份优先用事件自带的 ts/timestamp（MCP 收到时打），
+        # 没有时间戳的事件才回退整包 JSON。
+        self._seen_event_keys: set[str] = set()
+        self._seen_event_order: deque[str] = deque()
+        # 首轮 recent_events 只登记不触发：桥重启/重建后 MCP 仍留着最近 50 条
+        # 历史事件，不能让这些旧账在重启瞬间把红外/键盘规则重新执行一遍。
+        self._events_primed = False
         # 自动化引擎钩子（由 extensions 注入；参数：原始快照/事件 dict）
         self.snapshot_listener = None
         self.event_listener = None
@@ -185,8 +196,7 @@ class McpHardwareBridge:
             except json.JSONDecodeError:
                 continue
             self._ingest_snapshot(payload.get("data") or {})
-            for event in payload.get("recent_events", []):
-                self._ingest_event(event)
+            self._ingest_events(payload.get("recent_events") or [])
 
     def _relay_poll_loop(self) -> None:
         """relay 模式：串口在语音进程，本线程只做 HTTP 周期轮询 + 入库。
@@ -201,8 +211,7 @@ class McpHardwareBridge:
                 try:
                     payload = json.loads(text)
                     self._ingest_snapshot(payload.get("data") or {})
-                    for event in payload.get("recent_events", []):
-                        self._ingest_event(event)
+                    self._ingest_events(payload.get("recent_events") or [])
                 except json.JSONDecodeError:
                     pass
             else:
@@ -229,21 +238,46 @@ class McpHardwareBridge:
             return
         self._fire_hook(self.snapshot_listener, data)
 
-    def _ingest_event(self, event: dict) -> None:
-        key = json.dumps(event, sort_keys=True, ensure_ascii=False)
-        if key in self._seen_events:
-            return
-        self._seen_events.add(key)
-        if len(self._seen_events) > 30:
-            self._seen_events.pop()
-        try:
-            name = event.get("event", "unknown")
-            self.db.add_hardware_event(
-                {"module": "sensor", "type": "event", "event": name,
-                 **{k: v for k, v in event.items() if k != "event"}})
-        except Exception as e:
-            logger.debug("[硬件桥] 事件入库失败: %s", e)
-        self._fire_hook(self.event_listener, event)
+    @staticmethod
+    def _event_identity(event: dict) -> str:
+        """事件稳定身份：优先 event 名 + 板侧/接收时间戳；无 ts 则整包 JSON。"""
+        ts = event.get("ts") or event.get("timestamp")
+        if ts:
+            return f"{event.get('event', 'unknown')}@{ts}"
+        return "raw:" + json.dumps(event, sort_keys=True, ensure_ascii=False)
+
+    def _remember_event(self, key: str, maxlen: int = 256) -> bool:
+        """登记事件身份；返回 True=首次见到（应处理），False=重放（丢弃）。"""
+        if key in self._seen_event_keys:
+            return False
+        self._seen_event_keys.add(key)
+        self._seen_event_order.append(key)
+        while len(self._seen_event_order) > maxlen:
+            self._seen_event_keys.discard(self._seen_event_order.popleft())
+        return True
+
+    def _ingest_events(self, events: list) -> None:
+        """处理一轮 recent_events。
+
+        首轮（桥启动/重连后第一次拿到快照）只登记身份、不入库不触发规则，
+        把 MCP 残留的历史事件静默消化；之后到达的才是真正的新事件。
+        """
+        for event in events or []:
+            key = self._event_identity(event)
+            if not self._events_primed:
+                self._remember_event(key)
+                continue
+            if not self._remember_event(key):
+                continue
+            try:
+                name = event.get("event", "unknown")
+                self.db.add_hardware_event(
+                    {"module": "sensor", "type": "event", "event": name,
+                     **{k: v for k, v in event.items() if k != "event"}})
+            except Exception as e:
+                logger.debug("[硬件桥] 事件入库失败: %s", e)
+            self._fire_hook(self.event_listener, event)
+        self._events_primed = True
 
     @staticmethod
     def _fire_hook(listener, payload) -> None:

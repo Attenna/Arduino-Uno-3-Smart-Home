@@ -5,6 +5,8 @@ JSON 命令；只有收到 B 板 ACK 后才更新 system_status 并写历史，�
 与真实硬件一致。串口离线时返回 503，不产生虚假状态。
 """
 import logging
+import threading
+import time
 
 from flask import Blueprint, jsonify, request
 
@@ -99,6 +101,14 @@ def _hw_call(method, *args, **kwargs):
     if bridge is None:
         return False, "硬件服务未启动（硬件桥未初始化）"
     return getattr(bridge, method)(*args, **kwargs)
+
+
+# 风扇指令短时幂等：移动端滑块的 change 在浏览器上可能数百毫秒连发，
+# 同值重复指令在该窗口内直接吞掉——不下发串口、不刷手动冷却、不切全屋模式。
+# 窗口取 2s（略大于前端 300ms 防抖），只挡"瞬时重复"，不影响几秒后刻意重发。
+_FAN_DEDUP_WINDOW_S = 2.0
+_fan_dedup_lock = threading.Lock()
+_fan_last = {"speed": None, "ts": 0.0}
 
 
 # ==================== 门 ====================
@@ -205,9 +215,23 @@ def get_fan_status():
 @bp.route("/api/fan", methods=["POST"])
 def control_fan():
     speed = _pct((request.get_json(silent=True) or {}).get("speed"), 0)
+    now = time.monotonic()
+    with _fan_dedup_lock:
+        duplicate = (_fan_last["speed"] == speed
+                     and (now - _fan_last["ts"]) < _FAN_DEDUP_WINDOW_S)
+    if duplicate:
+        return jsonify({
+            "fan_speed": speed,
+            "message": f"风扇已是 {speed}%，无需重复操作",
+            "message_en": f"Fan already at {speed}%",
+        })
     ok, msg = _hw_call("control_fan", speed)
     if not ok:
         return _hardware_error(msg)
+    # 仅 ACK 成功后才占用幂等窗口：失败的指令允许立刻重试
+    with _fan_dedup_lock:
+        _fan_last["speed"] = speed
+        _fan_last["ts"] = now
     _record_fan(speed)
     return jsonify({
         "fan_speed": speed,

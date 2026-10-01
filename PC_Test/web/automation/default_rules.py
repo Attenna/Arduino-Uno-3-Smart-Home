@@ -22,7 +22,7 @@
 from __future__ import annotations
 
 # 预设版本：升级时 +1，引擎会把新版本里新增的预设补进现有规则集
-PRESETS_VERSION = 2
+PRESETS_VERSION = 3
 
 DEFAULT_RULES: list[dict] = [
     {
@@ -161,6 +161,16 @@ DEFAULT_RULES: list[dict] = [
         "enabled": False,
         "trigger": {"kind": "event", "event": "ir", "command": "0x45"},
         "actions": [{"device": "home_mode", "fan_override": "cycle"}],
+        "cooldown": 2,
+    },
+    {
+        "preset": "ir_fan_toggle",
+        "name": "红外键1：风扇开/关切换（按一次开、再按关）【默认停用】",
+        "enabled": False,
+        "trigger": {"kind": "event", "event": "ir", "command": "0x45"},
+        # 风扇状态机 toggle：当前关→以 60% 开启；当前开→关闭（事件重放已去重，
+        # 同一物理按键不会连发开关）
+        "actions": [{"device": "fan", "op": "toggle", "speed": 60}],
         "cooldown": 2,
     },
     {

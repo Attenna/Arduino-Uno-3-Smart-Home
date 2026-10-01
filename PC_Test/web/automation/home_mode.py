@@ -88,6 +88,7 @@ class HomeModeManager:
         self._snapshot: dict = {}
         self._pir_last_seen = 0.0      # 最近一次检测到「有人」的时刻
         self._last_fan = None          # 最近下发的风扇转速（去重）
+        self._fan_memory = 60          # 最近一次非零转速（toggle/开启缺省时恢复）
         self._last_light = None        # 最近下发的 (status, brightness)
         self._last_window = None       # 最近下发的窗状态
         self._last_reason = ""
@@ -180,6 +181,18 @@ class HomeModeManager:
             last = self._last_manual.get(device)
             return last is not None and (now - last) < self.cfg["manual_grace_s"]
 
+    def remember_fan_speed(self, speed: int) -> None:
+        """记忆最近一次非零转速；风扇积木「切换/开启」未给转速时恢复该档位。"""
+        speed = int(speed or 0)
+        if speed > 0:
+            with self._lock:
+                self._fan_memory = max(1, min(100, speed))
+
+    @property
+    def fan_memory(self) -> int:
+        with self._lock:
+            return self._fan_memory
+
     def note_manual_control(self, device: str, reason: str = "", **state) -> None:
         """面板/语音手动操作硬件后的状态机同步（用户策略：手动操作 → 全屋转手动）。
 
@@ -195,7 +208,10 @@ class HomeModeManager:
         with self._lock:
             self._last_manual[device] = time.time()
             if device == "fan":
-                self._last_fan = max(0, min(100, int(state.get("speed", 0) or 0)))
+                fan_speed = max(0, min(100, int(state.get("speed", 0) or 0)))
+                self._last_fan = fan_speed
+                if fan_speed > 0:
+                    self._fan_memory = fan_speed
                 if self.cfg["fan_override"] is not None:
                     self.cfg["fan_override"] = None      # 清掉强制档
                     dirty = True
@@ -225,7 +241,10 @@ class HomeModeManager:
         dirty = False
         with self._lock:
             if device == "fan":
-                self._last_fan = max(0, min(100, int(state.get("speed", 0) or 0)))
+                fan_speed = max(0, min(100, int(state.get("speed", 0) or 0)))
+                self._last_fan = fan_speed
+                if fan_speed > 0:
+                    self._fan_memory = fan_speed
                 if self.cfg["fan_override"] is not None:
                     self.cfg["fan_override"] = None
                     dirty = True
@@ -340,6 +359,8 @@ class HomeModeManager:
         ok, msg = self.bridge.control_fan(speed)
         if ok:
             self._last_fan = speed
+            if speed > 0:
+                self._fan_memory = speed
             try:
                 self.db.update_status(fan_speed=speed)
             except Exception:                        # noqa: BLE001

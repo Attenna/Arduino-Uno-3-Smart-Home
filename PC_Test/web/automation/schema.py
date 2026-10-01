@@ -161,7 +161,14 @@ def validate_action(action: dict, where: str = "动作块") -> dict:
                 # 白光可指定 0-255 原始亮度（彩色预设不接受亮度）
                 clean["value"] = max(0, min(255, int(_as_number(action.get("value"), where))))
     elif device == "fan":
-        speed = int(_as_number(action.get("speed", 100), where))
+        # op：set=设置为指定转速（旧规则默认，兼容）；on=以 speed 开启（speed 缺省
+        # 用记忆转速）；off=关闭；toggle=在开/关之间切换（同一遥控器键按一次开、
+        # 再按关），从关切换到开时使用 speed（缺省用记忆转速）。
+        op = str(action.get("op") or "set").strip()
+        if op not in ("set", "on", "off", "toggle"):
+            raise ValidationError("风扇动作只能是 set(设置转速)/on/off/toggle(切换)")
+        clean["op"] = op
+        speed = int(_as_number(action.get("speed", 60), where))
         clean["speed"] = max(0, min(100, speed))
     elif device == "buzzer":
         # mode: beep(间歇，默认) / on(持续响) / off(停)

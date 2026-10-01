@@ -11,6 +11,11 @@ let pendingRequests = new Set(); // 跟踪进行中请求，防止并发堆积
 let acState = { power: false, mode: 'auto', temperature: 26, fan: 'auto',
                 swing_ud: false, swing_lr: false };
 
+// 最近一次 /api/status 回显的风扇/灯光状态：值没变就不下发，
+// 屏蔽移动端滑块连续 change、重复点击造成的无意义指令
+let lastKnownFanSpeed = null;
+let lastKnownLight = null;   // { status: 'on'|'off', brightness: Number }
+
 // ==================== 增强型 Fetch 工具 ====================
 
 async function fetchWithTimeout(url, options = {}, timeoutMs = 8000) {
@@ -239,6 +244,7 @@ function updateDashboard(data) {
 
     // 风扇（fanSpeed 是滑块 input，fanSpeedValue 是数值标签，扇叶按转速分档旋转）
     const fanSpeed = Number(data.fan_speed) || 0;
+    lastKnownFanSpeed = fanSpeed;
     const fanSlider = document.getElementById('fanSpeed');
     if (fanSlider && document.activeElement !== fanSlider) fanSlider.value = fanSpeed;
     const fanLabel = document.getElementById('fanSpeedValue');
@@ -255,6 +261,7 @@ function updateDashboard(data) {
     // 灯光（灯泡高亮 + 指示点 + 亮度滑块回写，拖动时不抢焦点）
     const lightOn = data.light_status === 'on';
     const brightness = Number(data.light_brightness) || (lightOn ? 100 : 0);
+    lastKnownLight = { status: lightOn ? 'on' : 'off', brightness };
     const bulb = document.getElementById('bulb');
     if (bulb) {
         bulb.classList.toggle('on', lightOn);
@@ -365,21 +372,37 @@ async function toggleWindow() {
 }
 
 // 灯光卡片按钮：全亮/半亮/夜灯/关闭
-async function setLight(status, brightness) {
+// 移动端浏览器拖动 range 时会连续触发 change（不像桌面端只在松手时触发一次），
+// 直接下发会让滑块经过的每个中间值都打到串口。统一用 300ms 防抖收口，
+// 连续操作只下发最后一次；值与状态回显一致则整体跳过。
+const postLightDebounced = debounce(async (status, brightness) => {
+    if (lastKnownLight && lastKnownLight.status === status
+        && Number(lastKnownLight.brightness) === Number(brightness)) {
+        return;
+    }
     const result = await apiPost('/api/light', { status, brightness: Number(brightness) || 0 });
     if (result) {
         showNotification(getMessage(result));
         loadStatus();
     }
+}, 300);
+
+function setLight(status, brightness) {
+    postLightDebounced(status, Number(brightness) || 0);
 }
 
-// 风扇卡片按钮：关闭/低速/中速/高速
-async function setFan(speed) {
+// 风扇卡片按钮：关闭/低速/中速/高速（与灯光相同的防抖收口原因）
+const postFanDebounced = debounce(async (speed) => {
+    if (lastKnownFanSpeed === speed) return;
     const result = await apiPost('/api/fan', { speed: Number(speed) || 0 });
     if (result) {
         showNotification(getMessage(result));
         loadStatus();
     }
+}, 300);
+
+function setFan(speed) {
+    postFanDebounced(Number(speed) || 0);
 }
 
 // ==================== 空调（美的红外）====================
@@ -405,11 +428,12 @@ function toggleACOption(key) { setAC({ [key]: !acState[key] }); }
 
 // 远程控制面板：light_on/off、fan_on/off、door_open/close、ac_on/off
 async function remoteControl(action) {
+    // 风扇/灯光复用带防抖与"同值不下发"的收口，避免远程面板连点刷屏
+    if (action === 'fan_on')  { setFan(60); return; }
+    if (action === 'fan_off') { setFan(0); return; }
+    if (action === 'light_on')  { setLight('on', 100); return; }
+    if (action === 'light_off') { setLight('off', 0); return; }
     const posts = {
-        light_on:  ['/api/light', { status: 'on', brightness: 100 }],
-        light_off: ['/api/light', { status: 'off', brightness: 0 }],
-        fan_on:    ['/api/fan', { speed: 60 }],
-        fan_off:   ['/api/fan', { speed: 0 }],
         door_open: ['/api/door', { status: 'open' }],
         door_close:['/api/door', { status: 'closed' }],
         ac_on:     ['/api/ac', { power: true }],
