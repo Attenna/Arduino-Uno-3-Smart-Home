@@ -20,6 +20,11 @@ env/
 homeassistant/.HA_VERSION
 homeassistant/.cache/
 
+# Home Assistant 运行产物（SQLite WAL/SHM 与实体恢复状态，随运行持续变化）
+ha_config/home-assistant_v2.db-shm
+ha_config/home-assistant_v2.db-wal
+ha_config/.storage/core.restore_state
+
 # 临时文件
 _tmp/
 *.tmp
