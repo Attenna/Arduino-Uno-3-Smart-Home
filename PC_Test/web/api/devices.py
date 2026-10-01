@@ -372,9 +372,12 @@ def control_fan():
             _record_fan(v)
         return ok, msg
 
-    outcome, value, ok, msg = gate.submit(
-        "fan", speed, cid, seq, _run,
-        get_current=lambda: int(db.get_current_status().get("fan_speed") or 0))
+    # 风扇**不做基于 DB 的状态幂等**：web 以 --no-serial 运行，读不到 B 板真实状态，
+    # db.fan_speed 只是「上次软件下发的值」，不能当作硬件真值。若拿它做幂等，一旦
+    # 风扇被外部原因误开（DB 仍为 0），用户点「关」（0）会被判成同值直接吞掉，
+    # 命令根本不下发 → 风扇永远关不掉（现象：面板 0% 但物理在转）。
+    # 同客户端连点重放仍由 cid+seq 水位拦截；set_speed/off 本身是绝对指令，重复下发无害。
+    outcome, value, ok, msg = gate.submit("fan", speed, cid, seq, _run)
     if not ok:
         return _hardware_error(msg)
     shown = value if outcome != "stale" else \
@@ -382,9 +385,6 @@ def control_fan():
     if outcome == "executed":
         message = f"风扇速度已设为 {shown}%"
         message_en = f"Fan speed set to {shown}%"
-    elif outcome == "noop":
-        message = f"风扇已是 {shown}%，无需重复操作"
-        message_en = f"Fan already at {shown}%"
     else:
         message = f"已按最新操作执行（风扇 {shown}%）"
         message_en = f"Latest command applied (fan {shown}%)"
