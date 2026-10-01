@@ -107,6 +107,7 @@ bool CommandDispatcher::dispatch(const Command& cmd) {
 void CommandDispatcher::update() {
     _door.update();
     _window.update();
+    _fan.update();
     _buzzer.update();
 #if ENABLE_TM1637
     _display.update();

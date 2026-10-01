@@ -324,10 +324,49 @@ class HomeController:
                     self._reopen_b()
             return result
 
-    def _send_b_once(self, line: str) -> str:
-        """单次下发：写命令并等 0.8s 读一行 JSON 响应（调用方需持有 _b_lock）。"""
+    def _log_b_async(self) -> None:
+        """把串口里已到达的异步帧（ready 复位横幅 / alert 引脚自愈告警 / state）捞出来打日志。
+
+        这些帧不参与命令响应匹配。必须在 reset_input_buffer() 丢掉之前读走，否则
+        风扇引脚自愈告警会被静默吞掉、失去取证价值。只读已到达的字节，不阻塞；
+        半行/噪声解析失败就忽略，不制造误导日志。
+        """
+        if self.ser_b is None:
+            return
         try:
-            self.ser_b.reset_input_buffer()
+            n = self.ser_b.in_waiting
+            if not n:
+                return
+            data = self.ser_b.read(n)
+        except Exception as e:                       # noqa: BLE001
+            print(f"[B] 读取异步帧失败: {e}", file=sys.stderr, flush=True)
+            return
+        for raw in data.split(b"\n"):
+            text = raw.decode("utf-8", "replace").strip()
+            if not text:
+                continue
+            try:
+                msg = json.loads(text)
+            except json.JSONDecodeError:
+                continue
+            mtype = msg.get("type")
+            if mtype == "alert":
+                print(f"[B] ⚠ 告警: {text}", file=sys.stderr, flush=True)
+            elif mtype == "response":
+                print(f"[B] 迟到的响应(上一命令超时遗留): {text}",
+                      file=sys.stderr, flush=True)
+            else:
+                print(f"[B] 异步帧: {text}", file=sys.stderr, flush=True)
+
+    def _send_b_once(self, line: str) -> str:
+        """单次下发：写命令并等 0.8s 读命令响应（调用方需持有 _b_lock）。
+
+        只认 ``type == "response"``：B 板复位横幅(ready)/引脚自愈告警(alert)/状态(state)
+        都是异步帧，既不能当命令结果，也不能因为混进来就误判成失败——跳过并记录，
+        继续等真正的响应。
+        """
+        try:
+            self._log_b_async()          # 先捞走残留异步帧，再发本次命令
             self.ser_b.write(line.encode("utf-8"))
             deadline = time.time() + 0.8
             while time.time() < deadline:
@@ -341,6 +380,9 @@ class HomeController:
                     resp = json.loads(text)
                 except json.JSONDecodeError:
                     return f"ok (非JSON回显: {text})"
+                if resp.get("type") != "response":
+                    print(f"[B] 异步帧: {text}", file=sys.stderr, flush=True)
+                    continue
                 if resp.get("result") == "ok":
                     return "ok"
                 return f"error: B 板返回 {resp}"
