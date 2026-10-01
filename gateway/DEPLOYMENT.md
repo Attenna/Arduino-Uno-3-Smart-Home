@@ -74,11 +74,14 @@ python src/output_gateway.py
 
 ### 1.6 用 systemd 托管为开机服务（推荐）
 
-为每个进程各写一个 unit，或用一个 unit 跑两个进程（此处用 `&` 简单方案）。示例 `/etc/systemd/system/smarthome-gateway.service`：
+仓库**不提供** `run_both.py`，建议为两个进程各建一个 unit，职责清晰、可独立重启。
+假设仓库部署在 `/opt/Arduino-Uno-3-Smart-Home`，虚拟环境为 `gateway/.venv`。
+
+`/etc/systemd/system/smarthome-sensor-gateway.service`：
 
 ```ini
 [Unit]
-Description=SmartHome Gateway (serial <-> MQTT)
+Description=SmartHome Sensor Gateway (Module A serial -> MQTT)
 After=network.target mosquitto.service
 Wants=mosquitto.service
 
@@ -86,9 +89,8 @@ Wants=mosquitto.service
 User=orangepi
 WorkingDirectory=/opt/Arduino-Uno-3-Smart-Home/gateway
 Environment=SENSOR_PORT=/dev/ttyUSB0
-Environment=OUTPUT_PORT=/dev/ttyUSB1
 Environment=MQTT_HOST=localhost
-ExecStart=/opt/Arduino-Uno-3-Smart-Home/gateway/.venv/bin/python /opt/Arduino-Uno-3-Smart-Home/gateway/run_both.py
+ExecStart=/opt/Arduino-Uno-3-Smart-Home/gateway/.venv/bin/python src/sensor_gateway.py
 Restart=always
 RestartSec=3
 
@@ -96,15 +98,37 @@ RestartSec=3
 WantedBy=multi-user.target
 ```
 
-其中 `run_both.py` 可简化为两个进程的后台拉起（或用两个独立 unit）。启用：
+`/etc/systemd/system/smarthome-output-gateway.service`：
+
+```ini
+[Unit]
+Description=SmartHome Output Gateway (MQTT -> Module B serial)
+After=network.target mosquitto.service
+Wants=mosquitto.service
+
+[Service]
+User=orangepi
+WorkingDirectory=/opt/Arduino-Uno-3-Smart-Home/gateway
+Environment=OUTPUT_PORT=/dev/ttyUSB1
+Environment=MQTT_HOST=localhost
+ExecStart=/opt/Arduino-Uno-3-Smart-Home/gateway/.venv/bin/python src/output_gateway.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+```
+
+启用：
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now smarthome-gateway
-journalctl -u smarthome-gateway -f    # 看日志
+sudo systemctl enable --now smarthome-sensor-gateway smarthome-output-gateway
+journalctl -u smarthome-sensor-gateway -f          # 看日志
 ```
 
-> 仓库默认按「串口已由系统分配」假设；若两块板供电不稳导致掉线，可加 `Restart=always`（已含）与硬件复位/看门狗。
+> 网关脚本自身不做串口自愈；USB 掉线时进程退出，由 systemd `Restart=always` 自动拉起。
+> 若频繁掉线，优先检查 USB 线 / Hub 供电 / 硬件复位（见 [hardware-debug-notes.md](../docs/hardware-debug-notes.md)）。
 
 ---
 
@@ -168,7 +192,7 @@ mosquitto_pub -h localhost -t smarthome/output/command \
 | 症状 | 定位点 |
 |------|--------|
 | HA 看不到 A 板数据 | `mosquitto_sub -t smarthome/sensor/data` 有无数据 → 无则看 sensor_gateway 日志/串口 |
-| 发命令 B 板无动作 | `mosquitto_pub` 手动发 → 无响应则查 output_gateway 与串口；响应 `parse_error` 则见 Module B 文档已知问题 |
+| 发命令 B 板无动作 | `mosquitto_pub` 手动发 → 无响应则查 output_gateway 与串口；响应 `parse_error` 则核对 JSON 是否单行、半角、`cmd`/`action` 是否正确 |
 | MQTT 连不上 | 检查 mosquitto 服务、`MQTT_HOST/PORT`、防火墙 1883 |
 
 ---

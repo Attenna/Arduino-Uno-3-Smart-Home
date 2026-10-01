@@ -3,7 +3,7 @@
 > 面向：在 **Linux 主机（PC 或 Orange Pi）** 上编译烧录 Module A 固件、安装接线、调试、扩展新传感器。
 > 基础信息（用途/引脚/协议）见 [README.md](README.md) 与 [docs/serial-protocol.md](../docs/serial-protocol.md)。
 
-**功能一句话**：Module A 是一块 Arduino Uno + 10 类传感器，只采集、上报（`data` 周期 + `event` 事件），不做业务判断。
+**功能一句话**：Module A 是一块 Arduino Uno，当前固件 `V2.1` 带 9 类现役传感器（含矩阵键盘），只采集、上报（`data` 周期 + `event` 事件），不做业务判断。超声波、土壤湿度已于 2026-09 正式版裁剪。
 
 ---
 
@@ -60,10 +60,10 @@ pio device monitor --port /dev/ttyUSB0 --baud 115200
 烧录后串口应立即输出一行就绪 JSON：
 
 ```json
-{"module":"sensor","type":"ready","board":"MODULE_A","role":"SENSOR_NODE","version":"V2.0"}
+{"module":"sensor","type":"ready","board":"MODULE_A","role":"SENSOR_NODE","version":"V2.1"}
 ```
 
-随后每 2 秒输出一条 `{"type":"data","data":{...}}` 周期数据。在监视器手动输入 `REPORT` 可立即触发一次上报。
+随后每 2 秒输出一条 `{"type":"data","data":{...}}` 周期数据（默认不含 `distance`/`soil_*`）。在监视器手动输入 `REPORT` 可立即触发一次上报。
 
 ---
 
@@ -76,10 +76,11 @@ pio device monitor --port /dev/ttyUSB0 --baud 115200
 
 ### 2.2 接线总表（引脚以 `src/Config.h` 为准）
 
+**现役设备**
+
 | 传感器 | 信号接 Uno | 供电 | 备注 |
 |--------|-----------|------|------|
 | DHT11 温湿度 | D7 | 5V/GND | 数据脚需接 5k~10k 上拉（模块一般已带） |
-| HC-SR04 超声波 | Trig=A0, Echo=A1 | 5V/GND | Echo 输出 5V 可直连；距离长线建议分压 |
 | TTP223 触摸 | D6 | 3.3~5V/GND | 高电平=按下 |
 | 光敏模块 | A5（模拟） | 5V/GND | 输出随光照变化 |
 | MQ-2 烟雾 | 数字=D5, 模拟=A3 | 5V/GND | 需预热；灵敏度调板上电位器 |
@@ -87,7 +88,10 @@ pio device monitor --port /dev/ttyUSB0 --baud 115200
 | 红外接收 VS1838B | D3 | 5V/GND | 信号脚接 D3，勿接反（面朝接收面） |
 | RC522 RFID | RST=D9, SS=D10, MOSI=D11, MISO=D12, SCK=D13 | **3.3V**/GND | RFID 必须 3.3V！5V 会烧毁 |
 | PIR 人体红外 | D8 | 5V/GND | SR602/HC-SR501；板上可调灵敏度与延时 |
-| 土壤湿度 YL-69/FC-28 | 数字=D4, 模拟=A4 | 5V/GND | 模拟值越高越干（视模块） |
+| 矩阵键盘（1×1） | 行=D4, 列=A4 | 无需供电 | D4 持续输出 LOW 作行驱动，A4 `INPUT_PULLUP` 读列；按下即 `"1"` |
+
+**已移除（A0/A1 悬空）**：HC-SR04 超声波；土壤湿度（其 D4/A4 已被键盘复用）。
+如需恢复，在 [src/Config.h](src/Config.h) 把 `ENABLE_ULTRASONIC` / `ENABLE_SOIL` 改为 `1`、`ENABLE_KEYPAD` 改为 `0` 后重烧。
 
 > ⚠️ **RC522 只能接 3.3V**，绝不能接 5V。
 > ⚠️ 所有模块 GND 与 Uno 共地（必须）。
@@ -132,7 +136,8 @@ python3 -c "import serial,time; s=serial.Serial('/dev/ttyUSB0',115200); [print(s
 |------|------|
 | 无任何输出 | 波特率/串口选错；USB 线是否为数据线；`Permission denied` → dialout 组 |
 | `temperature: null` | DHT11 接线/上拉；需间隔 >2s |
-| `distance: null` | 超声波超出量程或 Trig/Echo 接反 |
+| 没有 `distance` / `soil_*` | `V2.1` 默认已裁剪，属预期 |
+| 键盘无事件 | 确认 D4 行/A4 列接线；按压需保持 >40ms 防抖，松开 120ms 后才接受下一次 |
 | RFID 无事件 | 供电须 3.3V；天线对准；卡片是否为 13.56MHz |
 | 反复输出 ready（重启） | 供电不足复位 → 换 USB 口或加独立 5V |
 

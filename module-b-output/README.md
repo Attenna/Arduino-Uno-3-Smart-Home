@@ -8,7 +8,9 @@
 
 ## 1. 模块用途
 
-Module B 是一块 Arduino Uno，负责执行硬件动作并驱动显示设备：
+Module B 是一块 Arduino Uno，负责执行硬件动作并驱动显示设备。**固件版本 `V2.4`**，经 2026-09 正式版硬件裁剪：
+
+**现役执行器/显示设备（7 类）**
 
 | # | 执行器 | 类型 | 说明 |
 |---|--------|------|------|
@@ -17,11 +19,16 @@ Module B 是一块 Arduino Uno，负责执行硬件动作并驱动显示设备�
 | 3 | 直流风扇 | 开关 | 开关控制（D8 非 PWM） |
 | 4 | NeoPixel RGB 灯带 | 数字 | 8 颗，颜色/亮度 |
 | 5 | 蜂鸣器 | 数字 | 持续 / 间歇蜂鸣 |
-| 6 | TM1637 数码管 | 数字 | 显示时钟 / 数字 |
-| 7 | SH1106 OLED | SPI | 8 行 × 16 列文本 |
-| 8 | V1221 红外发射管 | 数字 | NEC 协议 + 美的空调长码，38kHz，遥控家电 |
+| 6 | SH1106 OLED | SPI | 8 行 × 16 列文本 |
+| 7 | V1221 红外发射管 | 数字 | NEC 协议 + 美的空调长码，38kHz，遥控家电 |
 
-所有命令由 Home Assistant 经 Orange Pi 网关下发，Module B 只执行、不做决定。
+**已裁剪**
+
+| 设备 | 原引脚 | 裁剪开关 |
+|------|--------|---------|
+| TM1637 四位数码管 | D5/D6 | `ENABLE_TM1637=0`（引脚悬空，`display` 命令将返回 error） |
+
+所有命令由上位机（Home Assistant 经 Orange Pi 网关，或 MCP server）下发，Module B 只执行、不做决定。
 
 > 注意：旧版的门"10 秒自动关门"、`ALARM:SMOKE`、`HOUSE:EMPTY` 等**业务逻辑已全部移除**，
 > 改由 Home Assistant 的 Automation 实现（例如 HA 定时发送 `{"cmd":"door","action":"close"}`）。
@@ -41,7 +48,6 @@ Module B 是一块 Arduino Uno，负责执行硬件动作并驱动显示设备�
 | 直流风扇 + 驱动（L298N/TB6612） | 1 |
 | NeoPixel 灯带（8 颗） | 1 |
 | 有源/无源蜂鸣器 | 1 |
-| TM1637 四位数码管 | 1 |
 | SH1106 OLED 128×64（SPI 4 线） | 1 |
 | V1221 红外发射管（TSAL1221，940nm） | 1 |
 
@@ -54,8 +60,8 @@ Module B 是一块 Arduino Uno，负责执行硬件动作并驱动显示设备�
 | D2 | 门舵机 |
 | D3 | 窗舵机 |
 | D4 | NeoPixel RGB 灯带（数据线） |
-| D5 | TM1637 CLK |
-| D6 | TM1637 DIO |
+| D5 | （悬空；原 TM1637 CLK） |
+| D6 | （悬空；原 TM1637 DIO） |
 | D7 | 风扇 INB（方向） |
 | D8 | 风扇 INA（开关控制） |
 | D9 | 蜂鸣器 |
@@ -106,13 +112,12 @@ PlatformIO 已在 [platformio.ini](platformio.ini) 中声明。
 | `light` | `off` | - | 关灯 |
 | `buzzer` | `on` / `off` | - | 持续响 / 停止 |
 | `buzzer` | `beep` | `count`,`on_ms`,`off_ms` | 间歇蜂鸣 |
-| `display` | `show_time` | `hour`,`minute` | 数码管显示时钟（自动走秒） |
-| `display` | `show_number` | `value` | 数码管显示数字（支持负数） |
-| `display` | `clear` | - | 数码管清屏 |
 | `oled` | `show_text` | `line`(0~7), `text` | OLED 指定行显示（最多 16 字符） |
 | `oled` | `clear` | - | OLED 清屏 |
 | `ir` | `send_nec` | `code`(32 位十进制) | V1221 发射 NEC 码（38kHz） |
 | `ir` | `repeat` | - | 发送 NEC 重复帧（长按） |
+| `ir` | `send_midea` | `hex`(6 个十六进制字符) | 发射美的空调状态帧（3 字节 A,B,C，固件补反码并重复 2 遍） |
+| `display` | `show_time` / `show_number` / `clear` | - | **已裁剪（TM1637 移除）**，命令返回 error |
 | `system` | `status` | - | 查询执行器状态 |
 | `system` | `who` | - | 返回设备标识 |
 
@@ -124,9 +129,9 @@ PlatformIO 已在 [platformio.ini](platformio.ini) 中声明。
 {"cmd":"fan","action":"set_speed","value":180}
 {"cmd":"light","action":"rgb","r":255,"g":0,"b":0}
 {"cmd":"buzzer","action":"beep","count":3,"on_ms":200,"off_ms":200}
-{"cmd":"display","action":"show_time","hour":14,"minute":30}
 {"cmd":"oled","action":"show_text","line":2,"text":"T: 25.3 C"}
 {"cmd":"ir","action":"send_nec","code":16712445}
+{"cmd":"ir","action":"send_midea","hex":"B2BF00"}
 {"cmd":"system","action":"status"}
 ```
 
@@ -154,7 +159,7 @@ PlatformIO 已在 [platformio.ini](platformio.ini) 中声明。
 
 **上电输出：**
 ```json
-{"module":"output","type":"ready","board":"MODULE_B","role":"OUTPUT_NODE","version":"V2.0"}
+{"module":"output","type":"ready","board":"MODULE_B","role":"OUTPUT_NODE","version":"V2.4"}
 ```
 
 **输入 `{"cmd":"light","action":"red"}`，输出：**
@@ -189,6 +194,8 @@ pio run -t upload --upload-port COM4
 | 配置宏 | 默认值 | 说明 |
 |--------|--------|------|
 | `SERIAL_BAUD` | `115200` | 串口波特率 |
+| `ENABLE_TM1637` | `0` | 数码管裁剪开关（默认已移除） |
+| `ENABLE_IR_TX` | `1` | 红外发射裁剪开关 |
 | `LED_COUNT` | `8` | 灯带颗数 |
 | `LIGHT_BRIGHTNESS` | `60` | 灯带整体亮度 0~255 |
 | `LIGHT_BOOT_ON` | `0` | `1`=上电默认点亮，`0`=上电熄灭 |
@@ -197,7 +204,7 @@ pio run -t upload --upload-port COM4
 | `BUZZER_ACTIVE_LOW` | `1` | `1`=低电平触发，`0`=高电平触发 |
 | `BUZZER_DEFAULT_OFF` | `1` | `1`=上电静音，`0`=上电响 |
 
-> 门/窗舵机角度、风扇引脚、数码管引脚等其余参数也都在此文件集中管理。
+> 门/窗舵机角度、风扇引脚、美的长码时序等其余参数也都在此文件集中管理。
 
 ---
 
@@ -212,6 +219,6 @@ pio run -t upload --upload-port COM4
 | OLED 无显示 | 接口类型/型号错误 | 本屏为 **SPI 4 线**（非 I2C），检查接线与 `OLED_IS_SH1106` |
 | OLED 白屏/显示错乱 | 型号不匹配 | SH1106 与 SSD1306 互换 `OLED_IS_SH1106`（`1`↔`0`）后重烧 |
 | OLED 刷新打乱灯带 | I2C 与 NeoPixel 时序冲突 | 已改为 SPI 驱动解决；确认灯带数据线 D4 与 OLED 线分开走 |
+| 数码管命令返回 error | TM1637 已裁剪 | 属预期（`ENABLE_TM1637=0`） |
 | 命令报 `parse_error` | 全角引号/冒号 | 已内置全角转半角兼容；仍报错则检查 JSON 是否单行、字段是否完整 |
-| 数码管乱码 | 时序/接线 | 检查 CLK/DIO 与上拉电阻 |
 | 命令无响应 | JSON 格式错误 | 确认单行 JSON，`cmd`/`action` 必填 |

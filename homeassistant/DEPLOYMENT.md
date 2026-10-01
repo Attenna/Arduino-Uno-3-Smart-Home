@@ -117,7 +117,7 @@ docker compose logs -f homeassistant
 |------|------|
 | 实体显示「不可用/未知」 | MQTT 没数据 → 查 gateway 与串口；`value_template` 字段名与协议不一致 |
 | 自动化不触发 | 看自动化 trigger 的实体 id 是否与 configuration.yaml 生成的一致 |
-| B 板命令 parse_error | Module B 固件 JSON bug，改用纯文本等价或修复固件 |
+| B 板命令 parse_error | JSON 非单行/含全角字符/`cmd`/`action` 错误；逐一核对 |
 | 改 yaml 不生效 | 未 restart/reload |
 
 ---

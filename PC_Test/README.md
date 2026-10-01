@@ -15,21 +15,21 @@ PC 端在电脑上通过 USB 串口直接与两块 Arduino 通信，用于**调�
 PC_Test/
 ├── README.md               # 本文件（PC 端总览）
 ├── requirements.txt        # Python 依赖
-├── web_config.yaml         # ⑥ Web 仪表盘配置（串口/端口/人脸/开门联动）
+├── web_config.yaml         # ⑤ Web 仪表盘配置（串口/端口/人脸/开门联动）
 │
 ├── test_serial.py          # ① 串口调试控制台（交互式，手动发命令测试硬件）
-├── camera_stream.py        # ② USB 摄像头流式传输 + 人脸检测（本地窗口 / HTTP 流）
+├── camera_stream.py        # ③ USB 摄像头流式传输 + 人脸检测（本地窗口 / HTTP 流）
 ├── camera_test.py          #    摄像头快速自检（验证摄像头 + 检测链路）
 │
-├── voice_assistant.py      # ⑤ 语音交互模式（唤醒词 → Qwen2.5 → MCP 控硬件 → 流式 TTS）
+├── voice_assistant.py      # ④ 语音交互模式（唤醒词 → Qwen2.5 → MCP 控硬件 → 流式 TTS）
 ├── qwen_server.py          #    本地 Qwen2.5 OpenAI 兼容服务（llama.cpp 后端 + 工具调用）
 ├── download_qwen.py        #    Qwen2.5 权重下载器（ModelScope 国内渠道）
-├── mcp_home_server.py      # 智能家居 MCP server（独占串口，暴露 9 个工具；⑤⑥共用）
+├── mcp_home_server.py      # 智能家居 MCP server（独占串口，暴露 10 个工具；④⑤共用）
 ├── tts_player.py           #    流式 TTS 播放器（Sherpa-ONNX VITS 本地合成）
 ├── sherpa_listener.py      #    Sherpa-ONNX KWS/ASR 前端封装
 ├── voice_config.yaml       #    语音模式配置（串口/LLM 引擎/唤醒词/TTS 音色）
 │
-├── run_web.py              # ⑥ Web 仪表盘服务入口（Flask，http://localhost:5000）
+├── run_web.py              # ⑤ Web 仪表盘服务入口（Flask，http://localhost:5000）
 ├── web/                    #    Web 服务包（数据库 + REST API + 人脸识别 + 前端）
 │   ├── app.py              #    Flask 应用工厂（蓝图注册 / 错误处理 / 硬件桥启停）
 │   ├── config.py           #    路径常量 + web_config.yaml 装载
@@ -128,7 +128,7 @@ py -3.13 test_serial.py --log sensor_log.csv
 
 ---
 
-## ④ camera_stream.py — USB 摄像头流式传输 + 人脸检测
+## ③ camera_stream.py — USB 摄像头流式传输 + 人脸检测
 
 通过 USB 摄像头（如 USB2.0 Web Cam）采集画面，支持人脸检测，两种输出模式：
 
@@ -174,7 +174,7 @@ py -3.13 camera_test.py --cam 0 --frames 10
 
 ---
 
-## ⑤ voice_assistant.py — 语音交互模式（唤醒词 + Qwen2.5 + MCP）
+## ④ voice_assistant.py — 语音交互模式（唤醒词 + Qwen2.5 + MCP）
 
 对着麦克风说唤醒词「**Hey Bota**」（或直接键盘打字 / HTTP 下发指令），
 再说一句指令（如「把灯调成蓝色」「现在多少度」），
@@ -195,9 +195,10 @@ KWS 关键词声学唤醒（zipformer-wenetspeech 3.3M）+ 流式 ASR（streamin
 自带端点检测）+ 本地 VITS 语音合成（vits-melo-tts-zh_en）。
 模型一键下载：`py -3.13 download_sherpa_models.py`（KWS ~31MB / ASR ~1GB / TTS ~160MB，国内镜像加速）。
 
-`mcp_home_server.py` 作为子进程独占 A/B 两串口，暴露 9 个工具：
-`light / door / window / fan / buzzer / oled / display / ir / get_sensor_status`。
-（`ir` 为红外发射，发 NEC 码控家电；`display` 对应已移除的 TM1637 数码管，属保留接口。）
+`mcp_home_server.py` 作为子进程独占 A/B 两串口，暴露 10 个工具：
+`light / door / window / fan / buzzer / oled / display / ir / ac / get_sensor_status`。
+（`ir` 为红外发射，发 NEC 码控家电；`ac` 生成美的空调状态帧并走 `send_midea` 发射；
+`display` 对应已移除的 TM1637 数码管，属保留接口，当前固件会返回 error。）
 `voice_assistant.py` 不直接碰串口，所有硬件操作经 MCP `call_tool`。
 
 ### LLM 引擎：Qwen2.5（国内合规）
@@ -430,7 +431,7 @@ h ēi b ō t ǎ @Hey_Bota
 
 ---
 
-## ⑥ run_web.py — Web 仪表盘（监控 / 控制 / 门禁 / 历史）
+## ⑤ run_web.py — Web 仪表盘（监控 / 控制 / 门禁 / 历史）
 
 合并自协作组的数据库、Flask 前端和 YOLO 人脸识别三部分，重构为本目录下的 `web/` 包，
 作为 PC_Test 的标准服务之一。浏览器访问 **http://localhost:5000**：
@@ -459,7 +460,7 @@ py -3.13 run_web.py --no-serial
 
 ```text
 浏览器 ──HTTP── Flask(web/ 蓝图) ──MCP stdio── mcp_home_server.py ──USB── A/B 板
-                    │                              （独占串口，9 个工具）
+                    │                              （独占串口，10 个工具）
                     └── 每 2s get_sensor_status 轮询 → data/smart_home.db
 ```
 
@@ -469,9 +470,9 @@ py -3.13 run_web.py --no-serial
 - 配置在 [web_config.yaml](web_config.yaml)；运行时人脸配置写入 `data/face/face_config.json`（其优先级高于 yaml）。
 - 可选项：在硬件管理页配置 Home Assistant（配置存 `data/ha_config.json`，默认不含任何密钥）。
 
-**串口互斥**：Web 服务与 ⑤ `voice_assistant.py` 不能同时连板（共用同一个 MCP server）。
+**串口互斥**：Web 服务与 ④ `voice_assistant.py` 不能同时连板（共用同一个 MCP server）。
 单独运行时需要语音先停 Web，反之亦然；两者都只通过 MCP 操作硬件。
-两者（+摄像头流）要同时运行时直接用 ⑦ `start_all.py`——Web 退到 `--no-serial`，
+两者（+摄像头流）要同时运行时直接用 ⑥ `start_all.py`——Web 退到 `--no-serial`，
 硬件调用经语音助手 `POST /tool` 转发，不冲突。
 
 ### 人脸识别（YOLOv8-face + ArcFace）
@@ -513,7 +514,7 @@ py -3.13 scripts/enroll_faces.py
 
 ---
 
-## ⑦ start_all.py — 一键启动「语音 + 人脸识别 + 摄像头流」
+## ⑥ start_all.py — 一键启动「语音 + 人脸识别 + 摄像头流」
 
 语音助手、Web 人脸识别、摄像头视频流三者一起运行的联动栈，一条命令（或双击
 [start_all.bat](start_all.bat)）：
@@ -560,9 +561,9 @@ py -3.13 start_all.py --no-camera                      # 不起摄像头
 
 ---
 
-## ⑧ Docker 部署（推荐在香橙派等 Linux 设备上使用）
+## ⑦ Docker 部署（推荐在香橙派等 Linux 设备上使用）
 
-与 ⑦ 相同的四服务联动栈，但以容器形态交付，换机器只需装 Docker，不再手工配
+与 ⑥ 相同的四服务联动栈，但以容器形态交付，换机器只需装 Docker，不再手工配
 Python/依赖。文件：
 
 - [docker-compose.yml](docker-compose.yml)：qwen(:8000) + voice(:8101，独占串口) +
@@ -571,7 +572,7 @@ Python/依赖。文件：
 - [docker-compose.dashscope.yml](docker-compose.dashscope.yml)：云端 LLM 覆盖文件（不起本地 3B）
 - [docker/.env.example](docker/.env.example)：串口/摄像头/端口等环境变量模板
 
-### 架构（容器间关系与 ⑦ 一致）
+### 架构（容器间关系与 ⑥ 一致）
 
 ```text
 宿主机 /dev/ttyUSB0|1 ──▶ voice 容器（独占串口，内含 mcp_home_server 子进程）
@@ -678,7 +679,7 @@ sudo docker compose -f docker-compose.yml -f docker-compose.dashscope.yml up -d 
   开门联动、不做语音对话的部署）。
 - **依赖固定**：镜像内 `mcp` 固定 1.x（mcp 2.x 移除了 `mcp.server.fastmcp`，
   全新 pip 解析会装到 2.x 导致 mcp_home_server 崩溃——容器实测已踩过并固定）。
-- Windows/macOS 桌面开发仍建议用 ⑦ `start_all.py`（Docker Desktop 无法透传
+- Windows/macOS 桌面开发仍建议用 ⑥ `start_all.py`（Docker Desktop 无法透传
   /dev 串口与 /dev/snd 这类物理外设），Docker 形态面向**设备端部署**。
   若只想在桌面 Docker 里体验 Web/LLM（不接板子/麦克风/摄像头），可用内置覆盖：
   `docker compose -f docker-compose.yml -f docker-compose.desktop.yml up -d`

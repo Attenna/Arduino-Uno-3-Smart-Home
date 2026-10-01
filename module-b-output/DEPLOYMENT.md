@@ -3,7 +3,7 @@
 > 面向：在 **Linux 主机** 上编译烧录 Module B 固件、安装接线、调试、扩展新执行器。
 > 基础信息（用途/引脚/命令表）见 [README.md](README.md) 与 [docs/serial-protocol.md](../docs/serial-protocol.md)。
 
-**功能一句话**：Module B 是一块 Arduino Uno + 8 类执行器/显示设备，接收命令并执行硬件动作，不做业务判断。
+**功能一句话**：Module B 是一块 Arduino Uno，当前固件 `V2.4` 带 7 类现役执行器/显示设备，接收命令并执行硬件动作，不做业务判断。TM1637 数码管已于 2026-09 正式版裁剪；红外支持 NEC 与美的空调长码。
 
 ---
 
@@ -40,17 +40,19 @@ pio device monitor --port /dev/ttyUSB0 --baud 115200
 烧录后串口应立即输出：
 
 ```json
-{"module":"output","type":"ready","board":"MODULE_B","role":"OUTPUT_NODE","version":"V2.0"}
+{"module":"output","type":"ready","board":"MODULE_B","role":"OUTPUT_NODE","version":"V2.4"}
 ```
 
-发送命令测试（**推荐先测纯文本命令**，见下节「已知问题」）：
+发送命令测试（JSON 与文本命令均可）：
 
 ```bash
-echo 'B:LIGHT:RED' > /dev/ttyUSB0        # 红灯
+mosquitto_pub 或 echo 均可，例如：
+echo 'B:LIGHT:RED' > /dev/ttyUSB0        # 红灯（文本命令）
 echo 'B:DOOR:OPEN' > /dev/ttyUSB0        # 开门
 echo 'B:STATUS' > /dev/ttyUSB0           # 查状态
 ```
 
+JSON 形式同样正常：`{"cmd":"light","action":"red"}`。
 若返回 `{"type":"response","result":"ok",...}` 即链路正常。
 
 ---
@@ -65,8 +67,9 @@ echo 'B:STATUS' > /dev/ttyUSB0           # 查状态
 | **2× SG90 舵机** | **独立 5V 电源** | 舵机峰值电流大，仅靠 Uno 5V 会导致欠压复位 |
 | **直流风扇（L298N/TB6612）** | **独立电源**（5~12V） | 驱动器 VCC 单独供，**GND 与 Uno 共地** |
 | NeoPixel 灯带（8 颗） | 建议独立 5V | 全亮电流 >400mA，易拉低 5V |
-| 蜂鸣器/OLED/TM1637 | Uno 5V | 小电流 |
+| 蜂鸣器/OLED | Uno 5V | 小电流 |
 
+> TM1637 已移除（D5/D6 悬空）。
 > ⚠️ 电源共地是硬性要求：所有独立电源的 **GND 必须与 Uno GND 相连**。
 > ⚠️ 灯带数据线 D4 与供电地线尽量分开走，避免刷新 OLED 时打乱灯带。
 
@@ -77,11 +80,12 @@ echo 'B:STATUS' > /dev/ttyUSB0           # 查状态
 | 门舵机 SG90 | D2 | 独立 5V | 开=90° / 关=0° |
 | 窗舵机 SG90 | D3 | 独立 5V | 开=120° / 关=0° / 正常=45° |
 | NeoPixel 灯带 | D4 | 5V | 8 颗，需加 300Ω 串联电阻防上电毛刺 |
-| TM1637 数码管 | CLK=D5, DIO=D6 | 5V | — |
 | 风扇驱动（L298N/TB6612） | INA=D8, INB=D7 | 独立电源 | **D8/D7 非 PWM**，退化为开关（0=停，非 0=全速） |
 | 蜂鸣器 | D9 | 5V | `BUZZER_ACTIVE_LOW=1` 时低电平触发（有源蜂鸣器） |
 | SH1106 OLED（SPI 4 线） | SCK=D13, MOSI=D11, CS=D10, DC=A0, RES=A1 | 5V/3.3V | **SPI 接口非 I2C** |
 | V1221 红外发射管 | D12 | 5V | NEC 38kHz 与美的空调长码；发射管正负极勿接反（阳极接电阻到 D12） |
+
+**已移除**：TM1637 数码管（原 CLK=D5、DIO=D6，现已悬空）。
 
 > ⚠️ OLED 是 **SPI 4 线**（U8x8 驱动），不是 I2C。接线错误会白屏。
 > ⚠️ 风扇调速需要 PWM 引脚（3/5/6/9/10/11），当前 D8/D7 仅支持开关；如需调速需改板/改线。
@@ -118,16 +122,9 @@ echo 'B:STATUS' > /dev/ttyUSB0
 {"module":"output","type":"state","door":"closed","window":"normal","fan":0,"light":0,"buzzer":"off"}
 ```
 
-> ⚠️ 状态 JSON 较长，串口读取时若行被截断，多为对端缓冲太小（见 README 已知问题），用 `cat /dev/ttyUSB0` 流式看可确认完整内容。
+> ⚠️ 状态 JSON 较长，串口读取时若行被截断，多为对端读取缓冲太小；用 `cat /dev/ttyUSB0` 流式查看可确认完整内容。
 
-### 3.3 已知问题（务必先读）
-
-> **固件当前 JSON 命令解析存在 bug**：`{"cmd":"..."}` 形式命令会返回 `parse_error`，
-> 而纯文本命令 `B:XXX` 全部正常。排查时可先用 `B:XXX` 文本命令（功能等价）。
-> 涉及 PC 端工具时，DSL 已自动降级为文本命令发送，无需人工干预。
-> （该 bug 定位在 `Protocol.cpp` 的 JSON 分支，可对照 `handleLegacy` 文本命令修固件。）
-
-### 3.4 常见问题速查
+### 3.3 常见问题速查
 
 | 现象 | 排查 |
 |------|------|
@@ -136,6 +133,7 @@ echo 'B:STATUS' > /dev/ttyUSB0
 | 上电灯带打乱/复位 | `LIGHT_BOOT_ON=0`；或独立供电 |
 | 风扇无调速 | D8 非 PWM，只能开关 |
 | OLED 白屏/错乱 | 接线（SPI 非 I2C）+ `OLED_IS_SH1106` 型号 |
+| `display` 命令返回 error | TM1637 已裁剪（`ENABLE_TM1637=0`），属预期 |
 | 命令无响应 | JSON 需单行、`cmd`/`action` 必填 |
 
 ---
