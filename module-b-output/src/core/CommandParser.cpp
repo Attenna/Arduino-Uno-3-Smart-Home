@@ -69,6 +69,7 @@ void assignString(Command& cmd, const char* key, const char* val) {
 
 void assignNumber(Command& cmd, const char* key, unsigned long v) {
     if (strcmp(key, "value") == 0)       cmd.value = (long)v;
+    else if (strcmp(key, "id") == 0)     cmd.id = (long)v;
     else if (strcmp(key, "r") == 0)      cmd.r = (long)v;
     else if (strcmp(key, "g") == 0)      cmd.g = (long)v;
     else if (strcmp(key, "b") == 0)      cmd.b = (long)v;
@@ -96,6 +97,7 @@ bool CommandParser::parse(const char* json, Command& cmd) {
     cmd.count = 1;
     cmd.onMs = 200;
     cmd.offMs = 200;
+    cmd.id = -1;                 // 未带 id 时响应不回显 id 字段
 
     const char* p = json;
     skipWs(p);

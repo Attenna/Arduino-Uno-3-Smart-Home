@@ -29,8 +29,8 @@ private:
     void handleLine(const char* line);
     void normalizeFullWidth();             // 全角引号/冒号/逗号 → 半角
     bool handleLegacy(const char* line);   // 旧文本命令兼容
-    void respondOk(const char* device, const char* action);
-    void respondError(const char* err);
+    void respondOk(const char* device, const char* action, long id);
+    void respondError(const char* err, long id = -1);
 };
 
 #endif // PROTOCOL_B_H

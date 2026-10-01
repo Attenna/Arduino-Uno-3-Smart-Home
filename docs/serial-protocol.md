@@ -10,7 +10,7 @@
 > | 板 | 固件版本 | 说明 |
 > |----|---------|------|
 > | Module A | `V2.1` | 移除超声波 / 土壤湿度，新增矩阵键盘 |
-> | Module B | `V2.4` | 移除 TM1637 数码管；红外支持 NEC + 美的空调长码 |
+> | Module B | `V2.6` | 移除 TM1637 数码管；红外支持 NEC + 美的空调长码；风扇引脚每 loop 自愈；响应回显请求 `id` |
 >
 > 下文中，被裁剪的字段/命令均以 **「（已裁剪）」** 标注。
 
@@ -122,6 +122,17 @@ Module A 原则上"只报告"，下行仅支持少量**无业务含义**的控�
 {"cmd":"fan","action":"set_speed","value":180}
 ```
 
+**可选字段 `id`**（V2.6 起）：客户端可携带任意整数 `id`，固件会在对应的 `response`
+里原样回显。服务端据此把响应归属到具体命令，**迟到/串味的响应 id 对不上就能直接丢弃**，
+不会被误当成本次命令的结果。不带 `id` 时行为与旧版完全一致（响应不含 `id` 字段）。
+
+```json
+{"cmd":"fan","action":"set_speed","value":180,"id":7}
+→ {"module":"output","type":"response","result":"ok","cmd":"fan","action":"set_speed","id":7}
+```
+
+> `system/status` 回的是 `state` 帧（不带 `id`），`system/who` 回 `ready` 帧。
+
 ### 3.1 命令一览
 
 | `cmd` | `action` | 附加字段 | 状态 | 说明 |
@@ -186,7 +197,7 @@ Module A 原则上"只报告"，下行仅支持少量**无业务含义**的控�
 ### 4.1 就绪
 
 ```json
-{"module":"output","type":"ready","board":"MODULE_B","role":"OUTPUT_NODE","version":"V2.4"}
+{"module":"output","type":"ready","board":"MODULE_B","role":"OUTPUT_NODE","version":"V2.6"}
 ```
 
 ### 4.2 命令响应
@@ -195,6 +206,8 @@ Module A 原则上"只报告"，下行仅支持少量**无业务含义**的控�
 {"module":"output","type":"response","result":"ok","cmd":"fan","action":"set_speed"}
 {"module":"output","type":"response","result":"error","error":"parse_error"}
 ```
+
+> 下行带了 `id` 时，响应末尾会多一个 `,"id":<值>`（V2.6 起）。
 
 ### 4.3 状态查询结果
 

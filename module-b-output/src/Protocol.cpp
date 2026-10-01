@@ -89,24 +89,36 @@ void Protocol::handleLine(const char* line) {
     }
 
     if (_dispatcher->dispatch(cmd)) {
-        respondOk(cmd.device, cmd.action);
+        respondOk(cmd.device, cmd.action, cmd.id);
     } else {
-        respondError("unknown_command");
+        respondError("unknown_command", cmd.id);
     }
 }
 
-void Protocol::respondOk(const char* device, const char* action) {
+// 回显请求 id：客户端带了 id 就原样带回，服务端据此判断响应属于哪条命令，
+// 迟到/串味的响应不会被当成本次结果（不带 id 时保持旧格式，向后兼容）。
+void Protocol::respondOk(const char* device, const char* action, long id) {
     Serial.print(F("{\"module\":\"output\",\"type\":\"response\",\"result\":\"ok\",\"cmd\":\""));
     Serial.print(device);
     Serial.print(F("\",\"action\":\""));
     Serial.print(action);
-    Serial.println(F("\"}"));
+    Serial.print('"');
+    if (id >= 0) {
+        Serial.print(F(",\"id\":"));
+        Serial.print(id);
+    }
+    Serial.println(F("}"));
 }
 
-void Protocol::respondError(const char* err) {
+void Protocol::respondError(const char* err, long id) {
     Serial.print(F("{\"module\":\"output\",\"type\":\"response\",\"result\":\"error\",\"error\":\""));
     Serial.print(err);
-    Serial.println(F("\"}"));
+    Serial.print('"');
+    if (id >= 0) {
+        Serial.print(F(",\"id\":"));
+        Serial.print(id);
+    }
+    Serial.println(F("}"));
 }
 
 // ============================================
@@ -152,6 +164,7 @@ bool Protocol::handleLegacy(const char* line) {
 
     Command cmd;
     memset(&cmd, 0, sizeof(cmd));
+    cmd.id = -1;                 // 旧文本命令无 id，响应不回显
 
     // 门
     if (strcmp(p, "DOOR:OPEN") == 0)       { strcpy(cmd.device, "door");   strcpy(cmd.action, "open"); }
@@ -219,7 +232,7 @@ bool Protocol::handleLegacy(const char* line) {
 
     cmd.valid = true;
     if (_dispatcher->dispatch(cmd)) {
-        respondOk(cmd.device, cmd.action);
+        respondOk(cmd.device, cmd.action, cmd.id);
         return true;
     }
     return false;

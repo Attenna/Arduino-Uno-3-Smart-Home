@@ -155,6 +155,8 @@ class HomeController:
         self._b_resp: Optional[dict] = None
         self._b_expect: tuple = ()
         self._b_waiter = False
+        self._b_waiter_id = -1
+        self._b_next_id = 0
         self._b_last_frame_ts = 0.0
         self._b_last_cmd_ts = 0.0
         self._b_hb_fails = 0
@@ -362,27 +364,40 @@ class HomeController:
         """
         if self.ser_b is None:
             return "error: Module B 未连接，无法执行硬件操作"
-        line = json.dumps(cmd, ensure_ascii=False) + "\n"
         with self._b_lock:
-            result = self._send_b_once(line, expect=expect)
+            result = self._send_b_one(cmd, expect=expect)
             if allow_reopen and result.startswith("error: B 板响应超时"):
                 self._reopen_b()
-                result = self._send_b_once(line, expect=expect)
+                result = self._send_b_one(cmd, expect=expect)   # 重试重新分配 id
             return result
 
-    def _send_b_once(self, line: str, expect: tuple = ("response",),
+    def _send_b_one(self, cmd: dict, expect: tuple = ("response",),
+                    timeout: float = _B_CMD_TIMEOUT) -> str:
+        """给命令分配单调 id、序列化并下发一次（调用方需持有 _b_lock）。
+
+        带 id 是为了让响应可被归属：迟到/串味的响应 id 对不上就直接丢弃，不会被
+        当成本次命令的结果（固件 V2.6 起回显 id；旧固件不回显则退化为「只认第一条」）。
+        """
+        cmd_id = self._b_next_id
+        self._b_next_id += 1
+        line = json.dumps(dict(cmd, id=cmd_id), ensure_ascii=False) + "\n"
+        return self._send_b_once(line, cmd_id, expect=expect, timeout=timeout)
+
+    def _send_b_once(self, line: str, cmd_id: int = -1,
+                     expect: tuple = ("response",),
                      timeout: float = _B_CMD_TIMEOUT) -> str:
         """写一条命令并等它的响应帧（调用方需持有 _b_lock）。
 
         只等 ``expect`` 里列出的帧类型：普通命令等 response，心跳等 state（B 板的
-        system/status 回的是 state 帧，不是 response）。迟到的旧响应不会被当成本次
-        结果——读取线程见「无等待者」就直接丢弃并记录。
+        system/status 回的是 state 帧，不是 response）。响应还要 id 对得上（或对端
+        是旧固件、根本不回显 id）才算本次结果，其余一律丢弃并记录。
         """
         if self.ser_b is None:
             return "error: Module B 未连接"
         with self._b_resp_lock:
             self._b_resp = None
             self._b_expect = expect
+            self._b_waiter_id = cmd_id
             self._b_waiter = True
             self._b_resp_event.clear()
         try:
@@ -392,11 +407,13 @@ class HomeController:
             with self._b_resp_lock:
                 self._b_waiter = False
                 self._b_expect = ()
+                self._b_waiter_id = -1
             return f"error: 串口写入失败 {e}"
         got = self._b_resp_event.wait(timeout)
         with self._b_resp_lock:
             self._b_waiter = False
             self._b_expect = ()
+            self._b_waiter_id = -1
             resp = self._b_resp
             self._b_resp = None
         if not got or resp is None:
@@ -463,12 +480,16 @@ class HomeController:
         """按 type 分类一帧：response/state 唤醒等待者，ready/alert 记账并上报。"""
         mtype = msg.get("type")
         if mtype == "response":
+            rid = msg.get("id")
             with self._b_resp_lock:
-                if self._b_waiter and "response" in self._b_expect:
+                wid = self._b_waiter_id
+                # id 对得上才算本次结果；对端是旧固件、不回显 id(None) 时退化为「只认第一条」
+                id_ok = rid is None or rid == wid
+                if self._b_waiter and "response" in self._b_expect and id_ok:
                     self._b_resp = msg
                     self._b_resp_event.set()
                     return
-            print(f"[B] 迟到的响应（已无等待者，丢弃）: {text}",
+            print(f"[B] 丢弃非本次响应（等待者={wid}, 收到 id={rid}）: {text}",
                   file=sys.stderr, flush=True)
         elif mtype == "state":
             self._b_last_state = msg

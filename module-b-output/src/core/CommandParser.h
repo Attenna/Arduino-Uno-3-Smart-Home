@@ -6,6 +6,7 @@
 // 解析后的命令结构（字段固定，便于 Dispatcher 分发）
 struct Command {
     bool valid;
+    long id;                    // 请求 id：客户端可选携带，响应原样回显；-1 = 未提供
     char device[12];
     char action[20];
     long value;                 // fan 速度 / light 白亮度 / display 数字
