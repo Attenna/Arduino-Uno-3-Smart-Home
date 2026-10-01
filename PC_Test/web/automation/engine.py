@@ -641,11 +641,19 @@ class AutomationEngine:
                 kw["presence_hold_sec"] = float(action["presence_hold_sec"])
             if action.get("manual_grace_s") is not None:
                 kw["manual_grace_s"] = float(action["manual_grace_s"])
+            # 手动冷却窗口内，规则不得把全屋从手动抢到「自动」——页面承诺
+            # 「手动操作后 30 秒内不被自动规则改动」，模式横跳是风扇事故的
+            # 放大器（刚手动关完，规则立刻切 auto）。切离家不受限（只关不开）。
+            if mode == "auto":
+                now = time.time()
+                if any(self.home_mode.within_manual_grace(d, now)
+                       for d in self.home_mode.GRACE_DEVICES):
+                    return True, "设备处于手动冷却窗口，规则不切换到自动模式（保持手动）"
             self.home_mode.configure(reason="积木规则", **kw)
             # 覆盖档以前靠 1s tick 下发；手动模式下 tick 已被禁用，因此规则若
-            # 显式带了覆盖档，这里立即执行一次（去重缓存保证目标未变不打串口）
+            # 显式带了覆盖档，这里立即执行一次（auto=True 走自动化硬门控）
             if "fan_override" in kw or "light_level" in kw:
-                self.home_mode.apply_overrides_now(reason="积木规则")
+                self.home_mode.apply_overrides_now(reason="积木规则", auto=True)
             parts = []
             if "mode" in kw:
                 parts.append(f"模式={MODE_LABELS.get(kw['mode'], kw['mode'])}")
@@ -738,7 +746,12 @@ class AutomationEngine:
                 else:
                     target = self.home_mode.fan_memory
             target = max(0, min(100, int(target)))
-            ok, msg = self.bridge.control_fan(target)
+            # 自动化唯一入口：硬策略下规则只能关风扇（target=0），正转速被拦截，
+            # 拦截时不写库、不记规则动作（applied=False）。
+            ok, msg, applied = self.home_mode.auto_apply_fan(
+                target, f"积木规则风扇动作（{op}）")
+            if not applied:
+                return True, msg
             if ok:
                 self.db.update_status(fan_speed=target)
                 self.home_mode.note_rule_action("fan", speed=target)

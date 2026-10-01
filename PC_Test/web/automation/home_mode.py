@@ -65,6 +65,10 @@ DEFAULT_CONFIG = {
     "light_level": "auto",         # auto/hold/dark/half/bright
     "presence_hold_sec": 1200.0,   # PIR 触发后「人还在家」的保持窗口（秒，默认20分钟）
     "manual_grace_s": 30.0,        # 手动操作后，自动/规则/tick 让位的冷却窗口（秒）
+    # 硬策略（2026-10-01 第四次风扇事故后确立）：自动化**永远只能关风扇，
+    # 不能开风扇/调档**——风扇只接受面板/语音等显式人工指令开启。需要恢复
+    # 「温度高自动开风扇」类玩法时，由熟悉语义的用户显式改成 True。
+    "auto_fan_enable": False,
 }
 
 _NUMERIC_KEYS = ("presence_hold_sec", "manual_grace_s")
@@ -93,6 +97,7 @@ class HomeModeManager:
         self._last_window = None       # 最近下发的窗状态
         self._last_reason = ""
         self._last_manual: dict[str, float] = {}   # device -> 最近手动操作时刻
+        self._fan_block_logged = False   # 自动开风扇被拦截的日志去重（状态变化才记）
 
     # ==================== 配置与持久化 ====================
 
@@ -115,6 +120,7 @@ class HomeModeManager:
         if self.cfg.get("light_level") not in LIGHT_LABELS:
             self.cfg["light_level"] = "auto"
         self.cfg["enabled"] = bool(self.cfg.get("enabled", True))
+        self.cfg["auto_fan_enable"] = bool(self.cfg.get("auto_fan_enable", False))
         for key in _NUMERIC_KEYS:
             try:
                 self.cfg[key] = float(self.cfg[key])
@@ -210,6 +216,7 @@ class HomeModeManager:
             if device == "fan":
                 fan_speed = max(0, min(100, int(state.get("speed", 0) or 0)))
                 self._last_fan = fan_speed
+                self._fan_block_logged = False   # 人工操作后恢复拦截日志的一次性记录
                 if fan_speed > 0:
                     self._fan_memory = fan_speed
                 if self.cfg["fan_override"] is not None:
@@ -330,8 +337,9 @@ class HomeModeManager:
                 now = time.time()
                 override = self.cfg["fan_override"]
                 if override in ("on", "off") and not self.within_manual_grace("fan", now):
-                    self._apply_fan(100 if override == "on" else 0,
-                                    "档位覆盖：强制" + ("开" if override == "on" else "关") + "风扇")
+                    self.auto_apply_fan(
+                        100 if override == "on" else 0,
+                        "档位覆盖：强制" + ("开" if override == "on" else "关") + "风扇")
                 level = self.cfg["light_level"]
                 if level in LEVEL_PCT and not self.within_manual_grace("light", now):
                     self._apply_light("on", LEVEL_PCT[level],
@@ -339,13 +347,14 @@ class HomeModeManager:
         except Exception as e:                       # noqa: BLE001
             logger.debug("[全屋模式] 滴答处理异常: %s", e)
 
-    def apply_overrides_now(self, reason: str = "页面切换覆盖档") -> None:
-        """页面/积木把覆盖档写入配置后**立即执行一次**。
+    def apply_overrides_now(self, reason: str = "页面切换覆盖档",
+                            auto: bool = False) -> None:
+        """覆盖档写入配置后立即执行一次。
 
-        tick() 在手动模式下被整体禁用，因此手动模式下用户在页面点「强制关/开」
-        不能靠下一秒 tick 生效——由 PUT home_mode 显式调本方法：只执行这一次，
-        成功后是否持续保证由模式决定（自动/离家 tick 续保，手动不再抢占）。
-        去重缓存（_last_fan/_last_light）保证目标未变时不会真的打串口。
+        - ``auto=False``（页面 PUT，显式人工）：按档执行；
+        - ``auto=True``（积木规则触发）：风扇走 `auto_apply_fan` 硬门控，
+          默认策略下「强制开」不会真的开风扇。
+        tick() 在手动模式下整体禁用；自动/离家模式 tick 续保。
         """
         with self._lock:
             if not self.cfg["enabled"]:
@@ -353,9 +362,12 @@ class HomeModeManager:
             override = self.cfg["fan_override"]
             level = self.cfg["light_level"]
         if override in ("on", "off"):
-            self._apply_fan(
-                100 if override == "on" else 0,
-                f"{reason}：强制{'开' if override == 'on' else '关'}风扇")
+            speed = 100 if override == "on" else 0
+            label = f"{reason}：强制{'开' if override == 'on' else '关'}风扇"
+            if auto:
+                self.auto_apply_fan(speed, label)
+            else:
+                self._apply_fan(speed, label)
         if level in LEVEL_PCT:
             self._apply_light("on", LEVEL_PCT[level],
                               f"{reason}：灯光{LIGHT_LABELS[level]}")
@@ -378,6 +390,26 @@ class HomeModeManager:
         bridge = self.bridge
         return bool(bridge) and (getattr(bridge, "online", False)
                                  or getattr(bridge, "relay_url", ""))
+
+    def auto_apply_fan(self, speed: int, reason: str) -> tuple[bool, str, bool]:
+        """**所有自动化路径**（积木规则/tick/规则设覆盖档）开/关风扇的唯一入口。
+
+        硬策略：``auto_fan_enable=False``（默认）时，自动化只允许把风扇设为 0
+        （关），任何正转速一律拦截且**不写库、不动去重缓存**——风扇只能由面板/
+        语音等显式人工指令开启。返回 ``(ok, msg, applied)``：applied=False 表示
+        被策略跳过（调用方不得再按目标值写库）。
+        """
+        speed = max(0, min(100, int(speed)))
+        with self._lock:
+            allowed = speed == 0 or bool(self.cfg["auto_fan_enable"])
+        if not allowed:
+            if not self._fan_block_logged:
+                self._log(f"{reason}：自动开启风扇被硬策略拦截（风扇只能手动开），已跳过")
+                self._fan_block_logged = True
+            return True, "自动开启风扇已被禁用（只能手动开启）", False
+        self._fan_block_logged = False
+        ok = self._apply_fan(speed, reason)
+        return ok, ("ok" if ok else "failed"), ok
 
     def _apply_fan(self, speed: int, reason: str) -> bool:
         speed = max(0, min(100, int(speed)))

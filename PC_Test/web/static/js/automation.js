@@ -1408,7 +1408,14 @@ async function loadHomeMode() {
     badge.textContent = '当前模式：' + (HOME_MODE.mode_label || HOME_MODE.mode);
     badge.className = 'mode-badge mode-' + HOME_MODE.mode;
     const fanBtn = document.getElementById('fanOverrideBtn');
-    if (fanBtn) fanBtn.textContent = '🌀 风扇：' + HOME_MODE.fan_label;
+    if (fanBtn) {
+        if (HOME_MODE.fan_override === 'on') {
+            // 历史/API 遗留的「强制开」：硬策略下不会真正开风扇，提示点此取消
+            fanBtn.textContent = '🌀 风扇：强制开（点此取消）';
+        } else {
+            fanBtn.textContent = '🌀 风扇：' + HOME_MODE.fan_label;
+        }
+    }
     const lightBtn = document.getElementById('lightLevelBtn');
     if (lightBtn) lightBtn.textContent = '💡 灯光：' + HOME_MODE.light_label;
     const detail = document.getElementById('homeModeDetail');
@@ -1438,8 +1445,11 @@ function setHomeMode(mode) {
 }
 
 function cycleFanOverride() {
+    // 页面只暴露「自动 ↔ 强制关」两档：没有「强制开」——自动化硬策略禁止
+    // 自动开风扇（风扇只能在风扇卡片上手动开）。若档位被 API/积木设成了
+    // 历史值「强制开」，点一下回到「自动」。
     const cur = HOME_MODE ? HOME_MODE.fan_override : null;
-    const next = cur === null ? 'off' : (cur === 'off' ? 'on' : null);
+    const next = cur === 'off' ? null : 'off';
     putHomeMode({ fan_override: next, reason: '页面切换风扇覆盖' });
 }
 
