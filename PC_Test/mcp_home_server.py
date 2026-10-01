@@ -504,16 +504,18 @@ class HomeController:
                                 allow_reopen=False, expect=("state",))
             if text.startswith("error"):
                 self._b_hb_fails += 1
-                print(f"[B] 心跳失败 {self._b_hb_fails}/{_B_HB_FAILS_TO_REOPEN} 次: "
-                      f"{text}", file=sys.stderr, flush=True)
-                if self._b_hb_fails >= _B_HB_FAILS_TO_REOPEN:
-                    self._b_hb_fails = 0
+                print(f"[B] 心跳失败 {self._b_hb_fails} 次: {text}",
+                      file=sys.stderr, flush=True)
+                # 每失败 _B_HB_FAILS_TO_REOPEN 次才重开一次：单次抖动不重开（重开会经
+                # DTR 复位 B 板）。**不在此处清零计数**，否则成功后就打不出「恢复正常」。
+                if self._b_hb_fails % _B_HB_FAILS_TO_REOPEN == 0:
                     with self._b_lock:
                         self._reopen_b()
-            elif self._b_hb_fails:
-                print(f"[B] 心跳恢复正常（此前连续失败 {self._b_hb_fails} 次）",
-                      file=sys.stderr, flush=True)
-                self._b_hb_fails = 0
+            else:
+                if self._b_hb_fails:
+                    print(f"[B] 心跳恢复正常（此前连续失败 {self._b_hb_fails} 次）",
+                          file=sys.stderr, flush=True)
+                    self._b_hb_fails = 0
 
     def serial_health(self) -> str:
         """串口链路健康度快照（只读，供 get_serial_health / 排障）。"""
@@ -555,7 +557,6 @@ class HomeController:
             self.ser_b.close()
         except Exception:                            # noqa: BLE001
             pass
-        self._b_reopen_count += 1
         if not port:
             print("[B] 串口重开失败：未知端口名", file=sys.stderr)
             self.ser_b = None
@@ -564,6 +565,9 @@ class HomeController:
             time.sleep(0.2)
             self.ser_b = serial.Serial(port, BAUD, timeout=1)
             time.sleep(2.0)
+            # 只在真正打开成功时计数：失败重试不算「重开自愈」，否则日志里的
+            # 第 N 次会把 24 次失败也算进去，读数严重失真。
+            self._b_reopen_count += 1
             print(f"[B] 串口已重开自愈（第 {self._b_reopen_count} 次）: {port}",
                   file=sys.stderr)
         except Exception as e:                       # noqa: BLE001
