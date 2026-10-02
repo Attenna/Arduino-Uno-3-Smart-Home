@@ -149,7 +149,7 @@
 | `TZ` | `Asia/Shanghai` | 时区 |
 | `SERIAL_PORT_A` | `/dev/ttyUSB0` | A 板串口（建议用 `/dev/serial/by-id/...` 稳定路径） |
 | `SERIAL_PORT_B` | `/dev/ttyUSB1` | B 板串口 |
-| `CAMERA_DEVICE` | `/dev/video0` | USB 摄像头设备 |
+| `CAMERA_DEVICE` | `/dev/video0` | 摄像头**优先候选**节点；容器随宿主机 `/dev` 走，不在位时自动枚举其它 `/dev/video*` |
 | `MIC_INDEX` | （空） | 麦克风索引，空 = 系统默认 |
 | `QWEN_PORT` | `8000` | 本地 LLM 宿主端口 |
 | `VOICE_PORT` | `8101` | 语音宿主端口 |
@@ -245,6 +245,8 @@ ls -l /dev/ttyUSB* /dev/ttyACM* /dev/serial/by-id/* /dev/video*
 | `PC_Test/data/face/face_config.json` | 运行时人脸配置，**优先级高于 yaml** | 改 yaml 不生效时删除它并重启 |
 | `PC_Test/data/ha_config.json` | 可选 HA 对接配置（默认无密钥） | 硬件管理页维护 |
 | `PC_Test/data/smart_home.db` | SQLite 数据库 | 删除即重置全部历史 |
+| `PC_Test/data/global_state.json` | 积木用的全局状态变量（含 `g:全屋模式` 等） | 与 `automation_rules.json` 同生命周期；在列表页删掉那条「📌 状态」条目即可，不必删文件 |
+| `PC_Test/data/automation_rules.pre-global-state.json` | 首次加载时旧规则迁移前的一次性备份 | 只写一次，确认规则无误后可删 |
 | `PC_Test/data/face/embeddings.pkl` | 人脸嵌入库 | 由 `scripts/enroll_faces.py` 生成 |
 
 `data/` 与 `models/` 均已在 `.gitignore` 中，不入库。

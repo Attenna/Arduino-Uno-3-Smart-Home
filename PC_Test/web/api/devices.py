@@ -22,19 +22,32 @@ bp = Blueprint("devices", __name__)
 
 
 def _note_manual(device, **state):
-    """告知全屋状态机这是一次手动操作：切到「手动」并同步去重缓存。
+    """把手动操作广播给自动化引擎（不含任何设备专属策略）。
 
     用户策略：自动/离家中从面板（或语音）手动操作任一设备，全屋转为「手动」，
     保持刚设的状态不被自动逻辑覆盖；再按触摸键或页面「自动」即恢复自动调节。
+
+    「手动优先 30 秒让位」原先硬编码在引擎的 home_mode 状态机里，现在只是一条
+    通用事件：manual_mark_x / manual_clear_x 预设收到 ``manual_control`` 后维护
+    ``g:手动优先_x`` 与 ``g:全屋模式``，设备类预设带 ``g:手动优先_x == false``
+    条件自行让位。
+
+    风扇额外同步一次 ``note_external``：引擎对风扇下发做去重（``_last_cmd``），
+    面板手动设了 60% 后水位仍是旧值，规则就会把「已经是 60%」再发一遍。
     """
     automation = getattr(extensions, "automation", None)
-    home_mode = getattr(automation, "home_mode", None) if automation else None
-    if home_mode is None:
+    if automation is None:
         return
     try:
-        home_mode.note_manual_control(device, **state)
-    except Exception:                                # noqa: BLE001
-        logger.debug("通知全屋模式失败", exc_info=True)
+        automation.on_event({"event": "manual_control", "device": device,
+                            "ts": time.time()})
+    except Exception:                                    # noqa: BLE001
+        logger.debug("广播 manual_control 事件失败", exc_info=True)
+    if device == "fan" and "speed" in state:
+        try:
+            automation.note_external("fan", int(state.get("speed") or 0))
+        except Exception:                                # noqa: BLE001
+            logger.debug("同步风扇下发水位失败", exc_info=True)
 
 
 def _record_door(new_status, who="面板"):
@@ -121,7 +134,7 @@ class _DeviceGate:
       都不会再动硬件；
     * 执行失败不推进水位，保留最新 desired，允许前端重试。
 
-    自动化引擎 / 全屋模式走 bridge 直连且自带冷却去重，不经此收口器。
+    自动化引擎走 bridge 直连且自带下发去重，不经此收口器。
     """
 
     DEVICES = ("door", "window", "light", "fan", "ac")
@@ -466,10 +479,10 @@ def control_ac():
 def manual_report():
     """语音助手执行完硬件动作后回传，做与面板一致的记账。
 
-    语音进程独占串口、直连 MCP，web 侧看不到它的调用，因此仪表盘状态/历史/
-    全屋模式都会落后于真实硬件。语音在动作成功后把「哪个设备变成什么状态」
-    回传到这里：本接口**只记账、不下发硬件**（动作已经执行完毕），使语音与
-    面板产生等效效果——相同状态、相同历史记录、同样切到「手动」模式。
+    语音进程独占串口、直连 MCP，web 侧看不到它的调用，因此仪表盘状态/历史都会
+    落后于真实硬件。语音在动作成功后把「哪个设备变成什么状态」回传到这里：本
+    接口**只记账、不下发硬件**（动作已经执行完毕），使语音与面板产生等效效果
+    ——相同状态、相同历史记录，同样广播 manual_control 让积木切到「手动优先」。
     """
     data = request.get_json(silent=True) or {}
     device = str(data.get("device", "")).lower()

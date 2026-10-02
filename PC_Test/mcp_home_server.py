@@ -344,8 +344,9 @@ class HomeController:
         """键盘密码开门上报为「门禁通过」事件，供 web 全屋模式判定进门。
 
         复用 A 板 event 通道（recent_events），web 侧 _ingest_event →
-        automation.on_event({"event":"face","status":"granted"}) →
-        home_mode.on_face_granted()，由 Linux 统一记录日志与延时关门。
+        automation.on_event({"event":"face","status":"granted"}) → 积木规则
+        （预设 face_open_door / face_open_close）开门并延时关门。
+        全屋模式状态机已拆除，进门后的「切自动」也由规则读写 g:全屋模式 完成。
         """
         with self._snapshot_lock:
             self._events.append({

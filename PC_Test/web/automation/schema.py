@@ -16,9 +16,11 @@
 """
 from __future__ import annotations
 
+from . import webhook
 from .capabilities import (
     ACTION_DEVICES, COMPARATORS, CONDITION_SOURCES, EVENT_TRIGGERS,
 )
+from .global_state import is_var_id
 # RFID 卡号归一化（"AA BB CC DD"）与上报值全等比对，避免大小写/分隔符导致匹配失败
 from ..database import normalize_uid
 
@@ -35,19 +37,37 @@ def _require(obj: dict, keys: tuple[str, ...], where: str) -> None:
             raise ValidationError(f"{where} 缺少字段 {key}")
 
 
+def _check_source(sensor_id, where: str, var_types: dict | None) -> None:
+    """触发/条件的数据源合法性。
+
+    静态白名单（CONDITION_SOURCES）之外，放行形如 ``g:名字`` 的全局状态。
+    **宽松/严格双模**：``var_types`` 为 None（引擎读盘）时只校验格式——变量被删掉
+    不能让整个规则集校验失败（那会清空所有规则）；传了 var_types（页面保存）时
+    要求变量确实存在，避免用户写出永远不成立的错字规则。
+    """
+    if sensor_id in CONDITION_SOURCES:
+        return
+    if is_var_id(sensor_id):
+        if var_types is None or sensor_id in var_types:
+            return
+        raise ValidationError(
+            f"{where}引用的全局状态不存在: {sensor_id}"
+            "（请先在自动化页新建这条「📌 状态」条目）")
+    raise ValidationError(f"{where}未知传感器/状态: {sensor_id}")
+
+
 def _as_number(value, where: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValidationError(f"{where} 需要数字，得到 {value!r}")
     return float(value)
 
 
-def validate_trigger(trig: dict) -> dict:
+def validate_trigger(trig: dict, var_types: dict | None = None) -> dict:
     _require(trig, ("kind",), "触发块")
     kind = trig["kind"]
     if kind == "sensor":
         _require(trig, ("sensor", "op", "value"), "传感器触发块")
-        if trig["sensor"] not in CONDITION_SOURCES:
-            raise ValidationError(f"未知传感器/状态: {trig['sensor']}")
+        _check_source(trig["sensor"], "传感器触发块", var_types)
         if trig["op"] not in COMPARATOR_IDS:
             raise ValidationError(f"非法比较符: {trig['op']}")
         value = trig["value"]
@@ -73,8 +93,8 @@ def validate_trigger(trig: dict) -> dict:
         if event not in EVENT_TRIGGERS:
             raise ValidationError(f"未知事件: {event}")
         clean = {"kind": "event", "event": event}
-        # keypad / ir 事件可带参数过滤（按键名 / 红外命令码）
-        for extra in ("key", "command"):
+        # keypad / ir / manual_control 事件可带参数过滤（按键名 / 红外命令码 / 设备）
+        for extra in ("key", "command", "device"):
             if trig.get(extra) not in (None, ""):
                 clean[extra] = str(trig[extra]).strip()
         # rfid 事件可带卡号过滤（不填=任意卡片都触发）
@@ -101,10 +121,9 @@ def validate_trigger(trig: dict) -> dict:
     raise ValidationError(f"未知触发类型: {kind}")
 
 
-def validate_condition(cond: dict) -> dict:
+def validate_condition(cond: dict, var_types: dict | None = None) -> dict:
     _require(cond, ("sensor", "op", "value"), "条件块")
-    if cond["sensor"] not in CONDITION_SOURCES:
-        raise ValidationError(f"条件块未知传感器/状态: {cond['sensor']}")
+    _check_source(cond["sensor"], "条件块", var_types)
     if cond["op"] not in COMPARATOR_IDS:
         raise ValidationError(f"条件块非法比较符: {cond['op']}")
     value = cond["value"]
@@ -115,7 +134,9 @@ def validate_condition(cond: dict) -> dict:
     return {"sensor": cond["sensor"], "op": cond["op"], "value": value}
 
 
-def validate_action(action: dict, where: str = "动作块") -> dict:
+def validate_action(action: dict, where: str = "动作块",
+                    var_types: dict | None = None,
+                    http_policy: dict | None = None) -> dict:
     _require(action, ("device",), where)
     device = action["device"]
     if device not in ACTION_DEVICES:
@@ -127,6 +148,8 @@ def validate_action(action: dict, where: str = "动作块") -> dict:
             raise ValidationError("延时需在 1~300 秒之间")
         clean["seconds"] = seconds
         return clean
+    if device == "state":
+        return _validate_state_action(action, clean, where, var_types)
     if device == "door":
         status = action.get("status", "open")
         if status not in ("open", "close"):
@@ -251,41 +274,6 @@ def validate_action(action: dict, where: str = "动作块") -> dict:
             clean["timer"] = timer
         if len(clean) == 1:
             raise ValidationError("空调动作至少要设置一项（开关/模式/温度/风速/扫风/ECO/防直吹/定时）")
-    elif device == "home_mode":
-        # 三项都可选，但至少要设一项；空串 = 该项不改
-        mode = str(action.get("mode") or "").strip()
-        if mode:
-            if mode not in ("auto", "manual", "away", "toggle"):
-                raise ValidationError("全屋模式只能是 auto/manual/away/toggle")
-            clean["mode"] = mode
-        fan = str(action.get("fan_override") or "").strip()
-        if fan:
-            if fan not in ("auto", "on", "off", "cycle"):
-                raise ValidationError("风扇档位只能是 auto(回到自动)/on/off/cycle(循环下一档)")
-            clean["fan_override"] = fan
-        light = str(action.get("light_level") or "").strip()
-        if light:
-            if light not in ("auto", "hold", "dark", "half", "bright", "cycle"):
-                raise ValidationError("灯光档位只能是 auto/hold/dark/half/bright/cycle")
-            clean["light_level"] = light
-        # 状态机自身参数（原先只能在代码里改）
-        if "enabled" in action and action.get("enabled") is not None:
-            clean["enabled"] = bool(action["enabled"])
-        hold = action.get("presence_hold_sec")
-        if hold not in (None, ""):
-            hold = _as_number(hold, "存在判定保持时长")
-            # home_mode 侧不钳制这个值，校验必须自己钳住
-            if not 0 <= hold <= 86400:
-                raise ValidationError("存在判定保持时长需在 0~86400 秒之间")
-            clean["presence_hold_sec"] = hold
-        grace = action.get("manual_grace_s")
-        if grace not in (None, ""):
-            grace = _as_number(grace, "手动冷却窗口")
-            if not 1 <= grace <= 3600:
-                raise ValidationError("手动冷却窗口需在 1~3600 秒之间")
-            clean["manual_grace_s"] = grace
-        if len(clean) == 1:
-            raise ValidationError("全屋模式动作至少要设置一项（模式/风扇档位/灯光档位/参数）")
     elif device == "voice":
         act = str(action.get("action") or "wake").strip()
         if act not in ("wake", "say"):
@@ -298,23 +286,101 @@ def validate_action(action: dict, where: str = "动作块") -> dict:
             raise ValidationError("语音文本过长（最多 200 字符）")
         if text:
             clean["text"] = text
+    elif device == "http":
+        # 二次开发出站通道：URL/正文都可含 {占位符}，运行时由引擎渲染。
+        method = str(action.get("method") or "post").strip().lower()
+        if method not in ("get", "post"):
+            raise ValidationError(f"{where}HTTP 方法只能是 get/post")
+        ok, value = webhook.check_format(action.get("url"))
+        if not ok:
+            raise ValidationError(f"{where}{value}")
+        clean.update({"method": method, "url": value})
+        if http_policy is not None:
+            if not http_policy.get("enabled", True):
+                raise ValidationError(
+                    f"{where}HTTP 出站已关闭（web_config.yaml: "
+                    "automation.http_enabled: false）")
+            ok, why = webhook.check_url(
+                value,
+                allow_public=bool(http_policy.get("allow_public")),
+                allowed_hosts=http_policy.get("allowed_hosts") or ())
+            if not ok:
+                raise ValidationError(f"{where}{why}")
+        body = str(action.get("text") or "")
+        if body:
+            if len(body.encode("utf-8")) > webhook.MAX_BODY_BYTES:
+                raise ValidationError(
+                    f"{where}HTTP 正文不能超过 "
+                    f"{webhook.MAX_BODY_BYTES} 字节（UTF-8）")
+            clean["text"] = body
     return clean
 
 
-def validate_rule(rule: dict) -> dict:
+STATE_OPS = ("set", "toggle", "add")
+
+
+def _validate_state_action(action: dict, clean: dict, where: str,
+                           var_types: dict | None) -> dict:
+    """「设置全局状态」动作校验。
+
+    值的类型归一交给 ``GlobalStateStore.set_value``（写时强校验），这里只保证
+    JSON 结构合法 + 变量存在（严格模式）。宽松模式（引擎读盘）下变量被删不再
+    报错——否则删一个变量会清空整个规则集。
+    """
+    name = str(action.get("name") or "").strip()
+    if not is_var_id(name):
+        raise ValidationError(
+            f"{where}需选择一个全局状态（先新建「📌 状态」条目）")
+    if var_types is not None and name not in var_types:
+        raise ValidationError(f"{where}引用的全局状态不存在: {name}")
+    op = str(action.get("op") or "set").strip()
+    if op not in STATE_OPS:
+        raise ValidationError(f"{where}全局状态操作只能是 set/toggle/add")
+    clean["name"] = name
+    clean["op"] = op
+    value = action.get("value")
+    if op == "toggle":
+        return clean
+    if op == "add":
+        if value in (None, ""):
+            value = 1
+        clean["value"] = _as_number(value, f"{where}加减量")
+        return clean
+    if value is None or (isinstance(value, str) and value.strip() == ""):
+        # 注意不能写 `value == ""`：False == "" 在 Python 里成立，会把布尔 False 误判成空
+        raise ValidationError(f"{where}设置全局状态需要填值")
+    type_ = (var_types or {}).get(name)
+    if type_ == "number":
+        clean["value"] = _as_number(value, f"{where}值")
+    elif type_ == "bool" or (type_ is None and isinstance(value, bool)):
+        # 宽松模式下真布尔原样保留（enum/text 变量本不该收到 bool，交给写侧强校验）
+        if isinstance(value, str) and value.strip().lower() in ("true", "false"):
+            value = value.strip().lower() == "true"
+        if not isinstance(value, bool):
+            raise ValidationError(f"{where}「是/否」状态的值只能是 是/否")
+        clean["value"] = value
+    else:                                    # enum / text / 宽松模式
+        clean["value"] = str(value)
+    return clean
+
+
+def validate_rule(rule: dict, var_types: dict | None = None,
+                  http_policy: dict | None = None) -> dict:
     _require(rule, ("name", "trigger", "actions"), "规则")
     name = str(rule["name"]).strip()
     if not name:
         raise ValidationError("规则名称不能为空")
-    trigger = validate_trigger(rule["trigger"])
-    conditions = [validate_condition(c) for c in (rule.get("conditions") or [])]
+    trigger = validate_trigger(rule["trigger"], var_types)
+    conditions = [validate_condition(c, var_types)
+                  for c in (rule.get("conditions") or [])]
     match = rule.get("match", "all")
     if match not in ("all", "any"):
         raise ValidationError("条件组合方式只能是 all/any")
-    actions = [validate_action(a, "执行块") for a in (rule.get("actions") or [])]
+    actions = [validate_action(a, "执行块", var_types, http_policy)
+               for a in (rule.get("actions") or [])]
     if not actions:
         raise ValidationError("每条规则至少要有一个执行动作")
-    else_actions = [validate_action(a, "否则块")
+    else_actions = [validate_action(a, "否则块", var_types, http_policy)
                     for a in (rule.get("else_actions") or [])]
     raw_cooldown = rule.get("cooldown", 3)
     cooldown = 3.0 if raw_cooldown is None else float(raw_cooldown)
@@ -336,12 +402,18 @@ def validate_rule(rule: dict) -> dict:
     return clean
 
 
-def validate_rules(payload) -> list[dict]:
-    """payload 可以是 {'rules': [...]} 或直接 [...]。"""
+def validate_rules(payload, var_types: dict | None = None,
+                   http_policy: dict | None = None) -> list[dict]:
+    """payload 可以是 {'rules': [...]} 或直接 [...]。
+
+    var_types=None 为宽松模式（引擎读盘：变量被删也不清空全表）；
+    传 var_types（页面保存）为严格模式（引用不存在的全局状态直接报错）。
+    http_policy 同理：None 只查 URL 格式，传策略字典则连主机放行一起查。
+    """
     if isinstance(payload, dict):
         payload = payload.get("rules")
     if not isinstance(payload, list):
         raise ValidationError("规则列表格式错误")
     if len(payload) > 80:
         raise ValidationError("规则数量不能超过 80 条")
-    return [validate_rule(r) for r in payload]
+    return [validate_rule(r, var_types, http_policy) for r in payload]

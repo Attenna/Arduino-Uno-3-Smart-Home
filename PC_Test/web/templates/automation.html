@@ -90,14 +90,6 @@
         .badge.off { background: rgba(255,23,68,.12); color: var(--accent-red); }
         .badge.evt { background: rgba(255,145,0,.15); color: var(--accent-orange); }
         .badge.disabled { background: rgba(139,164,184,.15); color: var(--text-secondary); }
-        .mode-badge { font-weight: 600; font-size: 14px; padding: 8px 12px; border-radius: var(--radius-sm);
-                      background: rgba(0,229,255,.10); color: var(--accent-cyan); }
-        .mode-badge.mode-manual { background: rgba(255,145,0,.12); color: var(--accent-orange); }
-        .mode-badge.mode-away { background: rgba(255,23,68,.12); color: var(--accent-red); }
-        .manual-grace { display: flex; flex-wrap: wrap; gap: 6px; }
-        .grace-chip { font-size: 12px; padding: 4px 10px; border-radius: 999px;
-                      background: rgba(255,145,0,.14); color: var(--accent-orange); }
-        .grace-chip.empty { background: rgba(0,230,118,.10); color: var(--accent-green); }
         .mode-hint { font-size: 12px; color: var(--text-secondary); line-height: 1.7; }
         .auto-log { width: 100%; font-size: 12px; border-collapse: collapse; }
         .auto-log th, .auto-log td { padding: 6px 8px; border-bottom: 1px solid var(--border-color);
@@ -109,6 +101,17 @@
                        justify-content: center; background: var(--bg-card);
                        border: 1px dashed var(--accent-orange); color: var(--accent-orange);
                        border-radius: var(--radius-sm); text-align: center; padding: 20px; }
+
+        /* ==================== 全局状态条目（列表页里与规则并列的一种卡片） ==================== */
+        .grid-section { font-size: 12px; letter-spacing: .5px; color: var(--text-secondary);
+                        margin: 6px 2px -2px; }
+        .state-card { cursor: pointer; }
+        .rc-icon.state { background: rgba(0,230,118,.16); }
+        .badge.state { background: rgba(0,230,118,.15); color: var(--accent-green); }
+        .gs-type { font-size: 10.5px; font-weight: 400; color: var(--text-muted);
+                   border: 1px solid var(--border-color); border-radius: 999px; padding: 0 6px;
+                   margin-left: 6px; }
+        .gs-value { font-size: 13px; color: var(--accent-cyan); font-weight: 600; }
         @media (max-width: 1100px) { .auto-layout { grid-template-columns: 1fr; } }
     </style>
 </head>
@@ -158,40 +161,19 @@
                     <span id="ruleCount" class="rule-count"></span>
                     <span class="spacer"></span>
                     <button class="btn btn-primary" onclick="createRule()">＋ 新建规则</button>
+                    <button class="btn" onclick="createState()">📌 ＋ 新建状态</button>
                     <button class="btn" onclick="restorePresets()">♻️ 恢复内置</button>
                     <button class="btn mini-btn" onclick="refreshPreview()">🔄</button>
+                </div>
+                <div class="card-body mode-hint" style="padding-top:0">
+                    📌 全局状态是积木用的命名变量：条目卡片只显示当前值，值由规则里的「设置全局状态」积木维护；
+                    「允许自动开风扇」默认「否」＝风扇只能手动开，要放开就改这条状态定义。
                 </div>
             </div>
             <div class="auto-layout">
                 <div id="ruleGrid" class="rule-grid"></div>
 
                 <div style="display:flex;flex-direction:column;gap:16px">
-                    <div class="card">
-                        <div class="card-header"><h3>🏠 全屋模式</h3></div>
-                        <div class="card-body" style="display:flex;flex-direction:column;gap:10px">
-                            <div id="homeModeBadge" class="mode-badge">当前模式：--</div>
-                            <div style="display:flex;gap:8px;flex-wrap:wrap">
-                                <button class="btn mini-btn" onclick="setHomeMode('auto')">🤖 自动</button>
-                                <button class="btn mini-btn" onclick="setHomeMode('manual')">✋ 手动</button>
-                                <button class="btn mini-btn" onclick="setHomeMode('away')">🚪 离家</button>
-                            </div>
-                            <div style="display:flex;gap:8px;flex-wrap:wrap">
-                                <button class="btn mini-btn" id="fanOverrideBtn"
-                                        onclick="cycleFanOverride()">🌀 风扇：--</button>
-                                <button class="btn mini-btn" id="lightLevelBtn"
-                                        onclick="cycleLightLevel()">💡 灯光：--</button>
-                            </div>
-                            <div>
-                                <div style="font-size:12px;color:var(--text-secondary);margin-bottom:4px">手动优先</div>
-                                <div id="manualGraceChips" class="manual-grace">
-                                    <span class="grace-chip empty">无</span>
-                                </div>
-                            </div>
-                            <span id="homeModeDetail" class="mode-hint"></span>
-                            <span class="mode-hint">手动操作后该设备 30 秒内不被自动规则改动；离家关闭全屋设备。</span>
-                            <span class="mode-hint">🛡️ 风扇只能由你在风扇卡片手动开启——任何自动化规则/全屋模式都只能关风扇，不能开风扇。</span>
-                        </div>
-                    </div>
                     <div class="card">
                         <div class="card-header"><h3>🖥️ OLED 轮播</h3></div>
                         <div class="card-body" style="display:flex;flex-direction:column;gap:10px">
@@ -227,10 +209,10 @@
                 <div class="card-body editor-bar">
                     <button class="btn" onclick="closeEditor()">← 返回</button>
                     <input id="editorName" class="editor-name" type="text" placeholder="规则名称">
-                    <label class="editor-toggle">
+                    <label class="editor-toggle" id="editorEnabledWrap">
                         <input type="checkbox" id="editorEnabled"> 启用
                     </label>
-                    <button class="btn" onclick="runEditing()">▶ 运行一次</button>
+                    <button class="btn" id="editorRunBtn" onclick="runEditing()">▶ 运行一次</button>
                     <button class="btn btn-primary" onclick="saveEditor()">💾 保存</button>
                 </div>
             </div>
@@ -249,6 +231,6 @@
     </main>
 
     <script src="{{ url_for('static', filename='js/lang.js') }}?v=20261001"></script>
-    <script src="{{ url_for('static', filename='js/automation.js') }}?v=20261001d"></script>
+    <script src="{{ url_for('static', filename='js/automation.js') }}?v=20261002g"></script>
 </body>
 </html>

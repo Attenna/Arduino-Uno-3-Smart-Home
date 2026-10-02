@@ -48,6 +48,15 @@ DEFAULTS: dict = {
         # 香橙派推送人脸识别成功后自动开门（经 MCP 下发 B 板）
         "open_on_face_grant": True,
     },
+    # 自动化引擎（HTTP 出站动作的主机放行策略）
+    # 规则里的 URL 任何局域网客户端都能经 GET /api/automation/rules 读到，
+    # 因此出站动作不携带凭据，且默认只允许回环/内网目标。
+    "automation": {
+        "http_enabled": True,
+        "http_allow_public": False,
+        "http_allowed_hosts": [],
+        "http_timeout": 2.0,
+    },
     "face": {
         "model_path": str(FACE_MODEL_PATH),
         "confidence_threshold": 0.4,

@@ -23,6 +23,7 @@
 """
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import threading
@@ -34,12 +35,11 @@ from pathlib import Path
 
 from .capabilities import CONDITION_SOURCES, EVENT_TRIGGERS
 from .default_rules import DEFAULT_RULES, PRESETS_VERSION
-from .home_mode import (FAN_LABELS, FAN_LABELS_EN, LIGHT_LABELS,
-                        LIGHT_LABELS_EN, MODE_LABELS, MODE_LABELS_EN,
-                        HomeModeManager)
+from .global_state import GlobalStateStore
 from .oled_carousel import (DEFAULT_PAGES, PAGES_VERSION, OledCarousel,
                             is_legacy_default_pages)
-from .schema import validate_rules
+from .schema import validate_rule, validate_rules
+from . import webhook
 import midea_ac
 from ..ac_state import AC_KEYS, ac_state_from_db, write_ac_state
 # RFID 卡号归一化：规则里存的与事件里带的两侧都归一后再比
@@ -47,13 +47,18 @@ from ..database import normalize_uid
 
 logger = logging.getLogger(__name__)
 
+# OLED 用英文标签（B 板 u8x8 字库只有 ASCII，汉字上屏是乱码）；页面/接口仍用中文
+_MODE_LABELS_OLED = {"auto": "Auto", "manual": "Manual", "away": "Away"}
+
 
 class AutomationEngine:
-    def __init__(self, bridge, db, rules_path: Path):
+    def __init__(self, bridge, db, rules_path: Path, cfg: dict | None = None):
         self.bridge = bridge
         self.db = db
         self.rules_path = Path(rules_path)
         self.rules: list[dict] = []
+        # HTTP 出站动作的主机放行策略（web_config.yaml 的 automation: 段）
+        self._cfg = cfg or {}
 
         self._lock = threading.RLock()          # 保护规则热更新
         self._snapshot: dict = {}               # A 板最新一帧（原始字段名）
@@ -83,6 +88,8 @@ class AutomationEngine:
         self._tick_thread: threading.Thread | None = None
         # 已注入过的内置默认规则（preset id）；用户删掉的不会再被强行加回来
         self._presets_seen: set[str] = set()
+        # 最近一次启动的旧规则迁移结果（页面提示一次后由 API 消费清空）
+        self._migration_info: dict | None = None
 
         # ── OLED 轮播（默认关闭，避免扰民） ──
         self.oled_path = Path(rules_path).parent / "oled_carousel.json"
@@ -93,10 +100,32 @@ class AutomationEngine:
                                            on_log=self._oled_log)
         self._oled_thread: threading.Thread | None = None
 
-        # ── 全屋模式状态机（自动/手动/离家 + 红外强制覆盖） ──
-        # 承载十条全屋联动需求里跨设备、带时序的部分（见 home_mode.py）
-        self.home_mode = HomeModeManager(
-            bridge, db, Path(rules_path).parent / "home_mode.json")
+        # ── 自动化下发去重（原 home_mode 的 _last_fan/_fan_memory，状态机拆除后留在引擎）──
+        # 只记「最近一次自动化下发的值」，同值重放不再占串口；手动/语音不经这里，互不影响
+        self._last_cmd: dict[str, object] = {}
+        self._fan_memory = 60            # 风扇最近一次非零转速（on/toggle 缺省档位）
+
+        # ── 全局状态（自由命名变量，见 global_state.py）──
+        # 变量 id 形如 "g:名字"。读侧靠 _context() 合并（触发/条件积木零改动即可
+        # 引用），写侧靠「设置全局状态」动作。与规则文件同目录、同单进程约定。
+        self.global_state = GlobalStateStore(
+            Path(rules_path).parent / "global_state.json")
+
+    # ==================== HTTP 出站（webhook）策略 ====================
+
+    @property
+    def http_policy(self) -> dict:
+        """页面保存时的严格主机策略；None 之外的键都来自 web_config.yaml。"""
+        section = self._cfg.get("automation") or {}
+        return {
+            "enabled": bool(section.get("http_enabled", True)),
+            "allow_public": bool(section.get("http_allow_public", False)),
+            "allowed_hosts": [str(h) for h in (section.get("http_allowed_hosts") or ())],
+        }
+
+    def _http_timeout(self) -> float:
+        section = self._cfg.get("automation") or {}
+        return webhook.clamp_timeout(section.get("http_timeout", 2.0))
 
     # ==================== 生命周期 ====================
 
@@ -115,7 +144,17 @@ class AutomationEngine:
 
     # ==================== 规则持久化 ====================
 
+    # 旧引擎硬编码时代的引用 → 全局状态种子变量（无损映射，见 _migrate_legacy_rules）
+    _LEGACY_SOURCE_MAP = {"home_mode": "g:全屋模式", "person_present": "g:有人在家"}
+    # 拆除后不再有对应物的源：带这些引用的规则整条丢弃（宁缺勿猜）
+    _LEGACY_UNMAPPABLE = ("home_enabled", "home_fan", "home_light")
+    # v4 起删除的预设：touch_toggle 拆成两条条件规则，档位 cycle 类不再重建
+    _REMOVED_PRESETS = ("ir_fan_cycle", "ir_light_cycle_2", "ir_light_cycle_3",
+                        "touch_toggle")
+
     def load(self) -> None:
+        # 种子全局状态先就位：迁移与规则里都会引用 g:xxx，变量必须先存在
+        self.global_state.seed_defaults()
         raw = None
         if self.rules_path.exists():
             try:
@@ -126,12 +165,174 @@ class AutomationEngine:
         data = raw if isinstance(raw, dict) else {"rules": raw}
         self._presets_seen = {str(x) for x in (data.get("presets_seen") or [])}
         try:
-            self.rules = validate_rules(data.get("rules") or [])
-        except Exception as e:                           # noqa: BLE001
-            logger.error("[自动化] 规则校验失败，保留空规则: %s", e)
-            self.rules = []
+            presets_version = int(data.get("presets_version") or 0)
+        except (TypeError, ValueError):
+            presets_version = 0
+        rules_list = self._migrate_legacy_rules(
+            data.get("rules") or [], presets_version, from_file=raw is not None)
+        # 逐条校验：坏的只跳过这一条并告警。以前整表 validate_rules 抛错会把
+        # self.rules 清成 []，而 _presets_seen 已从旧文件读入 ⇒ 预设也不补，
+        # 升级后得到「几乎空的规则集且页面无提示」。
+        clean, bad_names = [], []
+        for item in rules_list:
+            try:
+                clean.append(validate_rule(item))
+            except Exception as e:                       # noqa: BLE001
+                label = (item.get("name") if isinstance(item, dict) else item)
+                bad_names.append(f"{label}: {e}")
+                logger.warning("[自动化] 规则不合法已跳过「%s」: %s", label, e)
+        self.rules = clean
+        if bad_names and self._migration_info is not None:
+            self._migration_info["invalid"] = bad_names
         if self.seed_presets():
             self._write_rules()
+        elif self._migration_info and self._migration_info.get("migrated"):
+            # 迁移结果落盘，下次启动不再重复迁移（写盘会带上 presets_version=4）
+            self._write_rules()
+
+    def _rule_is_legacy(self, rule: dict) -> bool:
+        """规则里是否还有引擎硬编码时代的源/动作引用（home_mode / person_present 等）。"""
+        trig = rule.get("trigger") or {}
+        if trig.get("kind") == "sensor" and (
+                trig.get("sensor") in self._LEGACY_SOURCE_MAP
+                or trig.get("sensor") in self._LEGACY_UNMAPPABLE):
+            return True
+        for c in rule.get("conditions") or []:
+            if isinstance(c, dict) and (
+                    c.get("sensor") in self._LEGACY_SOURCE_MAP
+                    or c.get("sensor") in self._LEGACY_UNMAPPABLE):
+                return True
+        for key in ("actions", "else_actions"):
+            for a in rule.get(key) or []:
+                if isinstance(a, dict) and a.get("device") == "home_mode":
+                    return True
+        return False
+
+    def _map_legacy_action(self, action: dict, warns: list[str]) -> tuple[dict | None, bool]:
+        """home_mode 动作 → 无损映射为 state 动作；不可表达的项丢弃并告警。
+
+        ``mode: auto/manual/away`` 直接映射到 ``g:全屋模式``；``toggle`` 与
+        ``fan_override/light_level/enabled/presence_hold_sec/manual_grace_s``
+        是旧状态机的私有语义，积木世界里没有无损等价物 —— 宁缺勿猜，去掉并记 warning。
+        """
+        if action.get("device") != "home_mode":
+            return action, False
+        mode = action.get("mode")
+        dropped = [k for k in ("fan_override", "light_level", "enabled",
+                               "presence_hold_sec", "manual_grace_s")
+                   if action.get(k) not in (None, "")]
+        if mode == "toggle":
+            dropped.append("mode:toggle")
+            mapped = None
+        elif mode in ("auto", "manual", "away"):
+            mapped = {"device": "state", "name": "g:全屋模式",
+                      "op": "set", "value": mode}
+        else:
+            mapped = None
+        if dropped:
+            warns.append("丢弃不可映射的动作参数：" + "、".join(dropped))
+        return mapped, True
+
+    def _map_legacy_rule(self, rule: dict) -> tuple[dict | None, bool, str]:
+        """自定义规则就地映射（深拷贝）。返回 (新规则或 None, 是否改动, 丢弃原因)。"""
+        new = copy.deepcopy(rule)
+        changed = False
+        warns: list[str] = []
+        for holder in [new.get("trigger") or {}] + list(new.get("conditions") or []):
+            sensor = holder.get("sensor")
+            if sensor in self._LEGACY_UNMAPPABLE:
+                return None, False, f"条件源「{sensor}」已随引擎仲裁拆除，无法映射"
+            if sensor in self._LEGACY_SOURCE_MAP:
+                holder["sensor"] = self._LEGACY_SOURCE_MAP[sensor]
+                changed = True
+        for key in ("actions", "else_actions"):
+            kept, any_map = [], False
+            for a in new.get(key) or []:
+                if not isinstance(a, dict):
+                    continue
+                mapped, did = self._map_legacy_action(a, warns)
+                any_map = any_map or did
+                if mapped is not None:
+                    kept.append(mapped)
+            if any_map:
+                new[key] = kept
+                changed = True
+        if changed and not (new.get("actions") or new.get("else_actions")):
+            return None, False, "全部动作都是旧状态机私有语义，无可映射等价物"
+        reason = ("；".join(dict.fromkeys(warns))) if warns else ""
+        return new, changed, reason
+
+    def _migrate_legacy_rules(self, rules: list, presets_version: int,
+                              from_file: bool) -> list:
+        """把 home_mode 时代的规则一次性迁到全局状态上（迁移方案·阶段二）。
+
+        策略（宁缺勿猜，原文件先备份到 ``automation_rules.pre-global-state.json``）：
+
+        * **内置预设**（带已知 preset 标记的旧文件规则）整体换成 v4 等价版，
+          保留用户的开关状态与规则 id —— 这是行为等价的关键：旧 temp_hot 不带
+          「g:允许自动开风扇」条件，阶段三拆掉 auto_apply_fan 后安全线会静默失效；
+        * **自定义规则**只做无损映射（home_mode→g:全屋模式、person_present→g:有人在家、
+          mode 动作→state 动作）；``fan_override/light_level/enabled`` 等参数与
+          ``mode:toggle`` 丢弃并记 warning；
+        * 已删除预设（档位 cycle、touch_toggle）直接删，替代预设由 seed_presets 补；
+        * 结果存到 ``self._migration_info``，由 GET /api/automation/rules 消费、
+          前端 boot 时 toast 一次。
+        """
+        items = [r for r in rules if isinstance(r, dict)]
+        needs = from_file and (presets_version < PRESETS_VERSION
+                               or any(self._rule_is_legacy(r) for r in items))
+        if not needs:
+            return items
+        # 备份只在迁移发生时做一次，且不覆盖已有备份（保留最早的原文件）
+        try:
+            if self.rules_path.exists():
+                backup = self.rules_path.with_name(
+                    "automation_rules.pre-global-state.json")
+                if not backup.exists():
+                    backup.write_bytes(self.rules_path.read_bytes())
+                    logger.info("[自动化] 旧规则文件已备份 → %s", backup.name)
+        except Exception as e:                           # noqa: BLE001
+            logger.warning("[自动化] 旧规则备份失败（继续迁移）: %s", e)
+        v4_by_pid = {p["preset"]: p for p in DEFAULT_RULES if p.get("preset")}
+        out, migrated, dropped = [], 0, []
+        warns: list[str] = []
+        for rule in items:
+            pid = str(rule.get("preset") or "")
+            name = str(rule.get("name") or pid or "?")
+            if pid in self._REMOVED_PRESETS:
+                dropped.append(name)
+                continue
+            if pid in v4_by_pid and presets_version < PRESETS_VERSION:
+                new = copy.deepcopy(v4_by_pid[pid])
+                new["id"] = rule.get("id") or None
+                new["enabled"] = bool(rule.get("enabled", True))  # 保留用户开关
+                out.append(new)
+                migrated += 1
+                continue
+            if not self._rule_is_legacy(rule):
+                out.append(rule)
+                continue
+            mapped, changed, why = self._map_legacy_rule(rule)
+            if mapped is None:
+                dropped.append(name)
+                if why:
+                    warns.append(f"「{name}」：{why}")
+                continue
+            if changed:
+                migrated += 1
+                if why:
+                    warns.append(f"「{name}」：{why}")
+            out.append(mapped)
+        self._migration_info = {"migrated": migrated, "dropped": dropped,
+                                "warnings": warns[:10]}
+        logger.info("[自动化] 旧规则迁移：改写 %d 条、删除 %d 条（预设 %d 条已换成全局状态版）",
+                    migrated, len(dropped), len(v4_by_pid))
+        return out
+
+    def consume_migration_info(self) -> dict | None:
+        """返回最近一次启动的迁移结果（只给一次，前端提示后不再重复弹）。"""
+        info, self._migration_info = self._migration_info, None
+        return info
 
     def seed_presets(self, force: bool = False) -> int:
         """把内置默认规则补进规则集，返回新增条数。
@@ -180,8 +381,14 @@ class AutomationEngine:
         tmp.replace(self.rules_path)
 
     def save_rules(self, rules: list[dict]) -> list[dict]:
-        """校验并落盘新规则集（整表替换），返回补全 id 后的规则。"""
-        clean = validate_rules(rules)
+        """校验并落盘新规则集（整表替换），返回补全 id 后的规则。
+
+        页面保存走严格模式：引用的全局状态必须真实存在，避免用户写出
+        永远不成立的错字规则（引擎读盘才是宽松模式，见 load）；
+        HTTP 动作的主机也一并按 automation: 策略查，让用户当场看到而不是等执行失败。
+        """
+        clean = validate_rules(rules, var_types=self.global_state.var_types(),
+                               http_policy=self.http_policy)
         with self._lock:
             old_ids = {r["id"] for r in self.rules}
             for rule in clean:
@@ -205,6 +412,36 @@ class AutomationEngine:
         logger.info("[自动化] 规则已保存，共 %d 条", len(clean))
         return clean
 
+    def rewrite_state_refs(self, old_id: str, new_id: str) -> int:
+        """全局状态改名后，把规则里的引用同步换成新 id，返回替换处数。
+
+        改名前 id 只可能出现在三处：传感器触发/条件的 ``sensor``、
+        「设置全局状态」动作的 ``name``。事件触发不涉及。
+        """
+        n = 0
+        with self._lock:
+            for rule in self.rules:
+                trig = rule.get("trigger") or {}
+                if trig.get("kind") == "sensor" and trig.get("sensor") == old_id:
+                    trig["sensor"] = new_id
+                    n += 1
+                for cond in rule.get("conditions") or []:
+                    if cond.get("sensor") == old_id:
+                        cond["sensor"] = new_id
+                        n += 1
+                for key in ("actions", "else_actions"):
+                    for act in rule.get(key) or []:
+                        if act.get("device") == "state" and act.get("name") == old_id:
+                            act["name"] = new_id
+                            n += 1
+            if n:
+                self.rules = validate_rules(self.rules)   # 宽松：变量已存在
+                self._write_rules()
+        if n:
+            logger.info("[自动化] 全局状态改名 %s→%s，更新规则引用 %d 处",
+                        old_id, new_id, n)
+        return n
+
     # ==================== 外部输入（bridge / face API 调用） ====================
 
     def on_snapshot(self, snap: dict) -> None:
@@ -212,7 +449,6 @@ class AutomationEngine:
         try:
             self._snapshot = dict(snap or {})
             self._snapshot_ts = time.time()
-            self.home_mode.on_snapshot(self._snapshot)
             for rule in list(self._iter_enabled()):
                 if rule["trigger"]["kind"] == "sensor":
                     self._evaluate_sensor_rule(rule)
@@ -245,6 +481,22 @@ class AutomationEngine:
                     self._evaluate_event_rule(rule, seq, event)
         except Exception as e:                       # noqa: BLE001
             logger.debug("[自动化] 事件求值异常: %s", e)
+
+    def note_external(self, device: str, value) -> None:
+        """面板/语音手动下发后同步自动化下发去重水位（``_last_cmd``）。
+
+        规则分支同值会跳过重发；不接这条，用户手动把风扇开到某档后，
+        同档位的自动化规则会被静默跳过、与真实硬件脱节。
+        """
+        with self._lock:
+            self._last_cmd[device] = value
+            if device == "fan":
+                try:
+                    speed = int(value or 0)
+                except (TypeError, ValueError):
+                    speed = 0
+                if speed > 0:
+                    self._fan_memory = max(1, min(100, speed))
 
     # ==================== 红外自发射回声抑制 ====================
 
@@ -291,7 +543,6 @@ class AutomationEngine:
             try:
                 now = time.time()
                 minute = datetime.now().strftime("%H:%M")
-                self.home_mode.tick()
                 for rule in list(self._iter_enabled()):
                     trig = rule["trigger"]
                     if trig["kind"] == "interval":
@@ -390,13 +641,12 @@ class AutomationEngine:
         """A 板快照 + B 板执行器状态 + 最近自动化，组成扁平数据源。"""
         data = dict(self._snapshot)
         try:
-            hm = self.home_mode.config()
-            # OLED 用英文标签（B 板字库无汉字），页面/接口仍返回中文标签
-            data["home_mode"] = MODE_LABELS_EN.get(hm["mode"], "Auto")
-            data["home_fan"] = FAN_LABELS_EN.get(hm["fan_override"], "Auto")
-            data["home_light"] = LIGHT_LABELS_EN.get(hm["light_level"], "Auto")
-            # 需求11：人在家时自动调节暂停，屏上给出可见原因
-            data["presence"] = "YES" if hm.get("person_present") else "NO"
+            # 屏上是英文标签（B 板字库无汉字），页面/接口仍用中文标签。
+            # 全屋模式已积木化：这三个占位符直接读全局状态，不再是引擎状态机。
+            vals = self.global_state.values()
+            data["home_mode"] = _MODE_LABELS_OLED.get(vals.get("g:全屋模式"), "Auto")
+            data["presence"] = "YES" if vals.get("g:有人在家") else "NO"
+            data["fan_auto"] = "YES" if vals.get("g:允许自动开风扇") else "NO"
         except Exception:                            # noqa: BLE001
             pass
         try:
@@ -454,20 +704,8 @@ class AutomationEngine:
                     yield rule
 
     def _context(self) -> dict:
-        """传感器快照 + SQLite 中的执行器当前状态 + 全屋模式/人在家判定。"""
+        """传感器快照 + SQLite 中的执行器当前状态 + 全局状态（g: 变量）。"""
         ctx = dict(self._snapshot)
-        try:
-            cfg = self.home_mode.cfg
-            ctx["home_mode"] = cfg["mode"]
-            ctx["home_enabled"] = bool(cfg.get("enabled", True))
-            # 配置里风扇档位用 None 表示「自动」，规则侧统一用 "auto"，否则
-            # 「全屋风扇档位 = 自动」永远不成立（None 参与比较恒为假）
-            fan_override = cfg.get("fan_override")
-            ctx["home_fan"] = "auto" if fan_override is None else fan_override
-            ctx["home_light"] = cfg.get("light_level", "auto")
-            ctx["person_present"] = self.home_mode.person_present()
-        except Exception:                            # noqa: BLE001
-            pass
         try:
             status = self.db.get_current_status()
             for key in ("door_status", "window_status", "light_status",
@@ -477,6 +715,12 @@ class AutomationEngine:
                     ctx[key] = status[key]
         except Exception:                           # noqa: BLE001
             pass
+        try:
+            # 全局状态：直接以 "g:名字" 为键并入上下文，触发/条件积木无需任何
+            # 特殊分支即可引用（_compare 已覆盖 bool/number/enum）。
+            ctx.update(self.global_state.values())
+        except Exception as e:                       # noqa: BLE001
+            logger.debug("[自动化] 全局状态读取失败: %s", e)
         return ctx
 
     @staticmethod
@@ -570,6 +814,9 @@ class AutomationEngine:
                 return
             if trig.get("key") and str(event.get("key", "")) != trig["key"]:
                 return
+            # 设备过滤（manual_control 事件带 device）：不填=任意设备的手动操作
+            if trig.get("device") and str(event.get("device", "")) != str(trig["device"]):
+                return
             if trig.get("command"):
                 try:
                     want_cmd = int(str(trig["command"]), 16) if str(trig["command"]).startswith("0x") \
@@ -615,7 +862,7 @@ class AutomationEngine:
         ok_all = True
         try:
             for action in actions:
-                ok, msg = self._perform(action)
+                ok, msg = self._perform(action, rule)
                 detail.append({"action": action, "ok": ok, "result": msg})
                 if not ok:
                     ok_all = False
@@ -627,71 +874,53 @@ class AutomationEngine:
         finally:
             lock.release()
 
-    def _perform(self, action: dict) -> tuple[bool, str]:
+    def _perform(self, action: dict, rule: dict | None = None) -> tuple[bool, str]:
         device = action["device"]
-        # 手动优先：控制器设备刚被手动设置过（冷却窗口内）→ 自动动作让位跳过，
-        # 绝不把用户刚设的状态改回去（「网页控制失败/风扇自启」的根治点）。
-        if device in ("door", "window", "light", "fan", "ac"):
-            if self.home_mode.within_manual_grace(device):
-                label = {"door": "门", "window": "窗", "light": "灯",
-                         "fan": "风扇", "ac": "空调"}.get(device, device)
-                return True, f"{label}处于手动冷却窗口，自动动作让位（跳过）"
+        # 「手动优先 30 秒让位」不再是引擎仲裁：面板/语音广播 manual_control
+        # 事件，manual_mark_*/manual_clear_* 预设维护 g:手动优先_x，设备类预设
+        # 带 ``g:手动优先_x == false`` 条件自行让位（见 default_rules.py）。
         if device == "delay":
             time.sleep(float(action["seconds"]))
             return True, f"等待 {action['seconds']:g}s"
-        if device == "home_mode":
-            # 纯状态机，不碰硬件：即使桥离线也照常生效
-            kw = {}
-            mode = action.get("mode")
-            if mode == "toggle":
-                mode = self.home_mode.toggled_mode()      # 手动↔自动 翻转
-            if mode:
-                kw["mode"] = mode
-            fan = action.get("fan_override")
-            if fan == "cycle":
-                # 循环下一档；None 表示回到自动，必须显式下发
-                kw["fan_override"] = self.home_mode.next_fan_override()
-            elif fan:
-                kw["fan_override"] = None if fan == "auto" else fan
-            light = action.get("light_level")
-            if light == "cycle":
-                light = self.home_mode.next_light_level()
-            if light:
-                kw["light_level"] = light
-            # 状态机自身参数（原先只能在代码里改）
-            if "enabled" in action and action.get("enabled") is not None:
-                kw["enabled"] = bool(action["enabled"])
-            if action.get("presence_hold_sec") is not None:
-                kw["presence_hold_sec"] = float(action["presence_hold_sec"])
-            if action.get("manual_grace_s") is not None:
-                kw["manual_grace_s"] = float(action["manual_grace_s"])
-            # 手动冷却窗口内，规则不得把全屋从手动抢到「自动」——页面承诺
-            # 「手动操作后 30 秒内不被自动规则改动」，模式横跳是风扇事故的
-            # 放大器（刚手动关完，规则立刻切 auto）。切离家不受限（只关不开）。
-            if mode == "auto":
-                now = time.time()
-                if any(self.home_mode.within_manual_grace(d, now)
-                       for d in self.home_mode.GRACE_DEVICES):
-                    return True, "设备处于手动冷却窗口，规则不切换到自动模式（保持手动）"
-            self.home_mode.configure(reason="积木规则", **kw)
-            # 覆盖档以前靠 1s tick 下发；手动模式下 tick 已被禁用，因此规则若
-            # 显式带了覆盖档，这里立即执行一次（auto=True 走自动化硬门控）
-            if "fan_override" in kw or "light_level" in kw:
-                self.home_mode.apply_overrides_now(reason="积木规则", auto=True)
-            parts = []
-            if "mode" in kw:
-                parts.append(f"模式={MODE_LABELS.get(kw['mode'], kw['mode'])}")
-            if "fan_override" in kw:
-                parts.append(f"风扇={FAN_LABELS.get(kw['fan_override'], kw['fan_override'])}")
-            if "light_level" in kw:
-                parts.append(f"灯光={LIGHT_LABELS.get(kw['light_level'], kw['light_level'])}")
-            if "enabled" in kw:
-                parts.append(f"自动调节={'开' if kw['enabled'] else '关'}")
-            if "presence_hold_sec" in kw:
-                parts.append(f"存在判定保持={kw['presence_hold_sec']:g}s")
-            if "manual_grace_s" in kw:
-                parts.append(f"手动冷却={kw['manual_grace_s']:g}s")
-            return True, "全屋模式：" + "，".join(parts)
+        if device == "state":
+            # 全局状态写入：纯状态、不碰硬件，所以放在 bridge 在线检查之前
+            # （桥离线也要能记账，否则规则里的变量会永久卡住）。
+            name = str(action.get("name") or "")
+            op = str(action.get("op") or "set")
+            source = (f"规则「{rule['name']}」" if rule and rule.get("name")
+                      else "规则")
+            if op == "toggle":
+                ok, res = self.global_state.toggle(name, source=source)
+            elif op == "add":
+                ok, res = self.global_state.add(name, action.get("value", 1),
+                                                source=source)
+            else:
+                ok, res = self.global_state.set_value(
+                    name, action.get("value"), source=source)
+            if not ok:
+                return False, str(res)
+            var = self.global_state.get(name) or {}
+            return True, f"全局状态「{var.get('label', name)}」= {res}"
+        if device == "http":
+            # 二次开发预留的出站通道：不碰串口，所以同样放在在线检查之前。
+            # 每次执行都按当前策略复查主机（策略改了不必让用户重存规则）。
+            policy = self.http_policy
+            if not policy["enabled"]:
+                return False, "HTTP 出站已关闭（automation.http_enabled: false）"
+            url = self._web_format(action.get("url", ""))
+            ok, why = webhook.check_url(
+                url, allow_public=policy["allow_public"],
+                allowed_hosts=policy["allowed_hosts"])
+            if not ok:
+                return False, f"HTTP 已拒发：{why}"
+            body = self._web_format(action.get("text") or "")
+            sent, msg = webhook.request(url, method=action.get("method", "post"),
+                                        body=body, timeout=self._http_timeout())
+            if sent:
+                return True, f"HTTP 已发送（{msg}）"
+            # 目标不可达是外部系统的事：记为动作失败，不能让整条规则抛异常
+            logger.info("[自动化] HTTP 出站失败 %s: %s", url, msg)
+            return False, msg
         if device == "voice":
             # 语音助手自带 HTTP 触发口：wake 免唤醒词进入指令模式（遥控器按键 1
             # 之类的「半自动」就是这条），say 直接让它播报/执行一句话
@@ -718,9 +947,6 @@ class AutomationEngine:
             if ok:
                 self.db.update_status(**{f"{device}_status": db_status})
                 self.db.add_door_window_event(device, label, db_status)
-                if device == "window":
-                    # 同步去重缓存，否则档位覆盖会立刻把窗户改回原状态
-                    self.home_mode.note_rule_action("window", status=status)
             return ok, msg
         if device == "light":
             status = action["status"]
@@ -744,9 +970,6 @@ class AutomationEngine:
             if ok:
                 self.db.update_status(light_status=status, light_brightness=brightness)
                 self.db.add_light_event("客厅主灯(自动化)", status, brightness)
-                # 同步去重缓存并清掉档位覆盖，否则下一秒 tick 会用白光顶掉颜色
-                self.home_mode.note_rule_action("light", status=status,
-                                                brightness=brightness)
             return ok, msg
         if device == "fan":
             # 风扇状态机：set=绝对转速（旧规则兼容）；on/off 语义动作；
@@ -768,19 +991,24 @@ class AutomationEngine:
                 elif speed > 0:
                     target = speed
                 else:
-                    target = self.home_mode.fan_memory
+                    target = self._fan_memory
             target = max(0, min(100, int(target)))
-            # 自动化唯一入口：硬策略下规则只能关风扇（target=0），正转速被拦截，
-            # 拦截时不写库、不记规则动作（applied=False）。
-            ok, msg, applied = self.home_mode.auto_apply_fan(
-                target, f"积木规则风扇动作（{op}）")
-            if not applied:
-                return True, msg
+            # 「风扇只能手动开」不再是引擎硬策略：开风扇的预设自带
+            # g:允许自动开风扇==true 条件（默认 false），改这条状态定义的「当前值」即放开
+            # （见 default_rules.py）。这里只保留同值去重，防规则反复重发占串口。
+            with self._lock:
+                dup = self._last_cmd.get("fan") == target
+            if dup:
+                return True, f"风扇已是 {target}%，重复指令跳过"
+            ok, msg = self.bridge.control_fan(target)
             if ok:
+                with self._lock:
+                    self._last_cmd["fan"] = target
+                    if target > 0:
+                        self._fan_memory = target
                 self.db.update_status(fan_speed=target)
-                self.home_mode.note_rule_action("fan", speed=target)
                 if op == "set":
-                    return ok, msg
+                    return True, msg
                 verb = {"on": "开启", "off": "关闭",
                         "toggle": "关闭" if target == 0 else "开启"}.get(op, "设置")
                 return True, f"风扇已{verb}（{target}%）"
@@ -854,12 +1082,19 @@ class AutomationEngine:
         return False, f"未知设备 {device}"
 
     def _oled_format(self, template: str) -> str:
-        """用轮播数据源替换动作文本里的 {占位符}。"""
+        """用轮播数据源替换 {占位符}，并裁剪成 OLED 的 16 列纯 ASCII。"""
+        return self._fill_template(template, self._oled_carousel.format_text)
+
+    def _web_format(self, template: str) -> str:
+        """同一套占位符，但不做 OLED 裁剪：URL 与正文可以是中文、可以是长 JSON。"""
+        return self._fill_template(template, self._oled_carousel.format_plain)
+
+    def _fill_template(self, template: str, renderer) -> str:
         try:
             self._oled_carousel.set_data(self._oled_data())
-            return self._oled_carousel.format_text(str(template))
+            return renderer(str(template))
         except Exception as e:                       # noqa: BLE001
-            logger.debug("[自动化] OLED 模板格式化失败: %s", e)
+            logger.debug("[自动化] 模板格式化失败: %s", e)
             return str(template)
 
     def _log(self, rule, fired, conditions_hold, reason, ok, detail) -> None:

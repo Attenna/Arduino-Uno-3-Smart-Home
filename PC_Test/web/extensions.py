@@ -31,7 +31,7 @@ def init_bridge(cfg: dict) -> McpHardwareBridge:
             bridge.start()
             # 自动化引擎挂在硬件桥的快照/事件钩子上；动作经 bridge 下发
             rules_path = DATA_DIR / "automation_rules.json"
-            automation = AutomationEngine(bridge, db, rules_path)
+            automation = AutomationEngine(bridge, db, rules_path, cfg)
             bridge.snapshot_listener = automation.on_snapshot
             bridge.event_listener = automation.on_event
 

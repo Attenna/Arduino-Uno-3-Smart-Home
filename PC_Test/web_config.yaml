@@ -29,6 +29,18 @@ door:
 camera:
   stream_url: "http://127.0.0.1:8080/video_feed"
 
+# ── 自动化引擎：HTTP 出站（webhook）动作 ─────────────────────────────────
+# 规则里的「HTTP 请求」积木把事件/状态推给外部系统（自家网关、MQTT 桥、另一台机器）。
+# 默认只放行回环与内网地址：公网目标、以及 169.254.*（云厂商元数据服务）需要显式登记。
+# 注意：GET /api/automation/rules 无鉴权，规则里的 URL 任何局域网客户端都读得到，
+# 所以这条通道不带 Authorization/Cookie，也不跟随 3xx 跳转。
+automation:
+  http_enabled: true
+  http_allow_public: false
+  # 逐台登记允许的主机（精确匹配主机名，不区大小写）
+  http_allowed_hosts: []        # 例: ["hooks.example.com"]
+  http_timeout: 2.0             # 单次请求超时（秒，0.2~8.0）
+
 # ── 人脸识别 ────────────────────────────────────────────────────────────
 # simulation_mode=true：无模型时返回模拟人脸（FACE001/002/003），前端可演示。
 # false：加载 models/face/yolov8n-face.pt 做真实 YOLOv8 人脸检测；

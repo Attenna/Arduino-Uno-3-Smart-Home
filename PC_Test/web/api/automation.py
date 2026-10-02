@@ -12,14 +12,102 @@ bp = Blueprint("automation", __name__)
 
 @bp.route("/api/automation/capabilities", methods=["GET"])
 def get_capabilities():
-    """Blockly 工具箱下拉框元数据（传感器/事件/执行器）。"""
-    return jsonify(capabilities_payload())
+    """Blockly 工具箱下拉框元数据（传感器/事件/执行器 + 全局状态变量）。"""
+    engine = extensions.automation
+    defs = engine.global_state.definitions() if engine else []
+    return jsonify(capabilities_payload(defs))
+
+
+# ==================== 全局状态（自由命名变量，见 global_state.py） ====================
+
+@bp.route("/api/automation/global_state", methods=["GET"])
+def get_global_state():
+    """全部全局状态定义与当前值（状态条目卡片渲染 + 能力清单共用）。"""
+    engine = extensions.automation
+    if engine is None:
+        return jsonify({"error": "自动化引擎未启动"}), 503
+    return jsonify({"vars": engine.global_state.definitions()})
+
+
+@bp.route("/api/automation/global_state", methods=["POST"])
+def create_global_state():
+    """新建变量。body: {name, type?, label?, value?, choices?, choice_labels?,
+    unit?, min?, max?}。"""
+    engine = extensions.automation
+    if engine is None:
+        return jsonify({"error": "自动化引擎未启动"}), 503
+    data = request.get_json(force=True) or {}
+    ok, res = engine.global_state.create(
+        name=data.get("name", ""), type_=data.get("type", "bool"),
+        label=data.get("label"), value=data.get("value"),
+        choices=data.get("choices"), choice_labels=data.get("choice_labels"),
+        unit=data.get("unit"), min=data.get("min"), max=data.get("max"))
+    if not ok:
+        return jsonify({"error": str(res)}), 400
+    return jsonify({"ok": True, "var": res,
+                    "vars": engine.global_state.definitions(),
+                    "message": f"已新建全局状态「{res['label']}」"})
+
+
+@bp.route("/api/automation/global_state/<var_id>", methods=["PUT"])
+def update_global_state(var_id):
+    """改变量。body 可含: name(改名) / label / choices / choice_labels /
+    unit / min / max / value(手动写值) / op("toggle" 翻转)。"""
+    engine = extensions.automation
+    if engine is None:
+        return jsonify({"error": "自动化引擎未启动"}), 503
+    data = request.get_json(force=True) or {}
+    store = engine.global_state
+    new_name = str(data.get("name") or "").strip()
+    if new_name:
+        ok, res = store.rename(var_id, new_name)
+        if not ok:
+            return jsonify({"error": str(res)}), 400
+        if res["old_id"] != res["var"]["id"]:
+            engine.rewrite_state_refs(res["old_id"], res["var"]["id"])
+        var_id = res["var"]["id"]
+    meta_keys = ("label", "choices", "choice_labels", "unit", "min", "max")
+    if any(k in data for k in meta_keys):
+        ok, res = store.update(var_id, **{k: data.get(k) for k in meta_keys})
+        if not ok:
+            return jsonify({"error": str(res)}), 400
+    if data.get("op") == "toggle":
+        ok, res = store.toggle(var_id, source="页面")
+        if not ok:
+            return jsonify({"error": str(res)}), 400
+    elif "value" in data and data.get("value") is not None:
+        ok, res = store.set_value(var_id, data.get("value"), source="页面")
+        if not ok:
+            return jsonify({"error": str(res)}), 400
+    return jsonify({"ok": True, "var": store.get(var_id),
+                    "vars": store.definitions(),
+                    "message": "全局状态已更新"})
+
+
+@bp.route("/api/automation/global_state/<var_id>", methods=["DELETE"])
+def delete_global_state(var_id):
+    """删除变量。规则里的引用不会因此报错（引擎读盘宽松），但条件将永远不成立。"""
+    engine = extensions.automation
+    if engine is None:
+        return jsonify({"error": "自动化引擎未启动"}), 503
+    ok, res = engine.global_state.delete(var_id)
+    if not ok:
+        return jsonify({"error": str(res)}), 400
+    return jsonify({"ok": True, "vars": engine.global_state.definitions(),
+                    "message": f"已删除全局状态「{res['label']}」"})
 
 
 @bp.route("/api/automation/rules", methods=["GET"])
 def get_rules():
     engine = extensions.automation
-    return jsonify({"rules": engine.rules if engine else []})
+    payload = {"rules": engine.rules if engine else []}
+    if engine is not None:
+        # 启动时做过旧规则迁移 → 随首个拉取带出（只给一次，前端 toast 提示）
+        info = engine.consume_migration_info()
+        if info and (info.get("migrated") or info.get("dropped")
+                     or info.get("invalid")):
+            payload["migration"] = info
+    return jsonify(payload)
 
 
 @bp.route("/api/automation/rules", methods=["PUT"])
@@ -65,36 +153,6 @@ def restore_rules():
     rules = engine.restore_presets()
     return jsonify({"ok": True, "rules": rules,
                     "message": f"内置规则已恢复，当前共 {len(rules)} 条"})
-
-
-@bp.route("/api/automation/home_mode", methods=["GET"])
-def get_home_mode():
-    """全屋模式状态（自动/手动/离家 + 风扇/灯光覆盖档位 + 逗留/关门倒计时）。"""
-    engine = extensions.automation
-    if engine is None:
-        return jsonify({"error": "自动化引擎未启动"}), 503
-    return jsonify(engine.home_mode.config())
-
-
-@bp.route("/api/automation/home_mode", methods=["PUT"])
-def put_home_mode():
-    """设置全屋模式。body: {mode?, fan_override?, light_level?, enabled?, 阈值...}。"""
-    engine = extensions.automation
-    if engine is None:
-        return jsonify({"error": "自动化引擎未启动"}), 503
-    try:
-        data = request.get_json(force=True) or {}
-        reason = str(data.pop("reason", "") or "页面设置")
-        cfg = engine.home_mode.configure(reason=reason, **data)
-        # 手动模式下 tick 不重发覆盖档；页面显式切换风扇/灯光覆盖档时立即执行
-        # 一次（_apply_* 去重保证目标未变不下发串口）
-        if "fan_override" in data or "light_level" in data:
-            engine.home_mode.apply_overrides_now(
-                reason="页面切换" + ("风扇覆盖" if "fan_override" in data
-                                    else "灯光档位"))
-    except Exception as e:                               # noqa: BLE001
-        return jsonify({"error": f"全屋模式设置失败：{e}"}), 500
-    return jsonify({"ok": True, "config": cfg, "message": "全屋模式设置已生效"})
 
 
 @bp.route("/api/automation/logs", methods=["GET"])

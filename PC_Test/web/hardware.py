@@ -30,6 +30,11 @@ from .readback import output_mismatch
 
 logger = logging.getLogger(__name__)
 
+# 钩子通道（见 McpHardwareBridge.add_listener）
+HOOK_KINDS = ("snapshot", "event", "ack")
+# 收到成功 ACK 即视为「输出板在线」并广播 ack 钩子的执行器工具
+ACK_TRACKED_TOOLS = ("door", "window", "light", "fan", "buzzer", "ir", "ac")
+
 
 def _looks_like_error(text: str) -> bool:
     """判断 MCP 返回文本是否为失败。
@@ -135,12 +140,13 @@ class McpHardwareBridge:
         # 首轮 recent_events 只登记不触发：桥重启/重建后 MCP 仍留着最近 50 条
         # 历史事件，不能让这些旧账在重启瞬间把红外/键盘规则重新执行一遍。
         self._events_primed = False
-        # 自动化引擎钩子（由 extensions 注入；参数：原始快照/事件 dict）
-        self.snapshot_listener = None
-        self.event_listener = None
-        # 执行器指令 ACK 钩子（参数：工具名, 参数 dict）；B 板不主动上报状态，
-        # 靠成功 ACK 刷新 output_last_seen
-        self.command_ack_listener = None
+        # 数据钩子（二次开发接缝）：快照 / 事件 / 执行器 ACK 三个通道。
+        # 每个通道一个「主订阅者」（属性赋值，extensions 启动时注入自动化引擎）
+        # 加任意多个「观察者」（add_listener）——观察者不会被属性赋值顶掉，
+        # 第三方模块（对接 HA、写外部数据库、调试记录）可以并行监听同一份数据。
+        self._hook_primary: dict[str, object] = {k: None for k in HOOK_KINDS}
+        self._hook_extra: dict[str, list] = {k: [] for k in HOOK_KINDS}
+        self._hooks_lock = threading.Lock()
         # B 板复位对账：上次见到的 reset_count（None = 本进程还没建基线）
         self._last_b_reset_count: int | None = None
         # 上次见到的 MCP 实例标识：换实例 = 换了 MCP 进程 = B 板刚被复位过
@@ -462,7 +468,7 @@ class McpHardwareBridge:
             # NaN/越界等脏数据：忽略本帧，不能杀死轮询循环
             logger.debug("[硬件桥] 传感器数据入库失败: %s", e)
             return
-        self._fire_hook(self.snapshot_listener, data)
+        self._fire("snapshot", data)
 
     @staticmethod
     def _event_identity(event: dict) -> str:
@@ -502,17 +508,84 @@ class McpHardwareBridge:
                      **{k: v for k, v in event.items() if k != "event"}})
             except Exception as e:
                 logger.debug("[硬件桥] 事件入库失败: %s", e)
-            self._fire_hook(self.event_listener, event)
+            self._fire("event", event)
         self._events_primed = True
 
-    @staticmethod
-    def _fire_hook(listener, payload) -> None:
-        if listener is None:
-            return
-        try:
-            listener(payload)
-        except Exception as e:                           # noqa: BLE001
-            logger.debug("[硬件桥] 自动化钩子异常: %s", e)
+    # ==================== 数据钩子（二次开发接缝） ====================
+    #
+    # 三个通道：snapshot（A 板原始快照 dict）、event（硬件事件 dict）、
+    # ack（执行器成功 ACK，回调签名 fn(tool_name, args)）。
+    #
+    # 每通道一个主订阅者 + 任意多个观察者：
+    #   bridge.event_listener = engine.on_event        # 老写法，仍是主订阅者
+    #   bridge.add_listener("event", my_observer)      # 并挂，互不顶掉
+    # 观察者异常只写 debug，绝不影响主订阅者与轮询线程。
+
+    @property
+    def snapshot_listener(self):
+        return self._hook_primary["snapshot"]
+
+    @snapshot_listener.setter
+    def snapshot_listener(self, fn) -> None:
+        self._hook_primary["snapshot"] = fn
+
+    @property
+    def event_listener(self):
+        return self._hook_primary["event"]
+
+    @event_listener.setter
+    def event_listener(self, fn) -> None:
+        self._hook_primary["event"] = fn
+
+    @property
+    def command_ack_listener(self):
+        return self._hook_primary["ack"]
+
+    @command_ack_listener.setter
+    def command_ack_listener(self, fn) -> None:
+        self._hook_primary["ack"] = fn
+
+    def add_listener(self, kind: str, fn, *, primary: bool = False) -> bool:
+        """挂一个钩子订阅者；同一函数重复注册只生效一次。"""
+        if kind not in HOOK_KINDS or not callable(fn):
+            return False
+        with self._hooks_lock:
+            if primary:
+                self._hook_primary[kind] = fn
+            elif fn not in self._hook_extra[kind]:
+                self._hook_extra[kind].append(fn)
+        return True
+
+    def remove_listener(self, kind: str, fn) -> bool:
+        """撤销订阅（主订阅者与观察者都能撤），返回是否真的撤掉了。"""
+        if kind not in HOOK_KINDS:
+            return False
+        with self._hooks_lock:
+            if self._hook_primary[kind] is fn:
+                self._hook_primary[kind] = None
+                return True
+            if fn in self._hook_extra[kind]:
+                self._hook_extra[kind].remove(fn)
+                return True
+        return False
+
+    def _fire(self, kind: str, payload, *rest) -> None:
+        with self._hooks_lock:
+            primary = self._hook_primary[kind]
+            subs = ([primary] if primary else []) + list(self._hook_extra[kind])
+        for fn in subs:
+            try:
+                if rest:
+                    fn(payload, *rest)
+                else:
+                    fn(payload)
+            except Exception as e:                       # noqa: BLE001
+                logger.debug("[硬件桥] %s 钩子异常: %s", kind, e)
+
+    def _fire_ack(self, name: str, args: dict) -> None:
+        """执行器指令成功 ACK：刷新 output_last_seen 并广播 ack 通道。"""
+        if name in ACK_TRACKED_TOOLS:
+            self._fire("ack", name, args or {})
 
     # ==================== 同步调用 API（供 Flask 路由） ====================
 
@@ -548,11 +621,7 @@ class McpHardwareBridge:
         if _looks_like_error(text):
             return False, text
         # B 板不自报状态：任何执行器工具成功 ACK 都视为输出板在线
-        if name in ("door", "window", "light", "fan", "buzzer", "ir", "ac") and self.command_ack_listener:
-            try:
-                self.command_ack_listener(name, args or {})
-            except Exception:
-                logger.debug("command_ack_listener 异常", exc_info=True)
+        self._fire_ack(name, args or {})
         return True, text
 
     # ==================== 语音助手联动（面板 → 语音） ====================
@@ -624,11 +693,7 @@ class McpHardwareBridge:
         text = str(body.get("result") or "ok")
         if _looks_like_error(text):
             return False, text
-        if name in ("door", "window", "light", "fan", "buzzer", "ir", "ac") and self.command_ack_listener:
-            try:
-                self.command_ack_listener(name, args or {})
-            except Exception:
-                logger.debug("command_ack_listener 异常", exc_info=True)
+        self._fire_ack(name, args or {})
         return True, text
 
     # ── 设备语义映射：Web 百分比/状态 → B 板 MCP 工具参数 ──

@@ -8,10 +8,11 @@
 | | [serial-protocol.md](serial-protocol.md) | 串口 JSON 协议规范（A 上报 / B 命令，含固件裁剪说明） |
 | | [development-guide.md](development-guide.md) | 开发规范（依赖方向、命名、禁止跨层） |
 | **接口 / 配置** | [api.md](api.md) | 全部编程接口（Web REST / 语音 HTTP / MCP 工具 / LLM / 摄像头） |
+| | [extension-guide.md](extension-guide.md) | 二次开发接口指南（对外表面、四条扩展缝、加积木的清单与落地顺序） |
 | | [configuration.md](configuration.md) | 配置项参考（yaml / .env / 环境变量 / Config.h） |
 | **实战 / 排障** | [ha-automation-examples.md](ha-automation-examples.md) | Home Assistant 自动化实战 |
 | | [hardware-debug-notes.md](hardware-debug-notes.md) | 硬件踩坑复盘、排障速查 |
-| | [faq.md](faq.md) | 常见问题解答（30 问） |
+| | [faq.md](faq.md) | 常见问题解答（32 问） |
 | **部署 / 运维** | 见下表 ↓ | 每部分的 Linux 部署、接线、调试、二次开发 |
 
 ---
@@ -38,7 +39,7 @@
 | 我要部署形态 A（HA + 网关） | 根 [README](../README.md) → [architecture.md](architecture.md) → [../homeassistant/DEPLOYMENT.md](../homeassistant/DEPLOYMENT.md) → [../gateway/DEPLOYMENT.md](../gateway/DEPLOYMENT.md) | 两块板的 DEPLOYMENT（烧录接线） |
 | 我要部署形态 B（香橙派 Docker 智能终端） | [architecture.md](architecture.md) 第 3 节 → [../PC_Test/DEPLOYMENT.md](../PC_Test/DEPLOYMENT.md) | [configuration.md](configuration.md) |
 | 我要在电脑上调试硬件 | [../PC_Test/DEPLOYMENT.md](../PC_Test/DEPLOYMENT.md) | [serial-protocol.md](serial-protocol.md) |
-| 我要对接系统 / 二次开发接口 | [api.md](api.md) | [configuration.md](configuration.md) |
+| 我要对接系统 / 二次开发接口 | [api.md](api.md) → [extension-guide.md](extension-guide.md) | [configuration.md](configuration.md) |
 | 我要给 Arduino 加传感器/执行器 | 对应板 DEPLOYMENT 第 4 节 | [development-guide.md](development-guide.md) |
 | 我要写新联动规则 | [ha-automation-examples.md](ha-automation-examples.md) | [serial-protocol.md](serial-protocol.md) |
 | 我遇到问题 / 报错 | [faq.md](faq.md) | [hardware-debug-notes.md](hardware-debug-notes.md) |

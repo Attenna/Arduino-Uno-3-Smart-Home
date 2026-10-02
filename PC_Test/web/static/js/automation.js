@@ -11,10 +11,13 @@ let RULES = [];            // 全量规则（唯一数据源）
 let PREVIEW = {};          // rule_id -> preview 条目（卡片上的实时状态）
 let editingIndex = -1;     // 正在编辑的规则在 RULES 中的下标（-1=新规则）
 let editingRule = null;    // 正在编辑的规则副本
+let EDIT_KIND = 'rule';    // 编辑器现在编辑什么：'rule' 规则 / 'state' 全局状态条目
+let editingVar = null;     // state 模式下正在改的变量定义（null=新建）
 let DIRTY = false;         // 编辑器是否有未保存改动
 let LOADING = false;       // 正在程序化灌积木（忽略 change 事件）
 let SAVE_PENDING = false;
 let MENU_INDEX = -1;       // ⋮ 菜单当前作用的卡片下标
+let MENU_KIND = 'rule';    // ⋮ 菜单当前作用于哪一类卡片
 let RENAMING = false;      // 卡片内联重命名进行中
 
 // ==================== 通用 UI ====================
@@ -127,25 +130,79 @@ function defineBlocks() {
         },
     };
 
-    // ── 触发：事件 ──
-    Blockly.Blocks['trig_event'] = {
+    // ── 触发：事件类（每种输入各自一块，参数行只在自己块里出现）──
+    Blockly.Blocks['trig_touch'] = {
         init: function () {
             this.appendDummyInput()
-                .appendField('当')
-                .appendField(new Blockly.FieldDropdown(eventOptions), 'EVT');
-            this.appendDummyInput()
-                .appendField('键盘')
-                .appendField(new Blockly.FieldDropdown(keypadOptions), 'KEY')
-                .appendField('红外')
-                .appendField(new Blockly.FieldDropdown(irKeyOptions), 'CMD');
-            // RFID 卡号用文本框（下拉会静默回落）；不填 = 任意卡片都触发
-            this.appendDummyInput()
-                .appendField('卡号')
-                .appendField(new Blockly.FieldTextInput(''), 'UID');
+                .appendField('当 👆 触摸')
+                .appendField(new Blockly.FieldDropdown([
+                    ['按下', 'touch_on'], ['松开', 'touch_off']]), 'EVT');
             this.setPreviousStatement(true, 'TRIG');
             this.setNextStatement(false);
             this.setColour(30);
-            this.setTooltip('人体/人脸/键盘/红外/RFID 等事件；只取与所选事件对应的参数（卡号留空=任意卡片）');
+        },
+    };
+    Blockly.Blocks['trig_keypad'] = {
+        init: function () {
+            this.appendDummyInput()
+                .appendField('当 ⌨️ 键盘按下')
+                .appendField(new Blockly.FieldDropdown(keypadOptions), 'KEY');
+            this.setPreviousStatement(true, 'TRIG');
+            this.setNextStatement(false);
+            this.setColour(30);
+        },
+    };
+    Blockly.Blocks['trig_ir'] = {
+        init: function () {
+            this.appendDummyInput()
+                .appendField('当 📡 红外遥控')
+                .appendField(new Blockly.FieldDropdown(irKeyOptions), 'CMD');
+            this.setPreviousStatement(true, 'TRIG');
+            this.setNextStatement(false);
+            this.setColour(30);
+        },
+    };
+    Blockly.Blocks['trig_rfid'] = {
+        init: function () {
+            this.appendDummyInput()
+                .appendField('当 🪪 RFID 刷卡')
+                .appendField(new Blockly.FieldTextInput(''), 'UID')
+                .appendField('（卡号留空=任意卡片）');
+            this.setPreviousStatement(true, 'TRIG');
+            this.setNextStatement(false);
+            this.setColour(30);
+            this.setTooltip('卡号格式与门禁管理页一致（如 AA BB CC DD）');
+        },
+    };
+    Blockly.Blocks['trig_manual'] = {
+        init: function () {
+            this.appendDummyInput()
+                .appendField('当 ✋ 手动操作')
+                .appendField(new Blockly.FieldDropdown(manualDeviceOptions), 'DEV')
+                .appendField('（面板/语音）');
+            this.setPreviousStatement(true, 'TRIG');
+            this.setNextStatement(false);
+            this.setColour(30);
+            this.setTooltip('设备刚被人在面板或语音里手动设置时触发；「手动优先冷却」类仲裁由积木规则自己表达');
+        },
+    };
+    Blockly.Blocks['trig_face'] = {
+        init: function () {
+            this.appendDummyInput()
+                .appendField('当 😊 人脸识别：授权通过');
+            this.setPreviousStatement(true, 'TRIG');
+            this.setNextStatement(false);
+            this.setColour(30);
+        },
+    };
+    Blockly.Blocks['trig_event_other'] = {
+        init: function () {
+            this.appendDummyInput()
+                .appendField('当 🔔')
+                .appendField(new Blockly.FieldDropdown(otherEventOptions), 'EVT');
+            this.setPreviousStatement(true, 'TRIG');
+            this.setNextStatement(false);
+            this.setColour(30);
         },
     };
 
@@ -201,6 +258,47 @@ function defineBlocks() {
             this.setPreviousStatement(true, 'COND');
             this.setNextStatement(true, 'COND');
             this.setColour(190);
+        },
+    };
+
+    // ── 条件：全局状态（专用积木；同一条 JSON 也能从通用条件下拉里选到，
+    //    这里只是让它不必去传感器列表里翻）──
+    Blockly.Blocks['cond_state_bool'] = {
+        init: function () {
+            this.appendDummyInput()
+                .appendField('📌 状态')
+                .appendField(new Blockly.FieldDropdown(
+                    () => orPlaceholder(stateSourceOptions('bool'), NEW_STATE_HINT)), 'SRC')
+                .appendField(new Blockly.FieldDropdown([['是', 'true'], ['否', 'false']]), 'STATE');
+            this.setPreviousStatement(true, 'COND');
+            this.setNextStatement(true, 'COND');
+            this.setColour(190);
+            this.setTooltip('判断「是/否」类全局状态；变量在列表页的「📌 全局状态」条目里建立');
+        },
+    };
+    Blockly.Blocks['cond_state_num'] = {
+        init: function () {
+            this.appendDummyInput()
+                .appendField('📌 状态')
+                .appendField(new Blockly.FieldDropdown(
+                    () => orPlaceholder(stateSourceOptions('number'), NEW_STATE_HINT)), 'SRC')
+                .appendField(new Blockly.FieldDropdown(opOptions), 'OP')
+                .appendField(new Blockly.FieldNumber(0, -100000, 100000, 1), 'VAL');
+            this.setPreviousStatement(true, 'COND');
+            this.setNextStatement(true, 'COND');
+            this.setColour(190);
+        },
+    };
+    Blockly.Blocks['cond_state_enum'] = {
+        init: function () {
+            this.appendDummyInput()
+                .appendField('📌 状态')
+                .appendField(new Blockly.FieldDropdown(
+                    () => orPlaceholder(condStateEnumOptions(), NEW_STATE_HINT)), 'PRED');
+            this.setPreviousStatement(true, 'COND');
+            this.setNextStatement(true, 'COND');
+            this.setColour(190);
+            this.setTooltip('判断「选项」类全局状态取值（如 全屋模式 = 自动）');
         },
     };
 
@@ -382,43 +480,23 @@ function defineBlocks() {
                 + '未开机时给温度/模式/风速会自动先开机');
         },
     };
-    // 全屋模式：进门切自动 / 触摸切手动 / 红外循环档位
-    Blockly.Blocks['act_home_mode'] = {
+    // HTTP 出站（webhook）：把事件/状态推给外部系统，二次开发的主出站通道
+    Blockly.Blocks['act_http'] = {
         init: function () {
-            this.appendDummyInput().appendField('🏠 模式')
+            this.appendDummyInput().appendField('🌐 HTTP')
                 .appendField(new Blockly.FieldDropdown([
-                    ['不改', ''], ['自动', 'auto'],
-                    ['手动', 'manual'], ['离家', 'away'],
-                    ['翻转', 'toggle']]), 'MODE');
-            this.appendDummyInput().appendField('风扇')
-                .appendField(new Blockly.FieldDropdown([
-                    ['不改', ''], ['开', 'on'],
-                    ['关', 'off'], ['自动', 'auto'],
-                    ['循环', 'cycle']]), 'FAN');
-            this.appendDummyInput().appendField('灯光')
-                .appendField(new Blockly.FieldDropdown([
-                    ['不改', ''], ['自动', 'auto'], ['保持', 'hold'],
-                    ['暗', 'dark'], ['半亮', 'half'], ['全亮', 'bright'],
-                    ['循环', 'cycle']]), 'LIGHT');
-            // 状态机自身参数：勾选才生效（避免 0 秒被当成「不改」）
-            this.appendDummyInput()
-                .appendField(new Blockly.FieldCheckbox('FALSE'), 'SET_ENABLED')
-                .appendField('自动调节')
-                .appendField(new Blockly.FieldDropdown([['开', 'true'], ['关', 'false']]), 'ENABLED');
-            this.appendDummyInput()
-                .appendField(new Blockly.FieldCheckbox('FALSE'), 'SET_HOLD')
-                .appendField('存在判定保持')
-                .appendField(new Blockly.FieldNumber(1200, 0, 86400, 60), 'HOLD')
-                .appendField('秒');
-            this.appendDummyInput()
-                .appendField(new Blockly.FieldCheckbox('FALSE'), 'SET_GRACE')
-                .appendField('手动冷却')
-                .appendField(new Blockly.FieldNumber(30, 1, 3600, 1), 'GRACE')
-                .appendField('秒');
+                    ['POST', 'post'], ['GET', 'get']]), 'METHOD');
+            this.appendDummyInput().appendField('URL')
+                .appendField(new Blockly.FieldTextInput('http://127.0.0.1:'), 'URL');
+            this.appendDummyInput().appendField('内容')
+                .appendField(new Blockly.FieldTextInput(''), 'TEXT');
             this.setPreviousStatement(true, 'ACT');
             this.setNextStatement(true, 'ACT');
             this.setColour(120);
-            this.setTooltip('只改非「不改」的项；离线也能生效（纯状态机，不碰硬件）');
+            this.setTooltip('推给外部系统（NAS/HA/MQTT 网关/自建服务）。'
+                + 'URL 与内容都支持 {temperature} 这类占位符；内容以 { 或 [ 开头按 JSON 发。'
+                + '默认只允许本机与内网地址，公网目标要在 web_config.yaml 的 '
+                + 'automation.http_allowed_hosts 登记；不发认证头、不跟随跳转。');
         },
     };
     // 语音联动：按键触发后免唤醒词直接说话
@@ -431,6 +509,108 @@ function defineBlocks() {
             this.setPreviousStatement(true, 'ACT');
             this.setNextStatement(true, 'ACT');
             this.setColour(120);
+        },
+    };
+
+    // ── 全局状态写入（按类型拆块：下拉选项在 init 期定死，无法随所选变量动态换）──
+    Blockly.Blocks['act_state_bool'] = {
+        init: function () {
+            this.appendDummyInput().appendField('📌 状态')
+                .appendField(new Blockly.FieldDropdown(
+                    () => noVarOptions(stateVars('bool'))), 'NAME')
+                .appendField(new Blockly.FieldDropdown([
+                    ['设为 是', 'true'], ['设为 否', 'false']]), 'VALUE');
+            this.setPreviousStatement(true, 'ACT');
+            this.setNextStatement(true, 'ACT');
+            this.setColour(120);
+            this.setTooltip('写「是/否」类全局状态；值在重启后保留');
+        },
+    };
+    Blockly.Blocks['act_state_toggle'] = {
+        init: function () {
+            this.appendDummyInput().appendField('📌 状态')
+                .appendField(new Blockly.FieldDropdown(
+                    () => noVarOptions(stateToggleVars())), 'NAME')
+                .appendField('⇆ 切换');
+            this.setPreviousStatement(true, 'ACT');
+            this.setNextStatement(true, 'ACT');
+            this.setColour(120);
+            this.setTooltip('是/否 取反；两项选项状态在两值间切换');
+        },
+    };
+    Blockly.Blocks['act_state_num'] = {
+        init: function () {
+            this.appendDummyInput().appendField('📌 状态')
+                .appendField(new Blockly.FieldDropdown(
+                    () => noVarOptions(stateVars('number'))), 'NAME')
+                .appendField(new Blockly.FieldDropdown([
+                    ['设为', 'set'], ['加减', 'add']]), 'OP')
+                .appendField(new Blockly.FieldNumber(0, -100000, 100000, 1), 'VAL');
+            this.setPreviousStatement(true, 'ACT');
+            this.setNextStatement(true, 'ACT');
+            this.setColour(120);
+        },
+    };
+    Blockly.Blocks['act_state_enum'] = {
+        init: function () {
+            this.appendDummyInput().appendField('📌 状态')
+                .appendField(new Blockly.FieldDropdown(stateEnumPredOptions), 'PRED');
+            this.setPreviousStatement(true, 'ACT');
+            this.setNextStatement(true, 'ACT');
+            this.setColour(120);
+            this.setTooltip('把「选项」类状态设为某个选项值（如 全屋模式 = 自动）');
+        },
+    };
+    Blockly.Blocks['act_state_text'] = {
+        init: function () {
+            this.appendDummyInput().appendField('📌 状态')
+                .appendField(new Blockly.FieldDropdown(
+                    () => noVarOptions(stateVars('text'))), 'NAME')
+                .appendField('设为')
+                .appendField(new Blockly.FieldTextInput(''), 'TEXT');
+            this.setPreviousStatement(true, 'ACT');
+            this.setNextStatement(true, 'ACT');
+            this.setColour(120);
+            this.setTooltip('文本状态只用于记录与状态条目卡片展示，不能作为触发/条件比较');
+        },
+    };
+
+    // ── 全局状态「定义」积木：列表页的一条状态条目就是这一坨，与规则并列 ──
+    // 类型只在新建时可选（后端不支持改类型），改值行随类型切换——与 act_fan
+    // 隐藏转速行同一套 getInput().setVisible() 手法。
+    Blockly.Blocks['state_def'] = {
+        init: function () {
+            const self = this;
+            this.appendDummyInput()
+                .appendField('📌')
+                .appendField(new Blockly.FieldTextInput('新状态'), 'NAME');
+            this.appendDummyInput('TYPEROW')
+                .appendField('类型')
+                .appendField(new Blockly.FieldDropdown(STATE_TYPES), 'TYPE');
+            this.appendDummyInput('TYPETEXT')
+                .appendField('类型')
+                .appendField(new Blockly.FieldLabel(''), 'TYPELABEL');
+            this.appendDummyInput('CHOICESROW')
+                .appendField('选项（逗号分隔）')
+                .appendField(new Blockly.FieldTextInput(''), 'CHOICES');
+            this.appendDummyInput('VALBOOL')
+                .appendField('当前值')
+                .appendField(new Blockly.FieldDropdown([['是', 'true'], ['否', 'false']]), 'VB');
+            this.appendDummyInput('VALNUM')
+                .appendField('当前值')
+                .appendField(new Blockly.FieldNumber(0, -100000, 100000, 1), 'VN');
+            this.appendDummyInput('VALENUM')
+                .appendField('当前值')
+                .appendField(new Blockly.FieldDropdown(
+                    () => orPlaceholder(stateDefChoices(self), '（先填选项）')), 'VE');
+            this.appendDummyInput('VALTEXT')
+                .appendField('当前值')
+                .appendField(new Blockly.FieldTextInput(''), 'VT');
+            this.setColour(265);
+            this.setTooltip('一条全局状态 = 名字 + 类型 + 当前值。保存这条定义时写入一次当前值，'
+                + '之后由规则里的「设置全局状态」积木维护。');
+            this.getField('TYPE').setValidator((v) => { showStateTypeRows(self, v); return v; });
+            showStateTypeRows(this, 'bool');
         },
     };
 }
@@ -462,6 +642,95 @@ function eventOptions() {
         if (e.param) label += `（参数：${e.param_label}）`;
         return [label, e.id];
     });
+}
+// 已拆成专用积木的事件；其余（烟雾/雨水/人体红外的沿）留在通用「事件」块里
+const DEDICATED_EVENTS = ['touch_on', 'touch_off', 'keypad', 'ir', 'rfid',
+                          'manual_control', 'face_granted'];
+function otherEventOptions() {
+    const opts = eventOptions().filter(o => !DEDICATED_EVENTS.includes(o[1]));
+    return opts.length ? opts : [['（无其它事件）', '']];
+}
+function manualDeviceOptions() {
+    const e = CAPS.events.find(x => x.id === 'manual_control');
+    const opts = ((e && e.choices) || []).map(c => [c.label, c.id]);
+    return opts.length ? opts : [['风扇', 'fan']];
+}
+
+// ── 全局状态积木的下拉（变量清单是运行期的，来自 CAPS.state_vars）──
+function stateVars(type) {
+    return (CAPS.state_vars || []).filter(v => v.type === type)
+        .map(v => [v.label || v.name, v.id]);
+}
+function stateToggleVars() {
+    // bool 与「两项 enum」可切换（与后端 GlobalStateStore.toggle 一致）
+    return (CAPS.state_vars || [])
+        .filter(v => v.type === 'bool' || (v.type === 'enum' && (v.choices || []).length === 2))
+        .map(v => [v.label || v.name, v.id]);
+}
+function stateEnumPredOptions() {
+    const opts = [];
+    for (const v of (CAPS.state_vars || [])) {
+        if (v.type !== 'enum') continue;
+        for (const c of (v.choices || [])) {
+            const label = (v.choice_labels || {})[c] || c;
+            opts.push([`${v.label || v.name} = ${label}`, `${v.id}:${c}`]);
+        }
+    }
+    return opts.length ? opts : [['（先新建选项类状态）', '']];
+}
+function noVarOptions(fallback) {
+    return fallback.length ? fallback : [[NEW_STATE_HINT, '']];
+}
+
+// ── 全局状态条目：定义积木的行切换 + 状态条件积木的下拉 ──
+
+const NEW_STATE_HINT = '（先新建「📌 状态」条目）';
+const STATE_TYPES = [['是/否', 'bool'], ['数字', 'number'], ['选项', 'enum'], ['文本', 'text']];
+const STATE_TYPE_LABEL = STATE_TYPES.reduce((m, o) => (m[o[1]] = o[0], m), {});
+
+function orPlaceholder(opts, hint) {
+    return opts.length ? opts : [[hint, '']];
+}
+function parseChoices(raw) {
+    return String(raw || '').split(/[,，]/).map(s => s.trim()).filter(Boolean);
+}
+// 「状态·xxx」是后端 global_state_sources() 给条件源加的标签前缀；专用积木自己
+// 已经写了「📌 状态」，这里把前缀去掉，避免读成「📌 状态 状态·全屋模式」。
+function stateNameOf(source) {
+    return String(source.label || '').replace(/^状态·/, '');
+}
+function stateSourceOptions(kind) {
+    return sourceByKind(kind).filter(s => String(s.id).startsWith('g:'))
+        .map(s => [stateNameOf(s), s.id]);
+}
+function condStateEnumOptions() {
+    const opts = [];
+    for (const s of sourceByKind('enum')) {
+        if (!String(s.id).startsWith('g:')) continue;
+        for (const c of (s.choices || [])) {
+            opts.push([`${stateNameOf(s)} = ${(s.choice_labels || {})[c] || c}`,
+                       `${s.id}:${c}`]);
+        }
+    }
+    return opts;
+}
+// 定义积木的「当前值」候选：跟着同一块上的「选项」输入实时变。
+// 显示名用后端给的 choice_labels（全屋模式显示「自动」而不是「auto」），值仍是原始 id。
+function stateDefChoices(block) {
+    const labels = (block && block._choiceLabels) || {};
+    return parseChoices(block.getFieldValue('CHOICES'))
+        .map(c => [labels[c] || c, c]);
+}
+// 类型只在新建时可选（后端没有改类型这条路），已有变量改成只读展示
+function showStateTypeRows(block, type) {
+    const isEnum = type === 'enum';
+    block.getInput('TYPEROW').setVisible(!block._existing);
+    block.getInput('TYPETEXT').setVisible(!!block._existing);
+    block.getInput('CHOICESROW').setVisible(isEnum);
+    block.getInput('VALBOOL').setVisible(type === 'bool');
+    block.getInput('VALNUM').setVisible(type === 'number');
+    block.getInput('VALENUM').setVisible(isEnum);
+    block.getInput('VALTEXT').setVisible(type === 'text');
 }
 function opOptions() {
     return CAPS.comparators.map(c => [c.label, c.id]);
@@ -504,7 +773,15 @@ function acTempOptions() {
 function buildToolbox() {
     const num = numSourceOptions();
     const bool = boolSourceOptions();
-    const evt = eventOptions();
+    const evt = otherEventOptions();
+    const stBool = noVarOptions(stateVars('bool'));
+    const stNum = noVarOptions(stateVars('number'));
+    const stEnum = stateEnumPredOptions();
+    const stText = noVarOptions(stateVars('text'));
+    const stToggle = noVarOptions(stateToggleVars());
+    const stCondBool = orPlaceholder(stateSourceOptions('bool'), NEW_STATE_HINT);
+    const stCondNum = orPlaceholder(stateSourceOptions('number'), NEW_STATE_HINT);
+    const stCondEnum = orPlaceholder(condStateEnumOptions(), NEW_STATE_HINT);
     return `<xml>
       <category name="规则" colour="265">
         <block type="rule_block"></block>
@@ -515,9 +792,17 @@ function buildToolbox() {
         </block>
         <block type="trig_bool"><field name="SRC">${bool[0][1]}</field><field name="STATE">true</field></block>
         <block type="trig_status"></block>
-        <block type="trig_event"><field name="EVT">${evt[0][1]}</field></block>
         <block type="trig_interval"><field name="SECONDS">10</field></block>
         <block type="trig_time"><field name="TIME">08:00</field></block>
+        <category name="事件" colour="30">
+          <block type="trig_touch"><field name="EVT">touch_on</field></block>
+          <block type="trig_keypad"></block>
+          <block type="trig_ir"></block>
+          <block type="trig_rfid"></block>
+          <block type="trig_manual"></block>
+          <block type="trig_face"></block>
+          <block type="trig_event_other"><field name="EVT">${evt[0][1]}</field></block>
+        </category>
       </category>
       <category name="条件" colour="190">
         <block type="cond_num">
@@ -525,6 +810,15 @@ function buildToolbox() {
         </block>
         <block type="cond_bool"><field name="SRC">${bool[0][1]}</field><field name="STATE">true</field></block>
         <block type="cond_status"></block>
+        <category name="全局状态" colour="190">
+          <block type="cond_state_bool">
+            <field name="SRC">${stCondBool[0][1]}</field><field name="STATE">true</field>
+          </block>
+          <block type="cond_state_num">
+            <field name="SRC">${stCondNum[0][1]}</field><field name="OP">&gt;</field><field name="VAL">0</field>
+          </block>
+          <block type="cond_state_enum"><field name="PRED">${stCondEnum[0][1]}</field></block>
+        </category>
       </category>
       <category name="动作" colour="120">
         <block type="act_door"></block>
@@ -534,8 +828,8 @@ function buildToolbox() {
         <block type="act_light_rgb"></block>
         <block type="act_fan"></block>
         <block type="act_ac"></block>
-        <block type="act_home_mode"></block>
         <block type="act_voice"></block>
+        <block type="act_http"></block>
         <block type="act_ir"></block>
         <block type="act_ir_code"></block>
         <block type="act_buzzer"></block>
@@ -543,6 +837,19 @@ function buildToolbox() {
         <block type="act_oled"></block>
         <block type="act_oled_line"></block>
         <block type="act_delay"></block>
+        <category name="全局状态" colour="120">
+          <block type="act_state_bool">
+            <field name="NAME">${stBool[0][1]}</field><field name="VALUE">true</field>
+          </block>
+          <block type="act_state_toggle"><field name="NAME">${stToggle[0][1]}</field></block>
+          <block type="act_state_num">
+            <field name="NAME">${stNum[0][1]}</field><field name="OP">set</field><field name="VAL">0</field>
+          </block>
+          <block type="act_state_enum"><field name="PRED">${stEnum[0][1]}</field></block>
+          <block type="act_state_text">
+            <field name="NAME">${stText[0][1]}</field><field name="TEXT"></field>
+          </block>
+        </category>
       </category>
     </xml>`;
 }
@@ -573,7 +880,7 @@ function darkTheme() {
 const SENSOR_ICONS = {
     temperature: '🌡️', humidity: '💧', light: '☀️', smoke: '💨', rain: '🌧️',
     touch: '👆', motion: '🚶', door_status: '🚪', window_status: '🪟',
-    home_mode: '🏠', person_present: '👤', light_status: '💡', fan_speed: '🌀',
+    light_status: '💡', fan_speed: '🌀',
 };
 
 function triggerIcon(trig) {
@@ -581,6 +888,7 @@ function triggerIcon(trig) {
     if (trig.kind === 'event') return '🔔';
     if (trig.kind === 'interval') return '⏱️';
     if (trig.kind === 'time') return '🕐';
+    if (String(trig.sensor || '').startsWith('g:')) return '📌';
     return SENSOR_ICONS[trig.sensor] || '📈';
 }
 
@@ -602,6 +910,10 @@ function summarizeTrigger(t) {
         if (t.command) {
             const c = ((e && e.choices) || []).find(x => x.id === t.command);
             label += ` · ${c ? c.label : t.command}`;
+        }
+        if (t.device) {
+            const d = ((e && e.choices) || []).find(x => x.id === t.device);
+            label += ` · ${d ? d.label : t.device}`;
         }
         if (t.uid) label += ` · 卡 ${t.uid}`;
         return label;
@@ -671,17 +983,22 @@ function summarizeAction(a) {
             }
             return `红外发射 ${a.code}`;
         }
-        case 'home_mode': {
-            const bits = [];
-            if (a.mode) bits.push('模式');
-            if (a.fan_override) bits.push('风扇档');
-            if (a.light_level) bits.push('灯光档');
-            if (a.enabled !== undefined) bits.push('自动调节');
-            if (a.presence_hold_sec !== undefined) bits.push('存在判定');
-            if (a.manual_grace_s !== undefined) bits.push('手动冷却');
-            return '全屋' + (bits.length ? '（' + bits.join('/') + '）' : '');
+        case 'state': {
+            const v = (CAPS.state_vars || []).find(x => x.id === a.name);
+            const label = v ? (v.label || v.name) : String(a.name || '').replace(/^g:/, '');
+            if (a.op === 'toggle') return `状态「${label}」⇆切换`;
+            let val = a.value;
+            if (v && v.type === 'enum') val = (v.choice_labels || {})[val] || val;
+            else if (typeof val === 'boolean') val = val ? '是' : '否';
+            if (a.op === 'add') {
+                const n = Number(val) || 0;
+                return `状态「${label}」${n >= 0 ? '+' : ''}${n}`;
+            }
+            return `状态「${label}」= ${val}`;
         }
         case 'voice':  return a.action === 'say' ? '语音播报' : '唤醒语音';
+        case 'http':   return `HTTP ${String(a.method || 'post').toUpperCase()} `
+                            + String(a.url || '').replace(/^https?:\/\//, '').slice(0, 40);
         default:       return a.device;
     }
 }
@@ -702,23 +1019,36 @@ function showEditor() {
     Blockly.svgResize(workspace);
     workspace.clear();
     LOADING = true;
-    const trig = (editingRule.trigger && editingRule.trigger.kind)
-        ? editingRule.trigger
-        : { kind: 'sensor', sensor: 'temperature', op: '>', value: 30 };
-    buildRuleBlock(Object.assign({}, editingRule, { trigger: trig }));
-    document.getElementById('editorName').value = editingRule.name || '新规则';
-    document.getElementById('editorEnabled').checked = editingRule.enabled !== false;
+    const isState = EDIT_KIND === 'state';
+    ['editorEnabledWrap', 'editorRunBtn'].forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) el.classList.toggle('hidden', isState);
+    });
+    if (isState) {
+        buildStateBlock(editingVar);
+        document.getElementById('editorName').value =
+            editingVar ? (editingVar.name || '') : '新状态';
+    } else {
+        const trig = (editingRule.trigger && editingRule.trigger.kind)
+            ? editingRule.trigger
+            : { kind: 'sensor', sensor: 'temperature', op: '>', value: 30 };
+        buildRuleBlock(Object.assign({}, editingRule, { trigger: trig }));
+        document.getElementById('editorName').value = editingRule.name || '新规则';
+        document.getElementById('editorEnabled').checked = editingRule.enabled !== false;
+    }
     LOADING = false;
     DIRTY = false;
     setTimeout(() => { fitWorkspace(); Blockly.svgResize(workspace); }, 60);
 }
 
 function closeEditor() {
-    if (DIRTY && !confirm('这条规则有未保存的修改，确定放弃？')) return;
+    if (DIRTY && !confirm('这里有未保存的改动，确定放弃？')) return;
     document.getElementById('editorView').classList.add('hidden');
     document.getElementById('listView').classList.remove('hidden');
     editingIndex = -1;
     editingRule = null;
+    editingVar = null;
+    EDIT_KIND = 'rule';
     DIRTY = false;
     refreshPreview();
 }
@@ -728,13 +1058,17 @@ function closeEditor() {
 function renderRuleList() {
     const grid = document.getElementById('ruleGrid');
     const count = document.getElementById('ruleCount');
-    if (count) count.textContent = `共 ${RULES.length} 条`;
+    if (count) count.textContent = `共 ${RULES.length} 条规则 · ${GS_VARS.length} 个全局状态`;
     if (!grid) return;
-    if (!RULES.length) {
-        grid.innerHTML = '<div class="empty-rules">还没有规则，点右上角「＋ 新建规则」开始。</div>';
-        return;
-    }
-    grid.innerHTML = RULES.map(ruleCardHtml).join('');
+    const states = GS_VARS.length
+        ? `<div class="grid-section">📌 全局状态 · ${GS_VARS.length}</div>`
+          + GS_VARS.map(stateCardHtml).join('')
+        : '';
+    const rules = RULES.length
+        ? `<div class="grid-section">🧩 自动化规则 · ${RULES.length}</div>`
+          + RULES.map(ruleCardHtml).join('')
+        : '<div class="empty-rules">还没有规则，点右上角「＋ 新建规则」开始。</div>';
+    grid.innerHTML = states + rules;
 }
 
 function ruleCardHtml(r, i) {
@@ -747,7 +1081,7 @@ function ruleCardHtml(r, i) {
     else if (pv) statusBadge = '<span class="badge evt">事件驱动</span>';
     const nCond = (r.conditions || []).length;
     const nAct = (r.actions || []).length;
-    return `<div class="rule-card ${r.enabled === false ? 'disabled' : ''}" data-index="${i}">
+    return `<div class="rule-card ${r.enabled === false ? 'disabled' : ''}" data-kind="rule" data-index="${i}">
       <div class="rc-icon ${triggerKindClass(trig)}">${triggerIcon(trig)}</div>
       <div class="rc-main">
         <div class="rc-name">${esc(r.name)}</div>
@@ -769,18 +1103,29 @@ function ruleCardHtml(r, i) {
 
 // ---- 卡片 ⋮ 菜单 ----
 
-function openCardMenu(i, btn) {
+function openCardMenu(kind, i, btn) {
+    MENU_KIND = kind;
     MENU_INDEX = i;
-    const r = RULES[i];
     const menu = document.getElementById('cardMenu');
-    menu.innerHTML =
-        `<button data-m="run"${r.id ? '' : ' disabled'}>▶ 运行一次</button>` +
-        '<button data-m="edit">✏️ 编辑</button>' +
-        '<button data-m="rename">🏷 重命名</button>' +
-        '<button data-m="dup">📄 复制</button>' +
-        `<button data-m="toggle">${r.enabled === false ? '⏻ 启用' : '⏻ 停用'}</button>` +
-        '<div class="sep"></div>' +
-        '<button data-m="del" class="danger">🗑 删除</button>';
+    if (kind === 'state') {
+        if (!GS_VARS[i]) return;
+        // 状态条目没有「运行一次/复制/停用」这些规则才有的动作
+        menu.innerHTML =
+            '<button data-m="edit">✏️ 编辑</button>' +
+            '<div class="sep"></div>' +
+            '<button data-m="del" class="danger">🗑 删除</button>';
+    } else {
+        const r = RULES[i];
+        if (!r) return;
+        menu.innerHTML =
+            `<button data-m="run"${r.id ? '' : ' disabled'}>▶ 运行一次</button>` +
+            '<button data-m="edit">✏️ 编辑</button>' +
+            '<button data-m="rename">🏷 重命名</button>' +
+            '<button data-m="dup">📄 复制</button>' +
+            `<button data-m="toggle">${r.enabled === false ? '⏻ 启用' : '⏻ 停用'}</button>` +
+            '<div class="sep"></div>' +
+            '<button data-m="del" class="danger">🗑 删除</button>';
+    }
     const rect = btn.getBoundingClientRect();
     menu.classList.remove('hidden');
     const w = menu.offsetWidth, h = menu.offsetHeight;
@@ -797,6 +1142,11 @@ function closeCardMenu() {
 }
 
 async function cardMenuAction(m, i) {
+    if (MENU_KIND === 'state') {
+        if (m === 'edit') openStateEditor(i);
+        else if (m === 'del') await deleteGlobalVar(i);
+        return;
+    }
     const r = RULES[i];
     if (!r) return;
     if (m === 'run') return runRule(r.id);
@@ -832,6 +1182,7 @@ async function persistRules(msg) {
 }
 
 function createRule() {
+    EDIT_KIND = 'rule';
     editingIndex = -1;
     editingRule = {
         id: null, name: '新规则', enabled: true,
@@ -843,9 +1194,114 @@ function createRule() {
 }
 
 function openEditor(i) {
+    EDIT_KIND = 'rule';
     editingIndex = i;
     editingRule = JSON.parse(JSON.stringify(RULES[i]));
     showEditor();
+}
+
+// ---- 全局状态条目：新建/编辑走同一个 Blockly 编辑器 ----
+
+function createState() {
+    EDIT_KIND = 'state';
+    editingVar = null;
+    showEditor();
+}
+
+function openStateEditor(i) {
+    EDIT_KIND = 'state';
+    editingVar = JSON.parse(JSON.stringify(GS_VARS[i] || null));
+    showEditor();
+}
+
+function buildStateBlock(v) {
+    const b = workspace.newBlock('state_def');
+    b._existing = !!v;
+    b._choiceLabels = (v && v.choice_labels) || {};
+    b.initSvg();
+    b.render();
+    b.setFieldValue(v ? (v.name || v.label || '') : '新状态', 'NAME');
+    b.setFieldValue(v ? v.type : 'bool', 'TYPE');
+    if (v) b.setFieldValue(gsTypeLabel(v.type), 'TYPELABEL');
+    if (v && v.type === 'enum') b.setFieldValue((v.choices || []).join(','), 'CHOICES');
+    if (v) fillStateValue(b, v);
+    showStateTypeRows(b, v ? v.type : 'bool');
+    return b;
+}
+
+function fillStateValue(b, v) {
+    if (v.type === 'bool') b.setFieldValue(v.value ? 'true' : 'false', 'VB');
+    else if (v.type === 'number') b.setFieldValue(String(v.value === undefined ? 0 : v.value), 'VN');
+    else if (v.type === 'enum') {
+        // VE 的选项是按 CHOICES 现算的，Blockly 校验 setFieldValue 时用的是 init 期
+        // （CHOICES 还空着）生成的缓存，不先重算就把当前值判成非法：卡片显示
+        // 「（先填选项）」，保存时静默落到第一个选项，等于偷偷改了全屋模式。
+        b.getField('VE').getOptions(false);
+        b.setFieldValue(String(v.value || ''), 'VE');
+    } else b.setFieldValue(String(v.value || ''), 'VT');
+}
+
+function collectStateDef() {
+    const b = workspace.getTopBlocks(false).find(x => x.type === 'state_def');
+    if (!b) throw new Error('画布里没有状态块');
+    const name = (document.getElementById('editorName').value || '').trim()
+        || (b.getFieldValue('NAME') || '').trim();
+    if (!name) throw new Error('请填写状态名字（1~24 字，不含空格与冒号）');
+    const type = b.getFieldValue('TYPE') || 'bool';
+    const out = { name, type };
+    if (type === 'bool') {
+        out.value = b.getFieldValue('VB') === 'true';
+    } else if (type === 'number') {
+        out.value = Number(b.getFieldValue('VN') || 0);
+    } else if (type === 'enum') {
+        const choices = parseChoices(b.getFieldValue('CHOICES'));
+        if (!choices.length) throw new Error('「选项」类型需要至少 1 个选项值（逗号分隔）');
+        out.choices = choices;
+        const picked = b.getFieldValue('VE');
+        out.value = choices.includes(picked) ? picked : choices[0];
+    } else {
+        out.value = String(b.getFieldValue('VT') || '');
+    }
+    return out;
+}
+
+async function saveStateDef() {
+    let def;
+    try {
+        def = collectStateDef();
+    } catch (e) {
+        showNotification(e.message, 'error');
+        return;
+    }
+    if (editingVar) {
+        if (def.type !== editingVar.type) {
+            showNotification('状态类型不能修改：请删除这条再新建', 'error');
+            return;
+        }
+        // 选项值可能被改；名字同理（后端会自动改写规则里的引用）
+        const body = { name: def.name, value: def.value };
+        if (def.type === 'enum') body.choices = def.choices;
+        await gsApi(`/api/automation/global_state/${encodeURIComponent(editingVar.id)}`,
+                    { method: 'PUT', body: JSON.stringify(body) });
+        return;
+    }
+    await gsApi('/api/automation/global_state', { method: 'POST', body: JSON.stringify(def) });
+}
+
+async function gsApi(url, options) {
+    if (SAVE_PENDING) return;
+    SAVE_PENDING = true;
+    try {
+        const r = await api(url, options);
+        afterGsChange(r);
+        DIRTY = false;
+        closeEditor();
+        showNotification(r.message || '已保存', 'success');
+    } catch (e) {
+        showNotification(e.message, 'error');
+    } finally {
+        SAVE_PENDING = false;
+    }
 }
 
 async function duplicateRule(i) {
@@ -859,7 +1315,7 @@ async function duplicateRule(i) {
 }
 
 function startInlineRename(i) {
-    const card = document.querySelector(`.rule-card[data-index="${i}"]`);
+    const card = document.querySelector(`.rule-card[data-kind="rule"][data-index="${i}"]`);
     if (!card || RENAMING) return;
     const nameEl = card.querySelector('.rc-name');
     const old = RULES[i].name;
@@ -924,13 +1380,13 @@ function initWorkspace() {
         // 媒体资源走本地（内网/校园网无外网也能用）
         media: '/static/vendor/blockly/media/',
     });
-    // 规则名称双向同步：画布积木里的 NAME 改了，顶部输入框跟着变
+    // 顶部名称框与画布里的名字双向同步（规则块和状态定义块共用这一条通道）
     workspace.addChangeListener((e) => {
         if (!e || !e.blockId) return;
         if (e.name === 'NAME') {
             const b = workspace.getBlockById(e.blockId);
             const inp = document.getElementById('editorName');
-            if (b && b.type === 'rule_block' && inp) {
+            if (b && isTopBlock(b) && inp) {
                 const v = b.getFieldValue('NAME') || '';
                 if (inp.value !== v) inp.value = v;
             }
@@ -939,15 +1395,19 @@ function initWorkspace() {
     });
     document.getElementById('fitViewBtn')?.addEventListener('click', fitWorkspace);
     document.getElementById('editorName')?.addEventListener('input', (ev) => {
-        const rb = workspace.getTopBlocks(false).find(b => b.type === 'rule_block');
+        const rb = workspace.getTopBlocks(false).find(isTopBlock);
         if (rb) rb.setFieldValue(ev.target.value, 'NAME');
     });
+}
+
+function isTopBlock(b) {
+    return b.type === 'rule_block' || b.type === 'state_def';
 }
 
 // 只编辑一条规则：块贴左上角，超出画布时才缩放
 function fitWorkspace() {
     if (!workspace) return;
-    const rb = workspace.getTopBlocks(false).find(b => b.type === 'rule_block');
+    const rb = workspace.getTopBlocks(false).find(isTopBlock);
     if (!rb) return;
     const p = rb.getRelativeToSurfaceXY();
     if (Math.round(p.x) !== 24 || Math.round(p.y) !== 24) rb.moveBy(24 - p.x, 24 - p.y);
@@ -1004,6 +1464,7 @@ function collectEditor() {
 
 async function saveEditor(runAfter) {
     if (SAVE_PENDING) return;
+    if (EDIT_KIND === 'state') return saveStateDef();
     let rule;
     try {
         rule = collectEditor();
@@ -1064,6 +1525,15 @@ function withHold(block, json) {
     return json;
 }
 
+// 「状态 = 取值」类下拉把 id 和值拼在一个 field 里（如 door_status:open、
+// g:全屋模式:auto）。全局状态 id 自带一个冒号，所以只能按「第二个冒号」切一次，
+// 用 split(':') 会把 id 切成 "g"、条件永远存不进去。
+function splitPred(raw) {
+    const s = String(raw || '');
+    const i = s.startsWith('g:') ? s.indexOf(':', 2) : s.indexOf(':');
+    return i < 0 ? [s, ''] : [s.slice(0, i), s.slice(i + 1)];
+}
+
 function triggerToJson(b) {
     switch (b.type) {
         case 'trig_num':
@@ -1073,19 +1543,35 @@ function triggerToJson(b) {
             return withHold(b, { kind: 'sensor', sensor: b.getFieldValue('SRC'),
                      op: '==', value: b.getFieldValue('STATE') === 'true' });
         case 'trig_status': {
-            const [sensor, value] = b.getFieldValue('PRED').split(':');
+            const [sensor, value] = splitPred(b.getFieldValue('PRED'));
             return withHold(b, { kind: 'sensor', sensor, op: '==', value });
         }
-        case 'trig_event': {
-            const evt = b.getFieldValue('EVT');
-            const json = { kind: 'event', event: evt };
-            if (evt === 'keypad') json.key = b.getFieldValue('KEY') || '1';
-            if (evt === 'ir') json.command = b.getFieldValue('CMD') || '0x45';
-            if (evt === 'rfid') {
-                const uid = (b.getFieldValue('UID') || '').trim();
-                if (uid) json.uid = uid;      // 留空 = 任意卡片都触发
-            }
+        case 'trig_touch':
+            return { kind: 'event', event: b.getFieldValue('EVT') };
+        case 'trig_keypad':
+            return { kind: 'event', event: 'keypad',
+                     key: b.getFieldValue('KEY') || '1' };
+        case 'trig_ir':
+            return { kind: 'event', event: 'ir',
+                     command: b.getFieldValue('CMD') || '0x45' };
+        case 'trig_rfid': {
+            const json = { kind: 'event', event: 'rfid' };
+            const uid = (b.getFieldValue('UID') || '').trim();
+            if (uid) json.uid = uid;      // 留空 = 任意卡片都触发
             return json;
+        }
+        case 'trig_manual': {
+            const json = { kind: 'event', event: 'manual_control' };
+            const dev = b.getFieldValue('DEV');
+            if (dev) json.device = dev;   // 空 = 任意设备的手动操作
+            return json;
+        }
+        case 'trig_face':
+            return { kind: 'event', event: 'face_granted' };
+        case 'trig_event_other': {
+            const evt = b.getFieldValue('EVT');
+            if (!evt) return null;
+            return { kind: 'event', event: evt };
         }
         case 'trig_interval':
             return { kind: 'interval', seconds: Number(b.getFieldValue('SECONDS')) };
@@ -1105,7 +1591,17 @@ function conditionToJson(b) {
             return { sensor: b.getFieldValue('SRC'), op: '==',
                      value: b.getFieldValue('STATE') === 'true' };
         case 'cond_status': {
-            const [sensor, value] = b.getFieldValue('PRED').split(':');
+            const [sensor, value] = splitPred(b.getFieldValue('PRED'));
+            return { sensor, op: '==', value };
+        }
+        case 'cond_state_bool':
+            return { sensor: b.getFieldValue('SRC'), op: '==',
+                     value: b.getFieldValue('STATE') === 'true' };
+        case 'cond_state_num':
+            return { sensor: b.getFieldValue('SRC'), op: b.getFieldValue('OP'),
+                     value: Number(b.getFieldValue('VAL')) };
+        case 'cond_state_enum': {
+            const [sensor, value] = splitPred(b.getFieldValue('PRED'));
             return { sensor, op: '==', value };
         }
         default:
@@ -1165,28 +1661,45 @@ function actionToJson(b) {
         case 'act_oled_line':
             return { device: 'oled', line: Number(b.getFieldValue('LINE')),
                      text: b.getFieldValue('TEXT') };
-        case 'act_home_mode': {
-            const json = { device: 'home_mode' };
-            const mode = b.getFieldValue('MODE');
-            const fan = b.getFieldValue('FAN');
-            const light = b.getFieldValue('LIGHT');
-            if (mode) json.mode = mode;
-            if (fan) json.fan_override = fan;
-            if (light) json.light_level = light;
-            // 状态机参数：勾选才写进 JSON（0 秒是合法值，不能用 0 当「不改」）
-            if (b.getFieldValue('SET_ENABLED') === 'TRUE') {
-                json.enabled = b.getFieldValue('ENABLED') === 'true';
-            }
-            if (b.getFieldValue('SET_HOLD') === 'TRUE') {
-                json.presence_hold_sec = Number(b.getFieldValue('HOLD'));
-            }
-            if (b.getFieldValue('SET_GRACE') === 'TRUE') {
-                json.manual_grace_s = Number(b.getFieldValue('GRACE'));
-            }
-            return json;
+        case 'act_state_bool': {
+            const name = b.getFieldValue('NAME');
+            if (!name) return null;
+            return { device: 'state', name, op: 'set',
+                     value: b.getFieldValue('VALUE') === 'true' };
+        }
+        case 'act_state_toggle': {
+            const name = b.getFieldValue('NAME');
+            if (!name) return null;
+            return { device: 'state', name, op: 'toggle' };
+        }
+        case 'act_state_num': {
+            const name = b.getFieldValue('NAME');
+            if (!name) return null;
+            return { device: 'state', name, op: b.getFieldValue('OP') || 'set',
+                     value: Number(b.getFieldValue('VAL')) };
+        }
+        case 'act_state_enum': {
+            const [name, value] = splitPred(b.getFieldValue('PRED'));
+            if (!name || value === '') return null;
+            return { device: 'state', name, op: 'set', value };
+        }
+        case 'act_state_text': {
+            const name = b.getFieldValue('NAME');
+            if (!name) return null;
+            return { device: 'state', name, op: 'set',
+                     value: b.getFieldValue('TEXT') || '' };
         }
         case 'act_voice': {
             const json = { device: 'voice', action: b.getFieldValue('ACT') || 'wake' };
+            const text = (b.getFieldValue('TEXT') || '').trim();
+            if (text) json.text = text;
+            return json;
+        }
+        case 'act_http': {
+            const url = (b.getFieldValue('URL') || '').trim();
+            if (!url) return null;
+            const json = { device: 'http',
+                           method: b.getFieldValue('METHOD') || 'post', url };
             const text = (b.getFieldValue('TEXT') || '').trim();
             if (text) json.text = text;
             return json;
@@ -1218,10 +1731,29 @@ function fillTrigger(trig) {
         return b;
     }
     if (trig.kind === 'event') {
-        const b = createTyped('trig_event');
-        b.setFieldValue(trig.event, 'EVT');
-        if (trig.key) b.setFieldValue(optionValue(keypadOptions(), trig.key, '1'), 'KEY');
-        if (trig.command) b.setFieldValue(optionValue(irKeyOptions(), trig.command, '0x45'), 'CMD');
+        const evt = trig.event;
+        let b;
+        if (evt === 'touch_on' || evt === 'touch_off') {
+            b = createTyped('trig_touch');
+            b.setFieldValue(evt, 'EVT');
+        } else if (evt === 'keypad') {
+            b = createTyped('trig_keypad');
+            if (trig.key) b.setFieldValue(optionValue(keypadOptions(), trig.key, '1'), 'KEY');
+        } else if (evt === 'ir') {
+            b = createTyped('trig_ir');
+            if (trig.command) b.setFieldValue(optionValue(irKeyOptions(), trig.command, '0x45'), 'CMD');
+        } else if (evt === 'rfid') {
+            b = createTyped('trig_rfid');
+            if (trig.uid) b.setFieldValue(trig.uid, 'UID');
+        } else if (evt === 'manual_control') {
+            b = createTyped('trig_manual');
+            if (trig.device) b.setFieldValue(optionValue(manualDeviceOptions(), trig.device, 'fan'), 'DEV');
+        } else if (evt === 'face_granted') {
+            b = createTyped('trig_face');
+        } else {
+            b = createTyped('trig_event_other');
+            b.setFieldValue(optionValue(otherEventOptions(), evt, ''), 'EVT');
+        }
         return b;
     }
     // sensor
@@ -1246,6 +1778,25 @@ function fillTrigger(trig) {
 
 function fillCondition(c) {
     const kind = sourceKind(c.sensor);
+    // 全局状态回填到专用积木，编辑时看到的和拖出来的一致
+    if (String(c.sensor || '').startsWith('g:')) {
+        if (kind === 'bool') {
+            const b = createTyped('cond_state_bool');
+            b.setFieldValue(c.sensor, 'SRC');
+            b.setFieldValue(c.value === true || c.value === 'true' ? 'true' : 'false', 'STATE');
+            return b;
+        }
+        if (kind === 'enum') {
+            const b = createTyped('cond_state_enum');
+            b.setFieldValue(`${c.sensor}:${c.value}`, 'PRED');
+            return b;
+        }
+        const b = createTyped('cond_state_num');
+        b.setFieldValue(c.sensor, 'SRC');
+        b.setFieldValue(c.op || '>', 'OP');
+        b.setFieldValue(String(c.value), 'VAL');
+        return b;
+    }
     if (kind === 'bool') {
         const b = createTyped('cond_bool');
         b.setFieldValue(c.sensor, 'SRC');
@@ -1343,27 +1894,43 @@ function fillAction(a) {
                 b.setFieldValue(a.text === undefined ? 'Temp {temperature}C' : a.text, 'TEXT');
             }
             break;
-        case 'home_mode':
-            b = createTyped('act_home_mode');
-            b.setFieldValue(a.mode || '', 'MODE');
-            b.setFieldValue(a.fan_override || '', 'FAN');
-            b.setFieldValue(a.light_level || '', 'LIGHT');
-            if (a.enabled !== undefined) {
-                b.setFieldValue('TRUE', 'SET_ENABLED');
-                b.setFieldValue(a.enabled ? 'true' : 'false', 'ENABLED');
-            }
-            if (a.presence_hold_sec !== undefined) {
-                b.setFieldValue('TRUE', 'SET_HOLD');
-                b.setFieldValue(String(a.presence_hold_sec), 'HOLD');
-            }
-            if (a.manual_grace_s !== undefined) {
-                b.setFieldValue('TRUE', 'SET_GRACE');
-                b.setFieldValue(String(a.manual_grace_s), 'GRACE');
+        case 'state': {
+            // 按变量类型回填到对应积木；变量已被删除时按值类型尽力还原
+            const v = (CAPS.state_vars || []).find(x => x.id === a.name);
+            const type = v ? v.type
+                : (typeof a.value === 'boolean' ? 'bool'
+                   : typeof a.value === 'number' ? 'number' : 'enum');
+            if (a.op === 'toggle') {
+                b = createTyped('act_state_toggle');
+                b.setFieldValue(a.name || '', 'NAME');
+            } else if (type === 'bool') {
+                b = createTyped('act_state_bool');
+                b.setFieldValue(a.name || '', 'NAME');
+                b.setFieldValue(a.value === false ? 'false' : 'true', 'VALUE');
+            } else if (type === 'number') {
+                b = createTyped('act_state_num');
+                b.setFieldValue(a.name || '', 'NAME');
+                b.setFieldValue(a.op === 'add' ? 'add' : 'set', 'OP');
+                b.setFieldValue(String(a.value === undefined ? 0 : a.value), 'VAL');
+            } else if (type === 'text') {
+                b = createTyped('act_state_text');
+                b.setFieldValue(a.name || '', 'NAME');
+                b.setFieldValue(String(a.value || ''), 'TEXT');
+            } else {
+                b = createTyped('act_state_enum');
+                b.setFieldValue(`${a.name || ''}:${a.value === undefined ? '' : a.value}`, 'PRED');
             }
             break;
+        }
         case 'voice':
             b = createTyped('act_voice');
             b.setFieldValue(a.action || 'wake', 'ACT');
+            b.setFieldValue(a.text || '', 'TEXT');
+            break;
+        case 'http':
+            b = createTyped('act_http');
+            b.setFieldValue(a.method || 'post', 'METHOD');
+            b.setFieldValue(a.url || '', 'URL');
             b.setFieldValue(a.text || '', 'TEXT');
             break;
         default: return null;
@@ -1381,84 +1948,71 @@ function connectStack(ruleBlock, inputName, blocks) {
     }
 }
 
-// ==================== 全屋模式 ====================
+// ==================== 全局状态条目（与规则并列的一种积木条目） ====================
 
-let HOME_MODE = null;
+let GS_VARS = [];   // 后端 definitions()：[{id,name,label,type,value,...}]
 
-const GRACE_LABEL = { light: '💡 灯', fan: '🌀 风扇', window: '🪟 窗', door: '🚪 门' };
-
-function renderManualGrace(graces) {
-    const box = document.getElementById('manualGraceChips');
-    if (!box) return;
-    graces = (graces || []).filter(d => GRACE_LABEL[d]);
-    if (!graces.length) {
-        box.innerHTML = '<span class="grace-chip empty">无</span>';
-        return;
-    }
-    box.innerHTML = graces.map(d => `<span class="grace-chip">${GRACE_LABEL[d]} 手动优先中</span>`).join('');
+function gsTypeLabel(t) {
+    return STATE_TYPE_LABEL[t] || t;
 }
 
-async function loadHomeMode() {
+function gsValueText(v) {
+    if (v.type === 'bool') return v.value ? '是' : '否';
+    if (v.type === 'enum') return (v.choice_labels || {})[v.value] || v.value;
+    if (v.type === 'number') return `${v.value}${v.unit ? ' ' + esc(v.unit) : ''}`;
+    return String(v.value || '') || '（空）';
+}
+
+// 状态条目卡片：只显示当前值和「最后一次是谁写的」，不放手动改值控件——
+// 值归积木规则维护，要改值就改这条定义或写一条规则。
+function stateCardHtml(v, i) {
+    const choices = v.type === 'enum' && (v.choices || []).length
+        ? `<span>选项 ${esc(v.choices.map(c => (v.choice_labels || {})[c] || c).join(' / '))}</span>`
+        : '';
+    return `<div class="rule-card state-card" data-kind="state" data-index="${i}">
+      <div class="rc-icon state">📌</div>
+      <div class="rc-main">
+        <div class="rc-name">${esc(v.label || v.name)}<span class="gs-type">${gsTypeLabel(v.type)}</span></div>
+        <div class="rc-sub">当前值 <b class="gs-value">${esc(gsValueText(v))}</b></div>
+        <div class="rc-meta">
+          <span class="badge state">全局状态</span>
+          <span>${esc(v.source || '')}${v.updated_at ? ' · ' + esc(String(v.updated_at).slice(5, 16)) : ''}</span>
+          ${choices}
+        </div>
+      </div>
+      <div class="rc-actions">
+        <button class="icon-btn" data-act="menu" title="更多">⋮</button>
+      </div>
+    </div>`;
+}
+
+async function loadGlobalState() {
     try {
-        HOME_MODE = await api('/api/automation/home_mode');
+        const data = await api('/api/automation/global_state');
+        GS_VARS = data.vars || [];
     } catch (e) { return; }
-    renderManualGrace(HOME_MODE.manual_graces);
-    const badge = document.getElementById('homeModeBadge');
-    if (!badge) return;
-    badge.textContent = '当前模式：' + (HOME_MODE.mode_label || HOME_MODE.mode);
-    badge.className = 'mode-badge mode-' + HOME_MODE.mode;
-    const fanBtn = document.getElementById('fanOverrideBtn');
-    if (fanBtn) {
-        if (HOME_MODE.fan_override === 'on') {
-            // 历史/API 遗留的「强制开」：硬策略下不会真正开风扇，提示点此取消
-            fanBtn.textContent = '🌀 风扇：强制开（点此取消）';
-        } else {
-            fanBtn.textContent = '🌀 风扇：' + HOME_MODE.fan_label;
-        }
-    }
-    const lightBtn = document.getElementById('lightLevelBtn');
-    if (lightBtn) lightBtn.textContent = '💡 灯光：' + HOME_MODE.light_label;
-    const detail = document.getElementById('homeModeDetail');
-    if (detail) {
-        const bits = [];
-        if (HOME_MODE.person_present) bits.push('👤 判定有人在家');
-        if (HOME_MODE.last_reason) bits.push(HOME_MODE.last_reason);
-        detail.textContent = bits.join('　|　');
-    }
+    refreshListViews();
 }
 
-async function putHomeMode(body) {
+function afterGsChange(r) {
+    if (r && r.vars) GS_VARS = r.vars;
+    refreshListViews();
+    // 积木下拉在 init 时读 CAPS：刷新能力清单，新状态立刻可被新拖出的积木选到
+    api('/api/automation/capabilities')
+        .then(c => { CAPS = c; })
+        .catch(() => {});
+}
+
+async function deleteGlobalVar(i) {
+    const v = GS_VARS[i];
+    if (!v) return;
+    if (!confirm(`删除全局状态「${v.label || v.name}」？引用它的规则条件将不再成立。`)) return;
     try {
-        const r = await api('/api/automation/home_mode', {
-            method: 'PUT', body: JSON.stringify(body),
-        });
-        HOME_MODE = r.config;
-        loadHomeMode();
-        showNotification(r.message || '全屋模式设置已生效', 'success');
-    } catch (e) {
-        showNotification(e.message, 'error');
-    }
-}
-
-function setHomeMode(mode) {
-    putHomeMode({ mode, reason: '页面切换全屋模式' });
-}
-
-function cycleFanOverride() {
-    // 页面只暴露「自动 ↔ 强制关」两档：没有「强制开」——自动化硬策略禁止
-    // 自动开风扇（风扇只能在风扇卡片上手动开）。若档位被 API/积木设成了
-    // 历史值「强制开」，点一下回到「自动」。
-    const cur = HOME_MODE ? HOME_MODE.fan_override : null;
-    const next = cur === 'off' ? null : 'off';
-    putHomeMode({ fan_override: next, reason: '页面切换风扇覆盖' });
-}
-
-function cycleLightLevel() {
-    const order = ['hold', 'dark', 'half', 'bright', 'auto'];
-    const cur = HOME_MODE ? HOME_MODE.light_level : 'auto';
-    const idx = order.indexOf(cur);
-    putHomeMode({ light_level: order[(idx + 1) % order.length],
-                  reason: '页面切换灯光档位' });
+        const r = await api(`/api/automation/global_state/${encodeURIComponent(v.id)}`,
+                            { method: 'DELETE' });
+        afterGsChange(r);
+        showNotification(r.message || '已删除', 'success');
+    } catch (e) { showNotification(e.message, 'error'); }
 }
 
 // ==================== OLED 轮播设置 ====================
@@ -1504,7 +2058,11 @@ async function refreshPreview() {
         PREVIEW = {};
         for (const p of (data.preview || [])) PREVIEW[p.id] = p;
     } catch (e) { return; }
-    // 编辑器视图 / 内联重命名进行中时不刷新列表，避免打断操作
+    refreshListViews();
+}
+
+// 列表页两堆卡片一起刷新；编辑器开着或正在内联重命名时不动，避免打断操作
+function refreshListViews() {
     if (document.getElementById('editorView').classList.contains('hidden') && !RENAMING) {
         renderRuleList();
     }
@@ -1533,6 +2091,15 @@ async function reloadRules() {
     RULES = data.rules || [];
     await refreshPreview();
     renderRuleList();
+    // 旧规则迁移提示（后端只在迁移后的首个拉带给一次）
+    const m = data.migration;
+    if (m) {
+        const bits = [];
+        if (m.migrated) bits.push(`已自动改写 ${m.migrated} 条`);
+        if ((m.dropped || []).length) bits.push(`删除 ${m.dropped.length} 条无法映射的（原文件已备份）`);
+        if ((m.invalid || []).length) bits.push(`跳过 ${m.invalid.length} 条不合法的`);
+        showNotification(`旧规则迁移到全局状态：${bits.join('，') || '完成'}。可在执行记录/备份文件里核对`, 'info');
+    }
 }
 
 async function boot() {
@@ -1544,13 +2111,14 @@ async function boot() {
     grid.addEventListener('click', (ev) => {
         const card = ev.target.closest('.rule-card');
         if (!card) return;
+        const kind = card.dataset.kind || 'rule';
         const i = Number(card.dataset.index);
         if (ev.target.closest('[data-act="run"]')) { runRule(RULES[i] && RULES[i].id); return; }
         if (ev.target.closest('[data-act="menu"]')) {
-            openCardMenu(i, ev.target.closest('[data-act="menu"]'));
+            openCardMenu(kind, i, ev.target.closest('[data-act="menu"]'));
             return;
         }
-        openEditor(i);
+        if (kind === 'state') openStateEditor(i); else openEditor(i);
     });
 
     // ⋮ 菜单点击
@@ -1580,11 +2148,11 @@ async function boot() {
     });
 
     await reloadRules();
-    loadHomeMode();
+    loadGlobalState();
     loadOledConfig();
     refreshLogs();
     setInterval(refreshLogs, 5000);
-    setInterval(loadHomeMode, 5000);
+    setInterval(loadGlobalState, 5000);
     setInterval(refreshPreview, 10000);
 }
 

@@ -5,6 +5,7 @@
 
     - A 板：temperature / humidity / light / smoke / rain / touch / motion
     - B 板执行器：b_door / b_window / b_fan / light_lv / b_buzzer
+    - 全屋状态（来自全局状态 g: 变量）：home_mode / presence / fan_auto
     - 附加：recent_auto（"最近自动化"占位，由 set_data 传入）
 
 OLED 为 8 行(0~7)×16 字符，仅文本。核心行为：
@@ -16,7 +17,8 @@ import re
 import time
 from typing import Any, Callable, Dict, List, Optional
 
-__all__ = ["OledCarousel", "DEFAULT_PAGES", "DEFAULT_PAGES_V4", "DEFAULT_PAGES_V3",
+__all__ = ["OledCarousel", "DEFAULT_PAGES", "DEFAULT_PAGES_V5",
+           "DEFAULT_PAGES_V4", "DEFAULT_PAGES_V3",
            "DEFAULT_PAGES_OLD", "DEFAULT_PAGES_V0", "PAGES_VERSION",
            "is_legacy_default_pages", "to_oled_text"]
 
@@ -24,9 +26,12 @@ __all__ = ["OledCarousel", "DEFAULT_PAGES", "DEFAULT_PAGES_V4", "DEFAULT_PAGES_V
 # v4：B 板字库（u8x8_font_chroma48medium8_r）只有 ASCII 字形，汉字上屏是乱码，
 #     默认文案全部改为英文。
 # v5：全屋模式页新增 Person 行（有人在家时自动调节会暂停，便于用户理解）。
-PAGES_VERSION = 5
+# v6：「全屋模式」引擎状态机拆除，home_mode/presence/home_fan/home_light
+#     占位符改由全局状态供数（g:全屋模式 / g:有人在家 / g:允许自动开风扇；
+#     覆盖档位已不存在，换成风扇安全线一行）。
+PAGES_VERSION = 6
 
-# 默认页面模板（覆盖常见传感器 + 全屋模式 + 执行器状态 + 最近自动化）
+# 默认页面模板（覆盖常见传感器 + 全屋状态 + 执行器状态 + 最近自动化）
 # 每行 16 个 ASCII 列宽，务必只用英文/数字/符号。
 DEFAULT_PAGES: List[Dict[str, Any]] = [
     {
@@ -44,8 +49,7 @@ DEFAULT_PAGES: List[Dict[str, Any]] = [
             "= HOME MODE =",
             "Mode: {home_mode}",
             "Person:{presence}",
-            "Fan:  {home_fan}",
-            "Light:{home_light}",
+            "FanAuto:{fan_auto}",
         ],
     },
     {
@@ -74,6 +78,22 @@ DEFAULT_PAGES: List[Dict[str, Any]] = [
             "{recent_auto}",
         ],
     },
+]
+
+# v5 默认页（Home Mode 页读的是已拆除的引擎状态机占位符）。
+# 磁盘上是这份说明用户没自定义过 → PAGES_VERSION=6 起自动替换。
+DEFAULT_PAGES_V5: List[Dict[str, Any]] = [
+    {"title": "Environment", "lines": ["= ENVIRONMENT =", "Temp: {temperature}C",
+                                       "Hum:  {humidity}%", "Light:{light}"]},
+    {"title": "Home Mode", "lines": ["= HOME MODE =", "Mode: {home_mode}",
+                                     "Person:{presence}", "Fan:  {home_fan}",
+                                     "Light:{home_light}"]},
+    {"title": "Devices", "lines": ["= DEVICES =", "Door: {b_door}",
+                                   "Wind: {b_window}", "Fan:  {b_fan}%",
+                                   "Light:{light_lv}%"]},
+    {"title": "Safety", "lines": ["= SAFETY =", "Smoke:{smoke}", "Rain: {rain}",
+                                  "PIR:  {motion}"]},
+    {"title": "Last Auto", "lines": ["= LAST AUTO =", "{recent_auto}"]},
 ]
 
 # v4 默认页（已全英文，但全屋模式页还没有 Person 行）。
@@ -131,7 +151,7 @@ DEFAULT_PAGES_V0: List[Dict[str, Any]] = [
 
 def is_legacy_default_pages(pages: Any) -> bool:
     """判断磁盘上的页面是否就是历史版本的「默认页」（说明用户没自定义过）。"""
-    return pages in (DEFAULT_PAGES_V4, DEFAULT_PAGES_V3,
+    return pages in (DEFAULT_PAGES_V5, DEFAULT_PAGES_V4, DEFAULT_PAGES_V3,
                      DEFAULT_PAGES_OLD, DEFAULT_PAGES_V0)
 
 
@@ -197,10 +217,20 @@ class OledCarousel:
 
         结果再过一遍 to_oled_text：非 ASCII（汉字）丢弃 + 截断 16 列。
         """
+        return to_oled_text(self._substitute(template))
+
+    def format_plain(self, template: str) -> str:
+        """同样的占位符替换，但不做 OLED 裁剪。
+
+        HTTP 出站动作用它：正文可能是中文，也远超 16 列。
+        """
+        return self._substitute(template)
+
+    def _substitute(self, template: str) -> str:
         def repl(m):
             key = m.group(1)
             return self._str(self._data[key]) if key in self._data else ""
-        return to_oled_text(_PLACEHOLDER.sub(repl, template))
+        return _PLACEHOLDER.sub(repl, str(template))
 
     @staticmethod
     def _str(v: Any) -> str:
