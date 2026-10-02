@@ -320,13 +320,13 @@ def control_light():
             _record_light(status, level)
         return ok, msg
 
-    def _current():
-        row = db.get_current_status()
-        return (row.get("light_status", "off"),
-                int(row.get("light_brightness") or 0))
-
-    outcome, value, ok, msg = gate.submit(
-        "light", target, cid, seq, _run, get_current=_current)
+    # 灯光**不做基于 DB 的状态幂等**（与 /api/fan 同理，见那里的说明）：web 以
+    # --no-serial 运行，读不到 B 板真实状态，db.light_status/light_brightness 只是
+    # 「上次软件下发的值」。若拿它做幂等，一旦灯被外部关掉、或 B 板复位后固件回默认
+    # （DB 仍记着 on/100），用户再点「开灯」会被判成同值直接吞掉 → 命令根本没下发，
+    # 表现为「按下没反应」。同客户端连点重放仍由 cid+seq 水位拦截；control_light 是
+    # 绝对指令（white(value)/off），重复下发无害。
+    outcome, _, ok, msg = gate.submit("light", target, cid, seq, _run)
     if not ok:
         return _hardware_error(msg)
     row = db.get_current_status()
@@ -336,9 +336,6 @@ def control_light():
         message = f"灯光已{'打开' if status_shown == 'on' else '关闭'}，亮度: {shown}%"
         message_en = (f"Light {'turned on' if status_shown == 'on' else 'turned off'}, "
                       f"brightness: {shown}%")
-    elif outcome == "noop":
-        message = f"灯光已是该状态（{'开' if status_shown == 'on' else '关'}/{shown}%），无需重复操作"
-        message_en = f"Light already at that state ({status_shown}/{shown}%)"
     else:
         message = f"已按最新操作执行（灯光 {status_shown}/{shown}%）"
         message_en = f"Latest command applied (light {status_shown}/{shown}%)"

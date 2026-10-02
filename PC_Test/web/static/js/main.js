@@ -505,23 +505,34 @@ function guardWindow() { tapGuard('window', toggleWindow); }
 // 灯光卡片按钮：全亮/半亮/夜灯/关闭
 // 移动端浏览器拖动 range 时会连续触发 change（不像桌面端只在松手时触发一次），
 // 直接下发会让滑块经过的每个中间值都打到串口。统一用 300ms 防抖收口，
-// 连续操作只下发最后一次；值与状态回显一致则整体跳过。
+// 连续操作只下发最后一次。
+//
+// 去重只认「本页正在下发的同一意图」，**绝不拿服务端回报的状态当依据**：web 是
+// --no-serial，DB 里的 light_status/light_brightness 只是「上次命令值」，灯被 B 板
+// 复位或外部关掉后它仍可能记着 on/100。拿它去重会把用户的点击静默吞掉——连请求都
+// 不发、也没有任何提示，表现为「按下没反应」（后端 /api/light 同样已去掉 DB 幂等）。
+let lightInflight = null;    // 正在飞的意图串 status/brightness
 const postLightDebounced = debounce(async (status, brightness) => {
     brightness = Number(brightness) || 0;
-    if (lastKnownLight && lastKnownLight.status === status
-        && Number(lastKnownLight.brightness) === brightness) {
-        return;
+    const target = status + '/' + brightness;
+    if (lightInflight === target) {
+        return;              // 同一意图已在飞（触摸双发/连点），其结果即本次结果
     }
-    // 乐观更新：立即收口本地认知，指令在飞期间的同值点击/触摸双发不再进网络；
+    lightInflight = target;
+    // 乐观更新：立即刷新本地显示，指令在飞期间界面不卡顿；
     // 失败时 loadStatus() 会用服务端真值回滚界面
     lastKnownLight = { status, brightness };
     const bSlider = document.getElementById('brightnessSlider');
     if (bSlider && document.activeElement !== bSlider) bSlider.value = brightness;
     const bLabel = document.getElementById('brightnessValue');
     if (bLabel) bLabel.textContent = brightness + '%';
-    const result = await apiPost('/api/light', { status, brightness });
-    if (result) {
-        showNotification(getMessage(result));
+    try {
+        const result = await apiPost('/api/light', { status, brightness });
+        if (result) {
+            showNotification(getMessage(result));
+        }
+    } finally {
+        if (lightInflight === target) lightInflight = null;
     }
     loadStatus();
 }, 300);
