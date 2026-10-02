@@ -141,17 +141,17 @@ class _DeviceGate:
         """
         st = self._state[device]
         anon = not cid
-        ip = request.remote_addr or "?"
+        origin = _req_origin()
         with self._submit_lock:
             if not anon:
                 if seq <= st["applied"].get(cid, 0):
-                    logger.info("设备收口 %s 丢弃旧命令 seq=%s（已服务）ip=%s",
-                                device, seq, ip)
+                    logger.info("设备收口 %s 丢弃旧命令 seq=%s（已服务）%s",
+                                device, seq, origin)
                     return "stale", (get_current() if get_current else None), True, ""
                 d = st["desired"]
                 if d is not None and d[0] == cid and d[1] > seq:
-                    logger.info("设备收口 %s 丢弃旧命令 seq=%s（已有更新意图排队）ip=%s",
-                                device, seq, ip)
+                    logger.info("设备收口 %s 丢弃旧命令 seq=%s（已有更新意图排队）%s",
+                                device, seq, origin)
                     return "stale", (get_current() if get_current else None), True, ""
             token = cid if not anon else "\x00anon"
             order = seq if not anon else time.monotonic_ns()
@@ -174,7 +174,7 @@ class _DeviceGate:
                             st["applied"].get(token2, 0), order2)
                     if st["desired"] == (token2, order2, value2):
                         st["desired"] = None
-                logger.info("设备收口 %s 同值跳过 value=%r ip=%s", device, value2, ip)
+                logger.info("设备收口 %s 同值跳过 value=%r %s", device, value2, origin)
                 return "noop", value2, True, ""
             t0 = time.monotonic()
             ok, msg = run(value2)
@@ -185,11 +185,11 @@ class _DeviceGate:
                         st["applied"].get(token2, 0), order2)
                 if ok and st["desired"] == (token2, order2, value2):
                     st["desired"] = None
-            logger.info("设备收口 %s %s value=%r cid=%s seq=%s %.2fs ip=%s%s",
+            logger.info("设备收口 %s %s value=%r cid=%s seq=%s %.2fs %s%s",
                         device, "下发成功" if ok else "下发失败", value2,
                         token2 if token2 != "\x00anon" else "-",
                         order2 if token2 != "\x00anon" else "-",
-                        elapsed, ip, f" msg={msg[:120]}" if not ok else "")
+                        elapsed, origin, f" msg={msg[:120]}" if not ok else "")
             return "executed", value2, ok, msg
 
 
@@ -204,6 +204,22 @@ def _client_token(data):
     except (TypeError, ValueError):
         return None, None
     return (cid, seq) if cid else (None, None)
+
+
+def _req_origin() -> str:
+    """请求来源描述：IP + Referer 页面 + UA 片段。
+
+    用来钉死「这条设备命令到底是哪个页面/标签页发的」——历史上「点进自动化页风扇
+    自启动」这类问题最难查的就是找不到发起者，面板、轮询、程序化事件在日志里长得一样。
+    """
+    try:
+        ip = request.remote_addr or "?"
+        ref = (request.referrer or request.headers.get("Referer") or "-").strip() or "-"
+        ua = (request.headers.get("User-Agent") or "-")[:70]
+    except Exception:                                # noqa: BLE001
+        # 非请求上下文（后台线程复用收口器）不能抛，退化为未知来源
+        return "ip=? ref=- ua='-'"
+    return f"ip={ip} ref={ref} ua={ua!r}"
 
 
 # ==================== 门 ====================

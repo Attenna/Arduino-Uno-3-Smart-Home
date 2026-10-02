@@ -226,20 +226,21 @@ class OledCarousel:
         lines = page.get("lines", [])
         title = page.get("title", str(self._page_idx))
         self.on_log(f"[OLED] 显示页: {title}")
+        rows = 8                       # 屏幕整屏行数
         rendered = [self.format_text(ln) for ln in lines]
-        # 逐行下发，仅在内容变化时发送，并加节流避免命令错位
-        for line_no, text in enumerate(rendered):
-            prev = self._last_lines[line_no] if line_no < len(self._last_lines) else None
-            if text != prev:
-                self.emitter(line_no, text)
+        # 按「整屏 8 行」对账，而不是只对当前页的行对账：上一页比当前页多出来的行
+        # 补成 ""，于是「清多余行」只在它真的从有内容变成空时才下发一次。
+        #
+        # 旧实现只把当前页的行记进 _last_lines，越界行永远读到 None（≠ ""），
+        # 所以每次切页都把多余行重清一遍——实测每 5s 白发 3~7 条 oled 命令，
+        # 白占 relay 与串口（用户命令被挤在后面）。
+        prev = (self._last_lines + [""] * rows)[:rows]
+        target = (rendered + [""] * rows)[:rows]
+        for line_no in range(rows):
+            if target[line_no] != prev[line_no]:
+                self.emitter(line_no, target[line_no])
                 time.sleep(self.line_delay)
-        # 清掉当前页未用到的多余行，避免残留上一页内容
-        for line_no in range(len(rendered), 8):
-            prev = self._last_lines[line_no] if line_no < len(self._last_lines) else None
-            if prev != "":
-                self.emitter(line_no, "")
-                time.sleep(self.line_delay)
-        self._last_lines = rendered
+        self._last_lines = target
 
     def _advance(self):
         self._page_idx = (self._page_idx + 1) % len(self.pages)

@@ -38,6 +38,7 @@ void Fan::setSpeed(int speed) {
 void Fan::stop() { setSpeed(0); }
 void Fan::full() { setSpeed(255); }
 int Fan::getSpeed() const { return _speed; }
+uint16_t Fan::reclaimCount() const { return _reclaim; }
 
 // 每个 loop 自愈：一旦发现 D7/D8 不再是 OUTPUT（被外设改回高阻），立刻抢回并按目标
 // 转速重新驱动。否则半桥输入悬空 → 风扇自己转，而软件以为已关（面板 0% 但物理在转）。

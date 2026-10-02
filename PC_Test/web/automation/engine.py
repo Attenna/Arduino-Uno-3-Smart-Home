@@ -409,7 +409,13 @@ class AutomationEngine:
         except Exception:                            # noqa: BLE001
             pass
         try:
-            logs = self.db.get_automation_logs(1)
+            # 必须跳过 OLED 轮播自己写的那条日志：它每换一页就写一条（reason=显示页），
+            # 若把它当「最近自动化」显示，就会形成
+            #   页面内容变 → 重发 → 又写一条日志 → 页面内容再变
+            # 的自反馈，OLED 会被反复重刷（实测 oled 调用量是全场第一，持续占着 relay
+            # 与串口，把用户命令挤到秒级）。
+            logs = [r for r in self.db.get_automation_logs(5)
+                    if r.get("rule_id") != "oled_carousel"]
             if logs:
                 row = logs[0]
                 # OLED 只能显示 ASCII：状态标记用 OK/NG，规则名由用户自取

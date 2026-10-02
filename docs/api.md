@@ -405,7 +405,7 @@ curl http://<host>:8101/trigger
 
 # 4. MCP 工具（mcp_home_server.py）
 
-`mcp_home_server.py` 以 stdio 方式提供 MCP 服务，独占 A/B 串口，共 **12 个工具**。
+`mcp_home_server.py` 以 stdio 方式提供 MCP 服务，独占 A/B 串口，共 **13 个工具**。
 也可经语音助手 `POST /tool` 以 HTTP 方式调用（工具名/参数相同）。
 
 | 工具 | 主要参数 | 作用 |
@@ -420,8 +420,9 @@ curl http://<host>:8101/trigger
 | `ir` | `code` 或 `address`+`command` | 红外 NEC 发射 |
 | `ac` | `power`,`mode`,`temperature`,`fan`,`swing_ud`,`swing_lr` | 美的空调（生成状态帧走 send_midea） |
 | `get_sensor_status` | 无 | 查询全部传感器 + 最近事件 |
-| `get_serial_health` | 无 | 串口链路健康度：A/B 连接、B 板复位次数、最近引脚告警、心跳失败数（只读排障） |
-| `get_output_state` | 无 | B 板（执行器）硬件回读状态：门/窗/风扇/灯/蜂鸣器实际电平 + 观测时刻（只读） |
+| `get_serial_health` | 无 | 串口链路健康度：A/B 连接、B 板复位次数、最近引脚告警、心跳失败数、**最近一条设备命令及其固件回读**（只读排障） |
+| `get_output_state` | 无 | B 板（执行器）硬件回读状态：门/窗/风扇/灯/蜂鸣器实际电平 + 观测时刻 + 最近命令（只读） |
+| `self_test` | 无 | B 板固件自检（V2.9+）：命令成败计数、风扇两脚方向/电平、灯带 `show()` 次数、数据脚拉高/拉低读回（只读） |
 
 调用示例（经 `/tool`）：
 

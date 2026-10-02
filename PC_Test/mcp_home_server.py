@@ -108,9 +108,10 @@ _A_REOPEN_MAX_DELAY = 10.0
 _A_ERR_SUMMARY_INTERVAL = 30.0  # 持续故障时摘要日志最小间隔（秒）
 
 # B 板：命令响应超时 / 空闲心跳 / 连续失败多少次才重开
-_B_CMD_TIMEOUT = 0.8
+_B_CMD_TIMEOUT = 2.0            # 单条命令等响应的上限（0.8s 对舵机/红外/OLED 混跑太紧）
 _B_HEARTBEAT_S = 10.0
 _B_HB_FAILS_TO_REOPEN = 3       # 单次抖动不重开：重开会经 DTR 复位 B 板
+_B_CMD_FAILS_TO_REOPEN = 3      # 命令连续超时这么多次才重开（理由同上，见 _send_b）
 
 
 class HomeController:
@@ -166,6 +167,7 @@ class HomeController:
         self._b_last_frame_ts = 0.0
         self._b_last_cmd_ts = 0.0
         self._b_hb_fails = 0
+        self._b_cmd_timeouts = 0       # 连续命令超时计数（达门限才重开，成功后清零）
         # B 板故障状态（仅读线程访问）
         self._b_err_count = 0
         self._b_err_first_ts = 0.0
@@ -179,6 +181,9 @@ class HomeController:
         self._b_last_alert_ts = 0.0
         self._b_last_state: dict = {}
         self._b_last_state_ts = 0.0
+        # 最近一条下发命令的完整反馈（命令/参数/成败/耗时/固件回读状态），
+        # 供 get_serial_health 暴露给中间层日志与排障。
+        self._b_last_cmd: dict = {}
 
         if self.ser_a is not None:
             self._a_thread = threading.Thread(
@@ -363,20 +368,68 @@ class HomeController:
     # ── B 板发命令 + 收响应 ──
     def _send_b(self, cmd: dict, allow_reopen: bool = True,
                 expect: tuple = ("response",)) -> str:
-        """发命令给 Module B；超时则（可选）重开串口自愈后重试一次。
+        """发命令给 Module B；连续多次超时才重开串口自愈。
 
         响应由常驻读取线程 _read_b_loop 收下并按等待者唤醒，本方法只负责
-        「登记等待者 → 写 → 等事件」。心跳走 allow_reopen=False + expect=("state",)：
-        重开会经 DTR 复位 B 板，单次抖动不该触发。
+        「登记等待者 → 写 → 等事件」。
+
+        **单次超时不再重开**：重开会经 DTR 复位 B 板，而复位把固件执行器全打回默认
+        （灯灭 / 门关 / 窗回 45°）——一次偶发超时就复位板子，等于让用户看到"设备自己
+        变了、点了没用"（实测 11 分钟复位 8 次、重开 4 次，单条命令被拖到 3s）。改为
+        连续 _B_CMD_FAILS_TO_REOPEN 次超时才重开，任何一次成功即清零。
+        心跳走 allow_reopen=False + expect=("state",)：它有自己的失败门限。
         """
         if self.ser_b is None:
-            return "error: Module B 未连接，无法执行硬件操作"
-        with self._b_lock:
-            result = self._send_b_one(cmd, expect=expect)
-            if allow_reopen and result.startswith("error: B 板响应超时"):
-                self._reopen_b()
-                result = self._send_b_one(cmd, expect=expect)   # 重试重新分配 id
+            # 未连接也要留档/打印：静默返回错误会让「点了没反应」查不到任何线索
+            result = "error: Module B 未连接，无法执行硬件操作"
+            self._note_b_cmd(cmd, result, 0.0)
             return result
+        with self._b_lock:
+            t0 = time.monotonic()
+            result = self._send_b_one(cmd, expect=expect)
+            if result.startswith("error: B 板响应超时"):
+                self._b_cmd_timeouts += 1
+                if allow_reopen and self._b_cmd_timeouts >= _B_CMD_FAILS_TO_REOPEN:
+                    self._b_cmd_timeouts = 0
+                    print(f"[B] 连续 {_B_CMD_FAILS_TO_REOPEN} 次命令超时，重开串口自愈",
+                          file=sys.stderr, flush=True)
+                    self._reopen_b()
+                    result = self._send_b_one(cmd, expect=expect)   # 重试重新分配 id
+            else:
+                self._b_cmd_timeouts = 0
+            self._note_b_cmd(cmd, result, time.monotonic() - t0)
+            return result
+
+    def _note_b_cmd(self, cmd: dict, result: str, elapsed: float) -> None:
+        """记录并打印一条命令的完整反馈：**这是「命令成功/失败 + 固件实际状态」的
+        唯一收口点**（面板、语音、自动化全部经此下发）。
+
+        固件 V2.9 起成功响应自带 state 快照（见 _dispatch_b_frame 会把它并入
+        _b_last_state），因此这里能当场打印「意图 → 固件回读」，不必等心跳。失败
+        （超时/未知命令/串口无连接）也原样打印，方便把「网络慢」和「指令被吞」分开。
+        """
+        name = f"{cmd.get('cmd')}/{cmd.get('action')}"
+        ok = result.startswith("ok")
+        # 心跳/只读查询（system）与 OLED 轮播逐行刷新不算「设备命令」：前者每 10s、
+        # 后者每 ~5s 各来一次，若也记账，「最近命令」会被它们永远顶掉，排查时反而
+        # 看不到真正的用户操作（面板/语音/自动化）。
+        if cmd.get("cmd") in ("system", "oled"):
+            return
+        self._b_last_cmd = {
+            "cmd": cmd.get("cmd"), "action": cmd.get("action"),
+            "args": {k: v for k, v in cmd.items()
+                     if k not in ("cmd", "action", "id")},
+            "ok": ok, "result": result[:200],
+            "ms": round(elapsed * 1000, 1), "ts": time.time(),
+            "state": dict(self._b_last_state),
+        }
+        if ok:
+            print(f"[B] {name} ok {elapsed * 1000:.0f}ms"
+                  f" | 固件回读 {self._b_last_state or '{}'}",
+                  file=sys.stderr, flush=True)
+        else:
+            print(f"[B] {name} 失败 {elapsed * 1000:.0f}ms: {result[:160]}",
+                  file=sys.stderr, flush=True)
 
     def _send_b_one(self, cmd: dict, expect: tuple = ("response",),
                     timeout: float = _B_CMD_TIMEOUT) -> str:
@@ -426,7 +479,10 @@ class HomeController:
         if not got or resp is None:
             return "error: B 板响应超时"
         if resp.get("type") != "response":
-            return "ok"                     # state 等非 response 帧即代表链路通
+            # state 等非 response 帧即代表链路通；自检帧要把内容原样带回上层
+            if "selftest" in expect:
+                return json.dumps(resp, ensure_ascii=False)
+            return "ok"
         if resp.get("result") == "ok":
             return "ok"
         return f"error: B 板返回 {resp}"
@@ -497,6 +553,13 @@ class HomeController:
         mtype = msg.get("type")
         if mtype == "response":
             rid = msg.get("id")
+            # 固件 V2.9 起成功响应自带执行后的 state 快照：立刻把它并入回读缓存，
+            # 这样「命令意图 vs 固件实际」当场可比，不必等下一次心跳（也顺带让
+            # 心跳判据看到「刚有新鲜状态」，空闲时才会真正去打心跳探测）。
+            st = msg.get("state")
+            if isinstance(st, dict) and st:
+                self._b_last_state = st
+                self._b_last_state_ts = time.time()
             with self._b_resp_lock:
                 wid = self._b_waiter_id
                 # id 对得上才算本次结果；对端是旧固件、不回显 id(None) 时退化为「只认第一条」
@@ -514,10 +577,24 @@ class HomeController:
                 if self._b_waiter and "state" in self._b_expect:
                     self._b_resp = msg
                     self._b_resp_event.set()
+        elif mtype == "selftest":
+            # 自检帧（V2.9）：只读诊断，按 type 唤醒等待者并原样带给上层
+            with self._b_resp_lock:
+                if self._b_waiter and "selftest" in self._b_expect:
+                    self._b_resp = msg
+                    self._b_resp_event.set()
+                    return
+            print(f"[B] 自检: {text}", file=sys.stderr, flush=True)
         elif mtype == "ready":
             # 上电或串口 DTR 复位都会发这条：计数即 B 板复位次数
             self._b_reset_count += 1
             self._b_last_reset_ts = time.time()
+            st = msg.get("state")
+            if isinstance(st, dict) and st:
+                # 复位后固件执行器已回默认，这条 state 就是「复位后真值」，
+                # 立刻入缓存让上层对账不必再等一个心跳周期。
+                self._b_last_state = st
+                self._b_last_state_ts = time.time()
             print(f"[B] 复位/就绪 #{self._b_reset_count}: {text}",
                   file=sys.stderr, flush=True)
         elif mtype == "alert":
@@ -536,8 +613,12 @@ class HomeController:
         B 板）；心跳是只读命令，不改变任何执行器状态。
         """
         while not self._b_stop.wait(_B_HEARTBEAT_S):
-            if time.time() - self._b_last_frame_ts < _B_HEARTBEAT_S:
-                continue                      # 刚才有帧，等价于一次心跳
+            # 判据必须用「最后一次 state 帧」而不是「最后一次任何帧」：回读缓存只由
+            # state 帧更新，而命令响应/告警等帧会一直刷出「有帧 = 链路活跃」的假象
+            # （OLED 轮播每秒十几个 ACK）。一旦被跳过，心跳就再也不发，回读永久过期
+            # （实测 age 261s，连带复位对账与不一致检测全部失效）。
+            if time.time() - self._b_last_state_ts < _B_HEARTBEAT_S:
+                continue                      # 刚拿到 state，等价于一次心跳
             text = self._send_b({"cmd": "system", "action": "status"},
                                 allow_reopen=False, expect=("state",))
             if text.startswith("error"):
@@ -580,15 +661,18 @@ class HomeController:
                 "last_alert_ago_s": (round(now - self._b_last_alert_ts, 1)
                                      if self._b_last_alert_ts else None),
                 "heartbeat_fails": self._b_hb_fails,
+                "cmd_timeouts": self._b_cmd_timeouts,
                 "read_err_streak": self._b_err_count,
                 "last_frame_ago_s": (round(now - self._b_last_frame_ts, 1)
                                      if self._b_last_frame_ts else None),
                 "last_state": self._b_last_state,
+                "last_cmd": self._b_last_cmd,
             },
         }, ensure_ascii=False)
 
     def output_state(self) -> str:
-        """B 板（执行器）硬件回读快照：来自心跳 system/status 的 state 帧。
+        """B 板（执行器）硬件回读快照：来自 state 帧，以及 V2.9 起命令响应/就绪帧
+        自带的 state 快照（后者让回读在每条命令后都立即刷新一遍）。
 
         与「命令下发值」不同，这是 B 板自己的实际电平。用它对比指令值，就能暴露
         「面板显示 0% 而风扇在转」这类静默失效（以前 B 板不上报，根本看不出来）。
@@ -598,6 +682,7 @@ class HomeController:
             "state": dict(self._b_last_state),
             "age_s": (round(now - self._b_last_state_ts, 1)
                       if self._b_last_state_ts else None),
+            "last_cmd": self._b_last_cmd,
         }, ensure_ascii=False)
 
     def _reopen_b(self) -> None:
@@ -736,6 +821,16 @@ class HomeController:
             return "当前无传感器数据（Module A 未连接或未上报）"
         return json.dumps({"data": snap, "recent_events": events},
                           ensure_ascii=False)
+
+    def handle_self_test(self) -> str:
+        """B 板自检（固件 system/selftest，V2.9+）。
+
+        返回固件侧的铁证：命令成功/失败计数、风扇两脚的方向位与电平、灯带 show()
+        实际调用次数、以及直接把灯带数据脚当 GPIO 拉高/拉低后的读回值。用来二分
+        「固件没执行」和「引脚物理没信号」。
+        """
+        return self._send_b({"cmd": "system", "action": "selftest"},
+                            expect=("selftest",))
 
 
 # ==================== MCP server 定义 ====================
@@ -882,6 +977,17 @@ async def get_output_state() -> str:
     return await asyncio.to_thread(HOME.output_state)
 
 
+@mcp.tool()
+async def self_test() -> str:
+    """B 板自检（只读诊断，需固件 V2.9+）：固件版本、命令成败计数、风扇两脚的
+    引脚方向与电平、灯带 show 次数、以及灯带数据脚拉高/拉低的读回值。
+
+    排查「灯不亮 / 风扇自转」时用它区分：固件有没有真的执行 vs 引脚有没有被外设抢走
+    vs 引脚物理短路/带载。"""
+    _audit("self_test")
+    return await asyncio.to_thread(HOME.handle_self_test)
+
+
 # ==================== 入口 ====================
 
 def main():
@@ -917,8 +1023,9 @@ def main():
             print("[警告] 未连接任何 Arduino 模块；工具将返回错误信息。", file=sys.stderr)
 
     HOME = HomeController(ser_a=ser_a, ser_b=ser_b, port_a=port_a, port_b=port_b)
-    print("[MCP] 暴露 12 个工具：light/door/window/fan/buzzer/oled/display/ir/ac"
-          "/get_sensor_status/get_serial_health/get_output_state", file=sys.stderr)
+    print("[MCP] 暴露 13 个工具：light/door/window/fan/buzzer/oled/display/ir/ac"
+          "/get_sensor_status/get_serial_health/get_output_state/self_test",
+          file=sys.stderr)
     print("[MCP] stdio 传输已就绪，等待 client。", file=sys.stderr)
     mcp.run(transport="stdio")
 

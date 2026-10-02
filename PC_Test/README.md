@@ -24,7 +24,7 @@ PC_Test/
 ├── voice_assistant.py      # ④ 语音交互模式（唤醒词 → Qwen2.5 → MCP 控硬件 → 流式 TTS）
 ├── qwen_server.py          #    本地 Qwen2.5 OpenAI 兼容服务（llama.cpp 后端 + 工具调用）
 ├── download_qwen.py        #    Qwen2.5 权重下载器（ModelScope 国内渠道）
-├── mcp_home_server.py      # 智能家居 MCP server（独占串口，暴露 10 个工具；④⑤共用）
+├── mcp_home_server.py      # 智能家居 MCP server（独占串口，暴露 13 个工具；④⑤共用）
 ├── tts_player.py           #    流式 TTS 播放器（Sherpa-ONNX VITS 本地合成）
 ├── sherpa_listener.py      #    Sherpa-ONNX KWS/ASR 前端封装
 ├── voice_config.yaml       #    语音模式配置（串口/LLM 引擎/唤醒词/TTS 音色）
@@ -195,10 +195,13 @@ KWS 关键词声学唤醒（zipformer-wenetspeech 3.3M）+ 流式 ASR（streamin
 自带端点检测）+ 本地 VITS 语音合成（vits-melo-tts-zh_en）。
 模型一键下载：`py -3.13 download_sherpa_models.py`（KWS ~31MB / ASR ~1GB / TTS ~160MB，国内镜像加速）。
 
-`mcp_home_server.py` 作为子进程独占 A/B 两串口，暴露 10 个工具：
-`light / door / window / fan / buzzer / oled / display / ir / ac / get_sensor_status`。
+`mcp_home_server.py` 作为子进程独占 A/B 两串口，暴露 13 个工具：
+`light / door / window / fan / buzzer / oled / display / ir / ac / get_sensor_status /
+get_serial_health / get_output_state / self_test`。
 （`ir` 为红外发射，发 NEC 码控家电；`ac` 生成美的空调状态帧并走 `send_midea` 发射；
-`display` 对应已移除的 TM1637 数码管，属保留接口，当前固件会返回 error。）
+`display` 对应已移除的 TM1637 数码管，属保留接口，当前固件会返回 error；
+`get_output_state` / `self_test` 是只读诊断：前者给 B 板硬件回读，后者给固件侧自检
+——排查「灯不亮 / 风扇自转」时先用它们把故障定位到层次。）
 `voice_assistant.py` 不直接碰串口，所有硬件操作经 MCP `call_tool`。
 
 ### LLM 引擎：Qwen2.5（国内合规）
@@ -460,7 +463,7 @@ py -3.13 run_web.py --no-serial
 
 ```text
 浏览器 ──HTTP── Flask(web/ 蓝图) ──MCP stdio── mcp_home_server.py ──USB── A/B 板
-                    │                              （独占串口，10 个工具）
+                    │                              （独占串口，13 个工具）
                     └── 每 2s get_sensor_status 轮询 → data/smart_home.db
 ```
 

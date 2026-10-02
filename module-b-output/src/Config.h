@@ -34,7 +34,8 @@
 // ---- RGB 灯带（NeoPixel）----
 #define RGB_PIN             4
 #define LED_COUNT           8
-#define LIGHT_BRIGHTNESS    60
+#define LIGHT_BRIGHTNESS    255  // 灯带全局亮度上限：NeoPixel 的 setBrightness 会再乘一次，
+                                 // 60 会把 255 缩成约 24% 输出（8 颗灯珠暗到看着像没亮）
 #define LIGHT_BOOT_ON       0   // 1=上电默认点亮（需独立供电，否则易欠压复位）, 0=上电熄灭
 #define LIGHT_BOOT_LEVEL    20  // 上电点亮时的亮度 0~255（越小越省电）
 
@@ -71,6 +72,6 @@
 // ---- 设备标识 ----
 #define BOARD_TYPE          "MODULE_B"
 #define BOARD_ROLE          "OUTPUT_NODE"
-#define FW_VERSION          "V2.7"  // V2.2 起红外支持美的长码；V2.3 修 D12(SPI MISO) 被 OLED 抢成 INPUT 导致发不出红外；V2.4 setup 开头提前锁死风扇 D7/D8；V2.5 风扇每 loop 引脚自愈（被外设改回 INPUT 时抢回并上报）；V2.6 响应回显请求 id，服务端可丢弃迟到响应；V2.7 看门狗 WDTO_2S（固件挂死 2s 自动复位，不再需要人工插拔）
+#define FW_VERSION          "V2.9"  // V2.2 起红外支持美的长码；V2.3 修 D12(SPI MISO) 被 OLED 抢成 INPUT 导致发不出红外；V2.4 setup 开头提前锁死风扇 D7/D8；V2.5 风扇每 loop 引脚自愈（被外设改回 INPUT 时抢回并上报）；V2.6 响应回显请求 id，服务端可丢弃迟到响应；V2.7 看门狗 WDTO_2S；V2.8 灯带全局亮度 60→255（原来 255 会被缩成约 24%，看着像没亮）；V2.9 命令响应/就绪帧回附固件状态快照与复位原因，新增 system/selftest 自检
 
 #endif // CONFIG_B_H

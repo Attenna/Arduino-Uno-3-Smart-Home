@@ -667,6 +667,10 @@ class McpHardwareBridge:
             args.update({"r": int(r), "g": int(g), "b": int(b)})
         return self.call_tool("light", args)
 
+    def self_test(self, timeout: float = 8.0) -> tuple[bool, str]:
+        """B 板固件自检（V2.9+）：引脚方向与电平/灯带 show 次数/命令成败计数快照。"""
+        return self.call_tool("self_test", {}, timeout=timeout)
+
     def control_ir(self, code=None, address=None, command=None) -> tuple[bool, str]:
         """红外发射（NEC）。给 address+command 或直接给十进制 32 位 code。
 

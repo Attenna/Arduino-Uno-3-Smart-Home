@@ -13,6 +13,7 @@ public:
     void full();
     void update();            // 主循环调用：引脚被外设改回 INPUT 时自愈
     int getSpeed() const;
+    uint16_t reclaimCount() const;   // 诊断：累计被外设抢走引脚又自愈抢回的次数
 private:
     void pinReady();          // 抢回 D7/D8 为 OUTPUT
     void reportReclaim();     // 串口上报自愈事件（限频）

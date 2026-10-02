@@ -13,12 +13,14 @@ void Protocol::begin(CommandDispatcher& dispatcher) {
 
 void Protocol::sendReady() {
     Serial.print(F("{\"module\":\"output\",\"type\":\"ready\",\"board\":\""));
-    Serial.print(BOARD_TYPE);
+    Serial.print(F(BOARD_TYPE));      // F()：字面量放 flash，不占 .data
     Serial.print(F("\",\"role\":\""));
-    Serial.print(BOARD_ROLE);
+    Serial.print(F(BOARD_ROLE));
     Serial.print(F("\",\"version\":\""));
     Serial.print(FW_VERSION);
-    Serial.println(F("\"}"));
+    Serial.print(F("\",\"state\":{"));
+    _dispatcher->printStateFields();
+    Serial.println(F("}}"));
 }
 
 void Protocol::handleSerial() {
@@ -84,6 +86,16 @@ void Protocol::handleLine(const char* line) {
             sendReady();
             return;
         }
+        if (strcmp(cmd.action, "selftest") == 0) {
+            Serial.print(F("{\"module\":\"output\",\"type\":\"selftest\",\"version\":\""));
+            Serial.print(FW_VERSION);
+            Serial.print(F("\",\"uptime_ms\":"));
+            Serial.print(millis());
+            Serial.print(',');
+            _dispatcher->printSelfTest();
+            Serial.println('}');
+            return;
+        }
         respondError("unknown_command");
         return;
     }
@@ -97,6 +109,10 @@ void Protocol::handleLine(const char* line) {
 
 // 回显请求 id：客户端带了 id 就原样带回，服务端据此判断响应属于哪条命令，
 // 迟到/串味的响应不会被当成本次结果（不带 id 时保持旧格式，向后兼容）。
+//
+// 同时回附固件执行后的状态快照（state）——这是「给 B 板发指令的成功反馈」：
+// 中间层不必等下一次心跳，ack 当场就能对比「命令意图 vs 固件实际」，把
+// 「指令被吞 / 驱动没动」从「网络慢」里区分开。
 void Protocol::respondOk(const char* device, const char* action, long id) {
     Serial.print(F("{\"module\":\"output\",\"type\":\"response\",\"result\":\"ok\",\"cmd\":\""));
     Serial.print(device);
@@ -107,7 +123,9 @@ void Protocol::respondOk(const char* device, const char* action, long id) {
         Serial.print(F(",\"id\":"));
         Serial.print(id);
     }
-    Serial.println(F("}"));
+    Serial.print(F(",\"state\":{"));
+    _dispatcher->printStateFields();
+    Serial.println(F("}}"));
 }
 
 void Protocol::respondError(const char* err, long id) {

@@ -6,6 +6,8 @@ static Adafruit_NeoPixel _strip(LED_COUNT, RGB_PIN, NEO_GRB + NEO_KHZ800);
 
 void Light::begin() {
     _level = 0;
+    _r = _g = _b = 0;
+    _shows = 0;
     _strip.begin();
     _strip.setBrightness(LIGHT_BRIGHTNESS);
 #if LIGHT_BOOT_ON
@@ -13,18 +15,25 @@ void Light::begin() {
 #else
     off();                     // 上电熄灭（默认，稳定）
 #endif
+    _shows = 0;                // 上电那一次不计入运行期统计
 }
 
 void Light::setRgb(int r, int g, int b) {
     _level = max(r, max(g, b));
-    _strip.fill(_strip.Color(r, g, b), 0, LED_COUNT);
+    _r = (uint8_t)constrain(r, 0, 255);
+    _g = (uint8_t)constrain(g, 0, 255);
+    _b = (uint8_t)constrain(b, 0, 255);
+    _strip.fill(_strip.Color(_r, _g, _b), 0, LED_COUNT);
     _strip.show();
+    _shows++;
 }
 
 void Light::off() {
     _level = 0;
+    _r = _g = _b = 0;
     _strip.clear();
     _strip.show();
+    _shows++;
 }
 
 void Light::white(int level) {
@@ -44,3 +53,22 @@ void Light::rgb(int r, int g, int b) {
 }
 
 int Light::getLevel() const { return _level; }
+uint16_t Light::showCount() const { return _shows; }
+uint8_t Light::stripBrightness() const { return _strip.getBrightness(); }
+
+void Light::rawPinTest(int* outHigh, int* outLow) {
+    // 绕过 NeoPixel 库直接驱动 RGB_PIN：把数据脚当普通 GPIO，先拉高读回、再拉低读回。
+    // 引脚被短路到 GND 或带载过重时，拉高读回会是 0——这才是「固件执行了但灯不亮」
+    // 与「引脚物理没信号」的二分判据。测完立刻复位灯带时序并重新上屏当前颜色。
+    pinMode(RGB_PIN, OUTPUT);
+    digitalWrite(RGB_PIN, HIGH);
+    delayMicroseconds(20);
+    *outHigh = digitalRead(RGB_PIN) ? 1 : 0;
+    digitalWrite(RGB_PIN, LOW);
+    delayMicroseconds(20);
+    *outLow = digitalRead(RGB_PIN) ? 1 : 0;
+    _strip.begin();
+    _strip.setBrightness(LIGHT_BRIGHTNESS);
+    _strip.fill(_strip.Color(_r, _g, _b), 0, LED_COUNT);
+    _strip.show();
+}

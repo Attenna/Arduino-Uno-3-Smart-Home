@@ -141,14 +141,22 @@ window.addEventListener('offline', () => {
 
 function debounce(func, wait) {
     let timeout;
-    return function executedFunction(...args) {
+    function executedFunction(...args) {
         const later = () => {
             clearTimeout(timeout);
             func(...args);
         };
         clearTimeout(timeout);
         timeout = setTimeout(later, wait);
+    }
+    // cancel()：页面隐藏/卸载时把「还在防抖窗口里」的调用丢掉。否则用户拖完滑块
+    // 立刻切页/关页，300ms 后指令仍会在新页面上补发出去（表现为「进了别的页面
+    // 风扇自己动了」）。
+    executedFunction.cancel = () => {
+        clearTimeout(timeout);
+        timeout = undefined;
     };
+    return executedFunction;
 }
 
 // 动作防连点：门/窗/空调经串口往返要数秒，手机上点击没有即时反馈时用户会
@@ -176,35 +184,44 @@ document.addEventListener('DOMContentLoaded', () => {
     initControlSliders();
 });
 
-// 滑块：拖动时只更新数值标签，松手(change)才下发硬件指令，避免串口刷屏
+// 滑块：拖动时只更新数值标签，松手(change)才下发硬件指令，避免串口刷屏。
+//
+// 关键：**只有用户真的拖过这个滑块才允许下发**。服务端每 5s 轮询会用 loadStatus()
+// 把滑块 value 程序化回写，而手机浏览器在「元素曾获焦 / 标签页被恢复」等情形下会对
+// range 补发一次 change（change 的语义是"值被提交"，不等价于用户操作）。补发一次就
+// 会把 DB 里的旧值当成用户指令发出去 → 表现为「没人碰它，风扇自己启动了」。
+// 判据用 input 事件：程序化赋值 .value 不会触发 input，只有真实操作才会，可靠且无需
+// 额外监听。三个滑块（风扇/灯光/空调）都是执行器，一律照此收口。
+function bindActuatorSlider(slider, label, formatLabel, onCommit) {
+    if (!slider) return;
+    let userTouched = false;
+    slider.addEventListener('input', () => {
+        userTouched = true;                 // 真实操作过（程序化赋值不会触发 input）
+        if (label) label.textContent = formatLabel(slider.value);
+    });
+    slider.addEventListener('change', () => {
+        if (!userTouched) return;           // 浏览器/程序化补发的 change：不是用户操作
+        userTouched = false;
+        onCommit(slider.value);
+    });
+}
+
 function initControlSliders() {
-    const fanSlider = document.getElementById('fanSpeed');
-    if (fanSlider) {
-        const fanLabel = document.getElementById('fanSpeedValue');
-        fanSlider.addEventListener('input', () => {
-            if (fanLabel) fanLabel.textContent = fanSlider.value + '%';
-        });
-        fanSlider.addEventListener('change', () => setFan(parseInt(fanSlider.value)));
-    }
-    const brightSlider = document.getElementById('brightnessSlider');
-    if (brightSlider) {
-        const brightLabel = document.getElementById('brightnessValue');
-        brightSlider.addEventListener('input', () => {
-            if (brightLabel) brightLabel.textContent = brightSlider.value + '%';
-        });
-        brightSlider.addEventListener('change', () => {
-            const v = parseInt(brightSlider.value);
-            setLight(v > 0 ? 'on' : 'off', v);
-        });
-    }
-    const acSlider = document.getElementById('acTempSlider');
-    if (acSlider) {
-        const acLabel = document.getElementById('acTempLabel');
-        acSlider.addEventListener('input', () => {
-            if (acLabel) acLabel.textContent = Number(acSlider.value).toFixed(1) + '\u00b0C';
-        });
-        acSlider.addEventListener('change', () => setACTemp(acSlider.value));
-    }
+    bindActuatorSlider(document.getElementById('fanSpeed'),
+                       document.getElementById('fanSpeedValue'),
+                       v => v + '%',
+                       v => setFan(parseInt(v)));
+    bindActuatorSlider(document.getElementById('brightnessSlider'),
+                       document.getElementById('brightnessValue'),
+                       v => v + '%',
+                       v => {
+                           const n = parseInt(v);
+                           setLight(n > 0 ? 'on' : 'off', n);
+                       });
+    bindActuatorSlider(document.getElementById('acTempSlider'),
+                       document.getElementById('acTempLabel'),
+                       v => Number(v).toFixed(1) + '\u00b0C',
+                       v => setACTemp(v));
 }
 
 function startStatusPolling() {
@@ -575,6 +592,14 @@ const postFanDebounced = debounce(async (speed) => {
 function setFan(speed) {
     postFanDebounced(Number(speed) || 0);
 }
+
+// 离开页面时取消未发出的执行器指令（风扇/灯光）。防抖窗口内的调用若在切页后
+// 才落地，就等于「用户已经不在这个页面，硬件却动了」——这正是"进别的页面风扇
+// 自己启动"最像的一条路径。pagehide 比 unload 可靠（移动端后台/页面恢复都触发）。
+window.addEventListener('pagehide', () => {
+    postFanDebounced.cancel();
+    postLightDebounced.cancel();
+});
 
 // ==================== 空调（美的红外）====================
 // 空调每条指令都会带上完整状态（红外一帧就含开关/模式/温度/风速），

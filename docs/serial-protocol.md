@@ -10,7 +10,7 @@
 > | 板 | 固件版本 | 说明 |
 > |----|---------|------|
 > | Module A | `V2.1` | 移除超声波 / 土壤湿度，新增矩阵键盘 |
-> | Module B | `V2.7` | 移除 TM1637 数码管；红外支持 NEC + 美的空调长码；风扇引脚每 loop 自愈；响应回显请求 `id`；看门狗 `WDTO_2S`（固件挂死 2s 自动复位） |
+> | Module B | `V2.9` | 移除 TM1637 数码管；红外支持 NEC + 美的空调长码；风扇引脚每 loop 自愈；响应回显请求 `id`（V2.6）；看门狗 `WDTO_2S`（V2.7，固件挂死 2s 自动复位）；灯带全局亮度 60→255（V2.8）；**命令响应/就绪帧回附固件状态快照 `state`，新增 `system/selftest` 自检**（V2.9） |
 >
 > 下文中，被裁剪的字段/命令均以 **「（已裁剪）」** 标注。
 
@@ -197,17 +197,20 @@ Module A 原则上"只报告"，下行仅支持少量**无业务含义**的控�
 ### 4.1 就绪
 
 ```json
-{"module":"output","type":"ready","board":"MODULE_B","role":"OUTPUT_NODE","version":"V2.7"}
+{"module":"output","type":"ready","board":"MODULE_B","role":"OUTPUT_NODE","version":"V2.9","state":{"door":"closed","window":"normal","fan":0,"light":0,"buzzer":"off"}}
 ```
 
 ### 4.2 命令响应
 
 ```json
-{"module":"output","type":"response","result":"ok","cmd":"fan","action":"set_speed"}
+{"module":"output","type":"response","result":"ok","cmd":"light","action":"white","id":7,"state":{"door":"closed","window":"normal","fan":0,"light":255,"buzzer":"off"}}
 {"module":"output","type":"response","result":"error","error":"parse_error"}
 ```
 
-> 下行带了 `id` 时，响应末尾会多一个 `,"id":<值>`（V2.6 起）。
+> * 下行带了 `id` 时，响应里会带回 `,"id":<值>`（V2.6 起）。
+> * **`state` 是固件执行后的实际状态快照（V2.9 起）**：中间层在收到 ack 的当场就能
+>   对比「命令意图 vs 固件实际」，不必等下一次心跳，从而把「指令被吞 / 驱动没动」
+>   与「网络慢」区分开。失败响应（`result:"error"`）不带 `state`。
 
 ### 4.3 状态查询结果
 
@@ -216,6 +219,33 @@ Module A 原则上"只报告"，下行仅支持少量**无业务含义**的控�
 ```
 
 > 由于风扇引脚为非 PWM，`fan` 实际只会是 `0`（停）或 `255`（全速）。
+
+### 4.4 自检（V2.9 起，只读诊断）
+
+下发 `{"cmd":"system","action":"selftest"}`，固件回一帧：
+
+```json
+{"module":"output","type":"selftest","version":"V2.9","uptime_ms":9904,"ok":2,"err":0,
+ "fan":{"speed":0,"reclaim":0,"pin":[1,0,1,0]},
+ "light":{"level":255,"bright":255,"shows":1,"d4":[1,1,0]},"buzzer":"off"}
+```
+
+| 字段 | 含义 |
+|------|------|
+| `ok` / `err` | 本次上电以来命令被识别执行 / 未被识别的累计次数 |
+| `fan.pin` | `[INA方向位, INA电平, INB方向位, INB电平]`；方向位为 0 = 引脚又被外设抢成 INPUT |
+| `light.level` | 灯的**意图值**（`Light::getLevel()`） |
+| `light.bright` | 灯带全局亮度（`setBrightness` 的值） |
+| `light.shows` | `_strip.show()` **实际被调用的次数**——证明数据真的推给灯带了 |
+| `light.d4` | `[方向位, 拉高读回, 拉低读回]`；绕过 NeoPixel 直接把数据脚当 GPIO |
+| `buzzer` | 蜂鸣器实际电平 |
+
+> `light.d4` 是二分「固件没执行」与「引脚物理没信号」的判据：拉高读回为 `0`
+> 说明数据脚被短路到 GND 或带载过重。注意本命令会短暂接管灯带数据脚，随后立即
+> 复位时序并重放当前颜色。
+>
+> **复位原因不可读（optiboot）**：引导程序进入应用前已清 `MCUSR`，固件读到的恒为 0，
+> 因此不提供「复位原因」字段，避免给出恒为 unknown 的假信息。
 
 ---
 

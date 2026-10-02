@@ -23,9 +23,25 @@ uint8_t hexToBytes(const char* hex, uint8_t* out, uint8_t maxLen) {
     return n;
 }
 
+// 引脚方向位（1=OUTPUT）与输入寄存器位：自检用来暴露「引脚被外设改回 INPUT」
+// （IR.cpp 记录过 D12 被 U8x8 的 SPI.begin() 抢走这类事故）。
+uint8_t pinOutBit(uint8_t pin) {
+    uint8_t port = digitalPinToPort(pin);
+    if (port == NOT_A_PIN) return 0;
+    return (*(portModeRegister(port)) & digitalPinToBitMask(pin)) ? 1 : 0;
+}
+
+uint8_t pinInBit(uint8_t pin) {
+    uint8_t port = digitalPinToPort(pin);
+    if (port == NOT_A_PIN) return 0;
+    return (*(portInputRegister(port)) & digitalPinToBitMask(pin)) ? 1 : 0;
+}
+
 } // namespace
 
 void CommandDispatcher::begin() {
+    _okCount = 0;
+    _errCount = 0;
     _door.begin();
     _window.begin();
     _fan.begin();
@@ -41,6 +57,12 @@ void CommandDispatcher::begin() {
 }
 
 bool CommandDispatcher::dispatch(const Command& cmd) {
+    bool ok = _route(cmd);
+    if (ok) _okCount++; else _errCount++;
+    return ok;
+}
+
+bool CommandDispatcher::_route(const Command& cmd) {
     if (!cmd.valid) return false;
 
     if (strcmp(cmd.device, "door") == 0) {
@@ -119,13 +141,79 @@ void CommandDispatcher::buildStatus(char* buf, size_t len) {
         _window.getState() == 1 ? "closed" :
         _window.getState() == 2 ? "open" : "normal";
 
-    snprintf(buf, len,
-        "{\"module\":\"output\",\"type\":\"state\","
-        "\"door\":\"%s\",\"window\":\"%s\",\"fan\":%d,"
-        "\"light\":%d,\"buzzer\":\"%s\"}",
+    // snprintf_P + PSTR：格式串放 flash。Uno 只有 2KB RAM，普通字面量会占 .data
+    // 并在启动时拷进 RAM（这段约 95 字节，实测把栈顶到静态区导致固件跑飞）。
+    snprintf_P(buf, len,
+        PSTR("{\"module\":\"output\",\"type\":\"state\","
+             "\"door\":\"%s\",\"window\":\"%s\",\"fan\":%d,"
+             "\"light\":%d,\"buzzer\":\"%s\"}"),
         _door.isOpen() ? "open" : "closed",
         winState,
         _fan.getSpeed(),
         _light.getLevel(),
         _buzzer.isActive() ? "on" : "off");
+}
+
+// 状态字段直印 Serial（无中间缓冲）：供 response/ready 帧内嵌 "state":{...}，
+// 让中间层在命令 ack 当场就能对比「命令意图 vs 固件实际」，不必等心跳。
+void CommandDispatcher::printStateFields() {
+    Serial.print(F("\"door\":\""));
+    Serial.print(_door.isOpen() ? F("open") : F("closed"));
+    Serial.print(F("\",\"window\":\""));
+    Serial.print(_window.getState() == 1 ? F("closed") :
+                 _window.getState() == 2 ? F("open") : F("normal"));
+    Serial.print(F("\",\"fan\":"));
+    Serial.print(_fan.getSpeed());
+    Serial.print(F(",\"light\":"));
+    Serial.print(_light.getLevel());
+    Serial.print(F(",\"buzzer\":\""));
+    Serial.print(_buzzer.isActive() ? F("on") : F("off"));
+    Serial.print('"');
+}
+
+// 自检快照（system/selftest）。字段刻意做成「能区分故障在哪一层」：
+//   d4[]  —— [方向位, 拉高读回, 拉低读回]；拉高读回是 0 说明数据脚被短路到 GND
+//            或带载过重 → 二分「固件执行了」vs「引脚物理没信号」
+//   pin[] —— 风扇两脚的 [方向位, 电平] × 2；方向位=0 说明又被外设抢成 INPUT
+//   shows/reclaim —— 灯带 show() 实际调用次数 / 风扇引脚自愈次数（固件侧铁证）
+void CommandDispatcher::printSelfTest() {
+    int d4High = -1, d4Low = -1;
+    _light.rawPinTest(&d4High, &d4Low);
+
+    Serial.print(F("\"ok\":"));
+    Serial.print((unsigned long)_okCount);
+    Serial.print(F(",\"err\":"));
+    Serial.print((unsigned long)_errCount);
+
+    Serial.print(F(",\"fan\":{\"speed\":"));
+    Serial.print(_fan.getSpeed());
+    Serial.print(F(",\"reclaim\":"));
+    Serial.print((unsigned)_fan.reclaimCount());
+    Serial.print(F(",\"pin\":["));
+    Serial.print((unsigned)pinOutBit(FAN_INA));
+    Serial.print(',');
+    Serial.print((unsigned)pinInBit(FAN_INA));
+    Serial.print(',');
+    Serial.print((unsigned)pinOutBit(FAN_INB));
+    Serial.print(',');
+    Serial.print((unsigned)pinInBit(FAN_INB));
+    Serial.print(F("]}"));
+
+    Serial.print(F(",\"light\":{\"level\":"));
+    Serial.print(_light.getLevel());
+    Serial.print(F(",\"bright\":"));
+    Serial.print((unsigned)_light.stripBrightness());
+    Serial.print(F(",\"shows\":"));
+    Serial.print((unsigned)_light.showCount());
+    Serial.print(F(",\"d4\":["));
+    Serial.print((unsigned)pinOutBit(RGB_PIN));
+    Serial.print(',');
+    Serial.print(d4High);
+    Serial.print(',');
+    Serial.print(d4Low);
+    Serial.print(F("]}"));
+
+    Serial.print(F(",\"buzzer\":\""));
+    Serial.print(_buzzer.isActive() ? F("on") : F("off"));
+    Serial.print('"');
 }
