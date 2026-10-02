@@ -542,19 +542,32 @@ function setLight(status, brightness) {
 }
 
 // 风扇卡片按钮：关闭/低速/中速/高速（与灯光相同的防抖收口原因）
+//
+// 去重同样只认「本页正在下发的同一意图」，**绝不拿服务端回报的状态当依据**：web 是
+// --no-serial，DB 里的 fan_speed 只是「上次命令值」，风扇被外部原因转起来或 B 板复位
+// 后它仍可能记着 0。拿它去重，用户点「关闭」会被静默吞掉（连请求都不发、没有提示，
+// 表现为「关了没反应 / 关不掉」）。后端 /api/fan 早已去掉 DB 幂等，前端这里补齐。
+let fanInflight = null;      // 正在飞的转速
 const postFanDebounced = debounce(async (speed) => {
     speed = Number(speed) || 0;
-    if (lastKnownFanSpeed === speed) return;
-    // 乐观更新：立即收口本地认知并刷新滑块/标签，指令在飞期间同值点击不再进
-    // 网络；失败时 loadStatus() 用服务端真值回滚
+    if (fanInflight === speed) {
+        return;              // 同一意图已在飞（触摸双发/连点），其结果即本次结果
+    }
+    fanInflight = speed;
+    // 乐观更新：立即刷新本地显示，指令在飞期间界面不卡顿；
+    // 失败时 loadStatus() 用服务端回滚
     lastKnownFanSpeed = speed;
     const fSlider = document.getElementById('fanSpeed');
     if (fSlider && document.activeElement !== fSlider) fSlider.value = speed;
     const fLabel = document.getElementById('fanSpeedValue');
     if (fLabel) fLabel.textContent = speed + '%';
-    const result = await apiPost('/api/fan', { speed });
-    if (result) {
-        showNotification(getMessage(result));
+    try {
+        const result = await apiPost('/api/fan', { speed });
+        if (result) {
+            showNotification(getMessage(result));
+        }
+    } finally {
+        if (fanInflight === speed) fanInflight = null;
     }
     loadStatus();
 }, 300);
