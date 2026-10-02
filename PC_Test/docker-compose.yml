@@ -110,10 +110,18 @@ services:
       context: .
       dockerfile: docker/Dockerfile.camera
     image: smarthome-camera:latest
-    devices:
-      - "${CAMERA_DEVICE:-/dev/video0}:${CAMERA_DEVICE:-/dev/video0}"
+    # 设备热插拔：与 voice 的串口同理。devices: 在容器创建时把设备号固化，摄像头
+    # 拔插后重新枚举会换 /dev/videoN 序号与设备号，容器里的旧节点救不回来。
+    # 下面两条让容器跟随宿主机 /dev：cgroup 放行所有 V4L2(字符设备主号 81)，
+    # 再由 camera_stream.py 重新枚举并自动重开。
+    device_cgroup_rules:
+      - "c 81:* rmw"
+    volumes:
+      - /dev:/dev
     environment:
       - TZ=${TZ:-Asia/Shanghai}
+      # 探测到的节点，仅作优先候选；不在位时自动试其它 /dev/video*
+      - CAMERA_DEVICE=${CAMERA_DEVICE:-}
     ports:
       - "${CAMERA_PORT:-8080}:8080"
     restart: unless-stopped

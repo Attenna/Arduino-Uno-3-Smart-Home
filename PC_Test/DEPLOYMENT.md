@@ -81,6 +81,28 @@ python test_serial.py --port-b /dev/ttyUSB1
 - **串口掉线**：`mcp_home_server.py` 已内置串口自愈（异常退避 → 重新打开 → 恢复数据）。频繁自愈则检查 USB 线 / Hub 供电等物理层问题。
 - **数码管**：`display` 工具为保留接口，B 板 TM1637 已裁剪，调用会返回 error，属预期。
 
+### 3.3 摄像头（热插拔）
+
+摄像头容器与 `camera_stream.py` 都不要求「先插再启动」：设备按 `/dev/video*`
+每轮重新枚举，拔插换了序号也能自己找回来。排查顺序：
+
+```bash
+ls -l /dev/video*                                  # 宿主机有没有枚举到节点（主设备号 81）
+docker ps -a --format '{{.Names}}\t{{.Status}}' | grep camera
+curl -s http://127.0.0.1:8080/health               # online / device / frame_age_s / error
+curl -s http://127.0.0.1:5000/api/camera/status    # web 代理侧看到的同一份状态
+docker compose up -d camera                        # 容器没起（Exited）时拉起
+```
+
+- `/health` 里 `online:false` 且 `error` 写着「未发现可用摄像头」：没插、线/口没枚举、
+  或者**被别的进程占着**——这台 UVC 摄像头同一时刻只允许一个进程打开，对方释放后会自动接上。
+- `capture_alive:false`（`/health` 返回 503）：采集线程异常退出，`docker logs` 看原因。
+- 页面黑屏但 `/health` 在线：看 `frame_age_s`，越来越大就是设备停止出帧，服务会改发
+  「NO CAMERA」占位帧，因此前端能显示问题所在（不再是一根字节都不发的假 200）。
+- compose 里摄像头用 `device_cgroup_rules: ["c 81:* rmw"]` + 挂载 `/dev`，与 voice 的串口
+  同理：**不要**改回 `devices:`，那会在容器创建时固化设备号，拔插后容器里的节点永久失效。
+  重建只动 camera：`docker compose build camera && docker compose up -d camera`。
+
 ---
 
 ## 4. 二次开发定义（积木自动化引擎）
@@ -92,12 +114,18 @@ python test_serial.py --port-b /dev/ttyUSB1
      传感器快照(SENSOR:)、事件(EVENT:)、人脸授权 ─▶ 引擎注入(边沿/条件/冷却)
 ```
 
-- `capabilities.py`   积木下拉的能力清单（传感器/事件/比较符/执行器），前端与校验共用
+- `capabilities.py`   积木下拉的能力清单（传感器/事件/比较符/执行器/全局状态变量），前端与校验共用
 - `schema.py`         规则 JSON 模型与校验（触发/条件/那么/否则/冷却）
 - `engine.py`         规则引擎：触发沿、持续秒数、条件组合、动作线程、防重入、记录
 - `default_rules.py`  内置默认规则积木（高温控风扇、光敏调光、雨水关窗、烟雾报警、人脸开门、离家关全屋、按键/红外切换等），可增删/停用
-- `home_mode.py`      全屋模式状态机（auto/manual/away + 风扇/灯光档位覆盖）
+- `global_state.py`   全局状态仓库：自由命名变量（bool/number/enum/text），积木读写，落盘 `data/global_state.json`；每个变量在自动化页是一张「📌 状态」条目卡片，由顶层「状态定义」积木新建/改名/删除
 - `oled_carousel.py`  OLED 轮播（扁平数据源 + 内容去重）
+
+> 「自动/手动/离家」不再是引擎里的状态机：它就是一组全局状态变量
+> （`g:全屋模式`、`g:有人在家`、`g:手动优先_灯`、`g:允许自动开风扇` 等），
+> 由 `default_rules.py` 的预设积木维护。手动优先 = `manual_mark_*` 置脉冲 +
+> `manual_clear_*` 到期复位，设备预设再带一条 `g:手动优先_X == 否` 条件让位。
+> 引擎只做同值去重（`note_external` 供面板/语音手动操作同步水位），不做设备仲裁。
 
 ### 4.2 常用扩展点
 
@@ -106,9 +134,13 @@ python test_serial.py --port-b /dev/ttyUSB1
 | 新增传感器/状态积木 | `capabilities.py` 的 `CONDITION_SOURCES` 加一项（后端校验自动跟随） |
 | 新增执行器积木 | `capabilities.py` 的 `ACTION_DEVICES` + `engine._perform` 加分支 |
 | 加入默认规则 | `default_rules.py` 追加一条 `preset` 并 `PRESETS_VERSION += 1` |
+| 新增全局状态变量 | 自动化页工具栏「📌 ＋ 新建状态」（一块状态定义积木），或 `POST /api/automation/global_state`；积木下拉自动出现 |
 | 组合触发/条件积木 | Blockly 页面直接编排「当→如果→那么/否则」，无需改代码 |
 
 ### 4.3 相关文档
 
 - 工具总览：[README.md](README.md)
 - 串口协议：[docs/serial-protocol.md](../docs/serial-protocol.md)
+- 对外接口与扩展缝（事件总线多订阅者、HTTP 出站积木、加传感器/事件/执行器清单）：
+  [docs/extension-guide.md](../docs/extension-guide.md)
+- 接口清单：[docs/api.md](../docs/api.md)
