@@ -183,7 +183,9 @@ python voice_assistant.py --list-mic
 流完才吐正文，实测首字 20~60s。代码里已对硅基流动默认带上顶层
 `enable_thinking: false`，实测首字降到 ~1s，工具调用不变。想改回思考模式或加别的
 请求参数，用 `llm.extra_body` 覆盖即可（注意硅基流动不认 vLLM 那套
-`chat_template_kwargs` 写法）。用 `--test-llm` 可以直接看耗时：
+`chat_template_kwargs` 写法）。若云端接了连接却一个字节都不回，客户端按 `llm.timeout_s`
+（默认 30s）报「LLM 超时」并回到待唤醒，不会把那一轮永远挂在 THINKING。用 `--test-llm`
+可以直接看耗时：
 
 ```bash
 py -3.13 voice_assistant.py --test-llm "现在屋里有人吗"

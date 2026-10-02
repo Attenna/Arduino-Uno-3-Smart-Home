@@ -251,7 +251,8 @@ py -3.13 pi-staging/test_automation_api.py      # REST 冒烟
 py -3.13 pi-staging/test_frontend_blocks.py     # 前端静态契约（积木/版本号）
 py -3.13 pi-staging/test_extension_seams.py     # 数据总线 + HTTP 出站
 py -3.13 pi-staging/test_device_gate.py         # 命令收口器
-py -3.13 pi-staging/test_llm_provider.py        # 云端 LLM 供应商与 Key 来源
+py -3.13 pi-staging/test_llm_provider.py        # 云端 LLM 供应商、Key 来源与读超时
+py -3.13 pi-staging/test_serial_ports_env.py    # 串口定位：SMART_HOME_PORT_A/B 覆盖 yaml
 py -3.13 pi-staging/test_reset_reconcile.py     # 复位对账
 py -3.13 pi-staging/test_camera_hotplug.py      # 摄像头枚举 / 重开 / 占位帧 / health
 ```

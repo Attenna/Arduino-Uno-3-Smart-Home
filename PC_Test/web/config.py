@@ -7,6 +7,7 @@ PC_Test/data/ 下（已 gitignore）；模型权重放在 PC_Test/models/ 下（
 from __future__ import annotations
 
 import copy
+import os
 from pathlib import Path
 
 import yaml
@@ -95,12 +96,19 @@ def _deep_merge(base: dict, override: dict) -> dict:
 
 
 def load_config(path: Path | None = None) -> dict:
-    """读取 web_config.yaml 并与默认值合并。"""
+    """读取 web_config.yaml 并与默认值合并，最后应用 SMART_HOME_* 环境变量。"""
     cfg = copy.deepcopy(DEFAULTS)
     cfg_path = Path(path) if path else WEB_CONFIG_PATH
     if cfg_path.exists():
         with cfg_path.open("r", encoding="utf-8") as f:
             _deep_merge(cfg, yaml.safe_load(f) or {})
+    # 容器里串口由 compose 从宿主机 .env 注入 SMART_HOME_PORT_A/B，优先于 yaml：
+    # yaml 留 auto 时 MCP 只能靠 WHO 探测认板子，板子不回探测就当没插（重构前由
+    # voice 侧读这两个变量，串口归 web 后必须在这里接着读）。
+    for key, var in (("port_a", "SMART_HOME_PORT_A"), ("port_b", "SMART_HOME_PORT_B")):
+        env = os.environ.get(var)
+        if env:
+            cfg["serial"][key] = env
     return cfg
 
 

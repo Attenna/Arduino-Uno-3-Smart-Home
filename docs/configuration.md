@@ -37,8 +37,8 @@
 | 键 | 默认 | 说明 |
 |----|------|------|
 | `enabled` | `true` | `true` = 本进程拉起 MCP 子进程**真正打开** A/B 串口（全系统唯一硬件网关）；`false` = 纯看板/演示模式（设备控制与 `/api/hardware/tool` 返回 503） |
-| `port_a` | `auto` | Module A 串口（如 `COM7`），`auto` = 自动探测 |
-| `port_b` | `auto` | Module B 串口（如 `COM6`） |
+| `port_a` | `auto` | Module A 串口（如 `COM7`），`auto` = 自动探测；容器里由 `SMART_HOME_PORT_A` 覆盖 |
+| `port_b` | `auto` | Module B 串口（如 `COM6`），`auto` = 自动探测；容器里由 `SMART_HOME_PORT_B` 覆盖 |
 
 ### 2.3 其他顶层键
 
@@ -87,6 +87,7 @@
 | `model` | `Qwen/Qwen3.5-4B` | 云端用服务商的模型 id（硅基流动带组织前缀，如 `Qwen/Qwen3.5-4B`；百炼如 `qwen-plus`）；local = GGUF 文件名去 `.gguf` |
 | `api_key_file` | （未设） | 密钥文件路径，相对 `PC_Test/` 或绝对路径；不设则按 `llm_key.txt` → `siliconflow_key.txt` → `dashscope_key.txt` 依次找 |
 | `extra_body` | （未设） | 合并进每次 `/chat/completions` 请求体的额外参数（如 `max_tokens`）。`siliconflow` 已在代码里默认 `{"enable_thinking": false}`，见下 |
+| `timeout_s` | `30.0` | 两段响应数据之间的最大间隔（秒）。云端偶尔接下连接却不吐字节，超过这里就报「LLM 超时」，不会把那一轮永远卡在 THINKING |
 | `system_prompt` | （内置） | 注入给模型的系统提示词 |
 
 > **Qwen3.5 必须关思考**：它是思考型模型，默认会把 `reasoning_content` 流完才吐正文，
@@ -200,7 +201,7 @@ ls -l /dev/ttyUSB* /dev/ttyACM* /dev/serial/by-id/* /dev/video*
 
 | 变量 | 作用 |
 |------|------|
-| `SMART_HOME_PORT_A` / `SMART_HOME_PORT_B` | A/B 串口（容器内由 compose 从 `SERIAL_PORT_A/B` 注入，供串口定位/探测） |
+| `SMART_HOME_PORT_A` / `SMART_HOME_PORT_B` | A/B 串口：容器内由 compose 从 `SERIAL_PORT_A/B` 注入，**覆盖 `web_config.yaml` 的 `serial.port_a/port_b`**（给了明确端口就不再靠 WHO 探测认板子） |
 | `SMART_HOME_VOICE_URL` | 语音助手 HTTP 地址（容器内 `http://voice:8101`）：面板对话实况代理与自动化「唤醒/播报」动作的目标，**与硬件链路无关** |
 | `SMART_HOME_CAMERA_URL` | 摄像头上游地址（容器内 `http://camera:8080/video_feed`） |
 | `SMART_HOME_DB` | 自定义 SQLite 路径（可选） |

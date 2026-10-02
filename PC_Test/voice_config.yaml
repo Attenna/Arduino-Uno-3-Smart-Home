@@ -18,6 +18,8 @@ llm:
   base_url: "https://api.siliconflow.cn/v1"
   api_key: "none"       # 留 none，把 sk-xxx 单独写进 llm_key.txt（已 gitignore）更安全
   model: "Qwen/Qwen3.5-4B"   # 硅基流动模型广场里的 id（带组织前缀）；换名去广场复制
+  timeout_s: 30.0     # 两段响应数据之间的最大间隔；云端接了连接却不吐字节时按此报错，
+                      # 不让那一轮对话永远卡在 THINKING（旧版是无限等）
   # api_key_file: "llm_key.txt"   # 相对 PC_Test 或绝对路径；默认已按 llm_key.txt →
   #                                siliconflow_key.txt → dashscope_key.txt 依次找
   # 附加请求体参数（每次 /chat/completions 都合并进去）。siliconflow 已在代码里默认关思考：

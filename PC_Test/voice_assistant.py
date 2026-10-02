@@ -51,6 +51,9 @@ DASHSCOPE_BASE = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 # mode → 云端 OpenAI 兼容端点；不在表里的 mode 视为本地服务（base_url 由配置给）
 CLOUD_LLM_BASES = {"siliconflow": SILICONFLOW_BASE, "dashscope": DASHSCOPE_BASE}
 
+# 云端 LLM 单次「两段数据之间」的最大间隔（秒），llm.timeout_s 可覆盖
+LLM_TIMEOUT_S = 30.0
+
 
 # ==================== 硬件网关客户端（web :5000）====================
 
@@ -169,6 +172,7 @@ DEFAULT_CONFIG = {
             "base_url": SILICONFLOW_BASE,
             "api_key": None,
             "model": "Qwen/Qwen3.5-4B",
+            "timeout_s": LLM_TIMEOUT_S,
             "system_prompt": "你是智能家居语音助手。",
             "local": {"gguf_path": "models/qwen/qwen2.5-3b-instruct-q4_k_m.gguf",
                       "n_ctx": 8192, "n_threads": 0, "n_gpu_layers": 0, "port": 8000}},
@@ -572,13 +576,32 @@ def resolve_api_key(cfg: dict) -> Optional[str]:
     return _read_key_file(cfg)
 
 
+RETRY_BACKOFF_S = 0.8
+
+
+def _should_retry(err: Exception, attempt: int,
+                  content_parts: list, tc_acc: dict) -> bool:
+    """这次失败值不值得立刻再发一次。
+
+    只重试「一个字节都还没吐」的 5xx/429/超时/连接失败：半句内容已经喂给 TTS 播出去了，
+    重来会让用户听见两句拼在一起。401/400 这类是配置错误，重试没有意义。
+    """
+    if attempt != 1 or content_parts or tc_acc:
+        return False
+    s = str(err)
+    return ("超时" in s or "连接失败" in s
+            or any(f"HTTP {code}" in s for code in (408, 425, 429, 500, 502, 503, 504)))
+
+
 async def stream_chat(base_url: str, api_key: Optional[str], model: str,
                       messages: list, tools: Optional[list] = None,
-                      on_content=None, extra_body: Optional[dict] = None) -> tuple[str, list]:
+                      on_content=None, extra_body: Optional[dict] = None,
+                      timeout_s: float = LLM_TIMEOUT_S) -> tuple[str, list]:
     """流式调用 OpenAI 兼容 /chat/completions。
 
     on_content(token) 在每个内容 token 到达时回调（喂 TTS 用）。
     extra_body 里的键直接合并进请求体（如 enable_thinking / max_tokens）。
+    timeout_s 是「两段数据之间」的最大间隔，超时会抛 RuntimeError。
     返回 (完整content, tool_calls列表)。
     """
     import httpx
@@ -592,42 +615,69 @@ async def stream_chat(base_url: str, api_key: Optional[str], model: str,
     if extra_body:
         payload.update(extra_body)
     content_parts, tc_acc = [], {}
-    async with httpx.AsyncClient(timeout=None) as client:
-        async with client.stream("POST", url, json=payload, headers=headers) as resp:
-            if resp.status_code != 200:
-                body = (await resp.aread()).decode("utf-8", "replace")[:300]
-                raise RuntimeError(f"LLM HTTP {resp.status_code}: {body}")
-            async for line in resp.aiter_lines():
-                if not line or not line.startswith("data: "):
-                    continue
-                data = line[6:]
-                if data.strip() == "[DONE]":
-                    break
-                try:
-                    chunk = json.loads(data)
-                except json.JSONDecodeError:
-                    continue
-                choices = chunk.get("choices", [])
-                if not choices:
-                    continue
-                delta = choices[0].get("delta", {}) or {}
-                c = delta.get("content")
-                if c:
-                    content_parts.append(c)
-                    if on_content:
-                        on_content(c)
-                tcs = delta.get("tool_calls")
-                if tcs:
-                    for tc in tcs:
-                        idx = tc.get("index", 0)
-                        slot = tc_acc.setdefault(idx, {"id": "", "name": "", "arguments": ""})
-                        if tc.get("id"):
-                            slot["id"] = tc["id"]
-                        fn = tc.get("function", {}) or {}
-                        if fn.get("name"):
-                            slot["name"] = fn["name"]
-                        if fn.get("arguments"):
-                            slot["arguments"] += fn["arguments"]
+    # 必须给读超时：云端偶尔接下连接却一个字节都不发，timeout=None 会让这一轮永远
+    # 卡在 THINKING，麦克风/键盘通道跟着一起死（实测硅基流动会 503 或长时间静默）。
+    timeout = httpx.Timeout(connect=8.0, read=timeout_s, write=15.0, pool=8.0)
+    # 免费档常被挤到 503/静默，实测同一请求紧接着重试就能通。只重试「一个字节都还没
+    # 吐」的情况——半句已经喂给 TTS 播出去了，重来会让用户听见两句拼接。
+    for attempt in (1, 2):
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                async with client.stream("POST", url, json=payload, headers=headers) as resp:
+                    if resp.status_code != 200:
+                        body = (await resp.aread()).decode("utf-8", "replace")[:300]
+                        raise RuntimeError(f"LLM HTTP {resp.status_code}: {body}")
+                    async for line in resp.aiter_lines():
+                        if not line or not line.startswith("data: "):
+                            continue
+                        data = line[6:]
+                        if data.strip() == "[DONE]":
+                            break
+                        try:
+                            chunk = json.loads(data)
+                        except json.JSONDecodeError:
+                            continue
+                        choices = chunk.get("choices", [])
+                        if not choices:
+                            continue
+                        delta = choices[0].get("delta", {}) or {}
+                        c = delta.get("content")
+                        if c:
+                            content_parts.append(c)
+                            if on_content:
+                                on_content(c)
+                        tcs = delta.get("tool_calls")
+                        if tcs:
+                            for tc in tcs:
+                                idx = tc.get("index", 0)
+                                slot = tc_acc.setdefault(idx, {"id": "", "name": "", "arguments": ""})
+                                if tc.get("id"):
+                                    slot["id"] = tc["id"]
+                                fn = tc.get("function", {}) or {}
+                                if fn.get("name"):
+                                    slot["name"] = fn["name"]
+                                if fn.get("arguments"):
+                                    slot["arguments"] += fn["arguments"]
+            break
+        except httpx.TimeoutException as e:
+            err = RuntimeError(
+                f"LLM 超时：{timeout_s:.0f}s 内没有响应数据（{base_url}）；"
+                "服务商抖动稍后重说即可，长期如此可调大 llm.timeout_s")
+            if not _should_retry(err, attempt, content_parts, tc_acc):
+                raise err from e
+            print(f"[LLM] {err} —— 立即重试一次", flush=True)
+            await asyncio.sleep(RETRY_BACKOFF_S)
+        except (httpx.TransportError, OSError) as e:
+            err = RuntimeError(f"LLM 连接失败：{type(e).__name__}: {e}")
+            if not _should_retry(err, attempt, content_parts, tc_acc):
+                raise err from e
+            print(f"[LLM] {err} —— 立即重试一次", flush=True)
+            await asyncio.sleep(RETRY_BACKOFF_S)
+        except RuntimeError as e:
+            if not _should_retry(e, attempt, content_parts, tc_acc):
+                raise
+            print(f"[LLM] {e} —— 立即重试一次", flush=True)
+            await asyncio.sleep(RETRY_BACKOFF_S)
     tool_calls = [{
         "id": v["id"] or f"call_{i}",
         "type": "function",
@@ -646,6 +696,7 @@ class VoiceAssistant:
         self.llm_base_url, self.llm_model = resolve_llm(cfg)
         self.llm_api_key = resolve_api_key(cfg)
         self.llm_extra_body = resolve_extra_body(cfg)
+        self.llm_timeout_s = float(cfg["llm"].get("timeout_s") or LLM_TIMEOUT_S)
         self.system_prompt = cfg["llm"]["system_prompt"]
         self.history_rounds = int(cfg.get("history_rounds", 4))
         from tts_player import TtsPlayer  # 惰性导入（依赖 sounddevice）
@@ -875,7 +926,8 @@ class VoiceAssistant:
         try:
             content, tool_calls = await stream_chat(
                 self.llm_base_url, self.llm_api_key, self.llm_model,
-                messages, tools, on_content=on_token, extra_body=self.llm_extra_body)
+                messages, tools, on_content=on_token, extra_body=self.llm_extra_body,
+                timeout_s=self.llm_timeout_s)
             return content, tool_calls
         except Exception as e:
             print(f"[LLM] 调用失败: {e}", flush=True)
@@ -1215,6 +1267,7 @@ async def test_llm(cfg: dict, text: str) -> int:
     base, model = resolve_llm(cfg)
     api_key = resolve_api_key(cfg)
     extra_body = resolve_extra_body(cfg)
+    timeout_s = float(cfg["llm"].get("timeout_s") or LLM_TIMEOUT_S)
     print(f"[LLM] 模式={cfg['llm']['mode']}  模型={model}  端点={base}"
           f"  Key={'已配置' if api_key else '缺失'}")
     if extra_body:
@@ -1226,7 +1279,7 @@ async def test_llm(cfg: dict, text: str) -> int:
         content, _ = await stream_chat(base, api_key, model,
                                        [{"role": "user", "content": text}],
                                        on_content=lambda t: print(t, end="", flush=True),
-                                       extra_body=extra_body)
+                                       extra_body=extra_body, timeout_s=timeout_s)
         print()
         if not content.strip():
             print("  FAIL: 无内容返回（若模型默认「思考」，正文会排在 reasoning_content 之后；"
@@ -1250,7 +1303,7 @@ async def test_llm(cfg: dict, text: str) -> int:
             base, api_key, model,
             [{"role": "system", "content": "你是智能家居助手，必须用工具执行硬件操作，禁止只回复文字。"},
              {"role": "user", "content": "把灯调成红色"}],
-            tools=[tool], extra_body=extra_body)
+            tools=[tool], extra_body=extra_body, timeout_s=timeout_s)
         if tool_calls:
             for tc in tool_calls:
                 print(f"  OK: tool_call -> {tc['function']['name']}"
