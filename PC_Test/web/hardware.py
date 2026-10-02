@@ -44,6 +44,48 @@ def _looks_like_error(text: str) -> bool:
     return low.startswith("error") or "b 板响应超时" in low
 
 
+# ==================== B 板复位 → DB 对账 ====================
+# 打开串口会拉低 DTR 复位 Uno；复位/欠压/看门狗之后固件 begin() 把执行器锁回默认
+# （门 closed、窗 normal、风扇 0、灯 0、蜂鸣器 off），而 web 的 DB 里只有「上次命令
+# 下发值」——两者就此长期脱节。实测：DB 说门开着、硬件回读早已是 closed，且这条
+# 陈旧值还会被自动化规则当成事实。检测到复位后用硬件回读把 DB 拉回一致并留审计。
+# 只写 DB、不动硬件，改动仅限于「命令值与硬件不一致」的那几个执行器列。
+_B_RESET_BOOT_WINDOW_S = 120.0   # 距上次复位小于该秒数 ⇒ 本次启动刚把 B 板复位
+
+
+def reset_needs_reconcile(prev_count, reset_count, last_reset_ago_s,
+                          boot_window_s: float = _B_RESET_BOOT_WINDOW_S) -> bool:
+    """判断是否要做一次「B 板复位 → DB 对账」。
+
+    * 本进程首次判定（prev_count 为 None）：容器与 MCP 通常一起重启，此时
+      reset_count 恒从 1 开始、看不出增量，只能改用「上次复位距今多久」来判断
+      是不是本次开串口造成的复位；
+    * 之后看 reset_count 是否比上次多（运行期真复位：欠压 / DTR 抖动 / 看门狗）。
+    """
+    if reset_count is None:
+        return False
+    if prev_count is None:
+        return last_reset_ago_s is not None and last_reset_ago_s <= boot_window_s
+    return reset_count > prev_count
+
+
+def readback_status(readback: dict) -> dict:
+    """把 rb_* 硬件回读换算成 system_status 的执行器列（缺项不写、不猜）。"""
+    out: dict = {}
+    for rb_key, column in (("rb_door_status", "door_status"),
+                           ("rb_window_status", "window_status"),
+                           ("rb_buzzer_status", "buzzer_status")):
+        if readback.get(rb_key) is not None:
+            out[column] = readback[rb_key]
+    if readback.get("rb_fan_speed") is not None:
+        out["fan_speed"] = int(readback["rb_fan_speed"])
+    if readback.get("rb_light_brightness") is not None:
+        level = int(readback["rb_light_brightness"])
+        out["light_brightness"] = level
+        out["light_status"] = "on" if level > 0 else "off"
+    return out
+
+
 class McpHardwareBridge:
     def __init__(self, cfg: dict, db):
         self.db = db
@@ -91,6 +133,8 @@ class McpHardwareBridge:
         # 执行器指令 ACK 钩子（参数：工具名, 参数 dict）；B 板不主动上报状态，
         # 靠成功 ACK 刷新 output_last_seen
         self.command_ack_listener = None
+        # B 板复位对账：上次见到的 reset_count（None = 本进程还没建基线）
+        self._last_b_reset_count: int | None = None
 
     # ==================== 生命周期 ====================
 
@@ -233,6 +277,8 @@ class McpHardwareBridge:
                             self.db.set_output_readback(readback)
                         except Exception as e:           # noqa: BLE001
                             logger.debug("[硬件桥] 硬件回读写库失败: %s", e)
+                        # 回读新鲜：顺手看 B 板是否复位过，必要时把 DB 拉回一致
+                        self._reconcile_after_reset(readback)
             else:
                 fail_streak += 1
                 self._set_online(False, text)
@@ -281,6 +327,51 @@ class McpHardwareBridge:
             "rb_window_status": state.get("window"),
             "rb_buzzer_status": state.get("buzzer"),
         }
+
+    def _reconcile_after_reset(self, readback: dict) -> None:
+        """B 板复位后用硬件回读把 DB 执行器值拉回一致（只写库、不动硬件）。
+
+        reset_count 由 get_serial_health 给出：MCP 读线程每收到一帧 B 板 ready 即 +1
+        （上电、DTR 复位、看门狗都会发）。判定见 reset_needs_reconcile。只写真正
+        变化的列，一次复位最多记一条审计，避免刷屏。
+        """
+        ok, text = self.call_tool("get_serial_health", {}, timeout=5)
+        count = ago = None
+        if ok:
+            try:
+                health_b = (json.loads(text) or {}).get("b") or {}
+                count = health_b.get("reset_count")
+                ago = health_b.get("last_reset_ago_s")
+            except (json.JSONDecodeError, AttributeError):
+                pass
+        prev, self._last_b_reset_count = self._last_b_reset_count, count
+        if not reset_needs_reconcile(prev, count, ago):
+            return
+        try:
+            current = self.db.get_current_status()
+        except Exception as e:                           # noqa: BLE001
+            logger.debug("[硬件桥] 复位对账读当前状态失败: %s", e)
+            return
+        changed = {k: v for k, v in readback_status(readback).items()
+                   if current.get(k) != v}
+        if not changed:
+            return
+        try:
+            self.db.update_status(**changed)
+            self.db.add_automation_log(
+                rule_id="b_reset", rule_name="B板复位对账", triggered=1,
+                conditions_hold=1,
+                reason="B 板复位（固件执行器已回默认），按硬件回读同步 DB；"
+                       f"reset_count={count}，"
+                       + ("本次启动即复位" if prev is None else "运行期复位"),
+                success=1,
+                detail=json.dumps({k: {"before": current.get(k), "after": v}
+                                   for k, v in changed.items()},
+                                  ensure_ascii=False))
+        except Exception as e:                           # noqa: BLE001
+            logger.debug("[硬件桥] 复位对账写库失败: %s", e)
+            return
+        logger.warning("[硬件桥] B 板复位对账：%s（reset_count=%s）", changed, count)
 
     def _ingest_snapshot(self, snap: dict) -> None:
         ts = snap.get("timestamp")
