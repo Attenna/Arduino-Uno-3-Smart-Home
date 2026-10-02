@@ -4,7 +4,7 @@
 > 接线调试、二次开发。
 > 使用总览见 [README.md](README.md)；积木自动化扩展见 [web/automation/](web/automation/)。
 
-**功能一句话**：PC 直接连 USB 串口调试 Arduino 双板；自动化统一走 Web 积木引擎（`/automation` 页面，经 voice 容器 `POST /tool` 下发硬件，不依赖 MQTT/HA）；也能起 USB 摄像头 MJPEG 流。
+**功能一句话**：PC 直接连 USB 串口调试 Arduino 双板；自动化统一走 Web 积木引擎（`/automation` 页面，web 自己就是硬件网关，串口在它拉起的 MCP 子进程里，不依赖 MQTT/HA）；也能起 USB 摄像头 MJPEG 流。
 
 ---
 
@@ -42,7 +42,7 @@ python camera_stream.py --mode web --host 0.0.0.0 --port 8080
 
 > 与 Windows 的差异仅在设备名（`/dev/ttyUSB*` 而非 `COMx`）与 Python 命令（`python3`/venv 而非 `py -3.13`）。
 >
-> **自动化统一入口**：联动规则走 Web 积木引擎——启动 `run_web.py --no-serial`（经 voice 容器 `POST /tool` 下发硬件）后访问 `http://<IP>:5000/automation`。
+> **自动化统一入口**：联动规则走 Web 积木引擎——`run_web.py` 自己就是硬件网关（拉起 MCP 子进程独占 A/B 串口，积木动作经它直发 Module B）后访问 `http://<IP>:5000/automation`。
 > 历史 `.auto` 文本 DSL、`run_automation.py`、`link_server.py` 已移除。
 
 ---
@@ -56,7 +56,7 @@ python camera_stream.py --mode web --host 0.0.0.0 --port 8080
 
 接线细节（传感器/执行器到板）见对应板目录 [../module-a-sensor/DEPLOYMENT.md](../module-a-sensor/DEPLOYMENT.md)、[../module-b-output/DEPLOYMENT.md](../module-b-output/DEPLOYMENT.md)。
 
-> 自动化规则无需直连串口：由 web 容器积木引擎经 voice 容器 `POST /tool` 下发到 Module B。
+> 自动化规则无需另起进程：由 web 容器内的积木引擎经它自己拉起的 MCP 子进程直接下发到 Module B。
 
 ---
 
@@ -110,7 +110,7 @@ docker compose up -d camera                        # 容器没起（Exited）时
 自动化规则全部统一到 Web 积木引擎 `PC_Test/web/automation/`：
 
 ```text
-面板(Blockly) ─▶ 规则JSON(schema.py) ─▶ 引擎(engine.py) ─▶ bridge(relay→voice /tool) ▶ Module B
+面板(Blockly) ─▶ 规则JSON(schema.py) ─▶ 引擎(engine.py) ─▶ bridge(MCP 子进程，独占串口) ▶ Module B
      传感器快照(SENSOR:)、事件(EVENT:)、人脸授权 ─▶ 引擎注入(边沿/条件/冷却)
 ```
 

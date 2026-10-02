@@ -4,8 +4,9 @@
 # Docker Desktop 的 WSL2/HyperKit 后端不能像 Linux 那样透传物理串口
 # (/dev/ttyUSB*)、声卡 (/dev/snd) 与 USB 摄像头 (/dev/video*)，
 # 因此桌面端体验栈做两处降级：
-#   - voice：移除设备透传，设 SMART_HOME_DISABLE_MIC=1
-#            （MCP 硬件工具与 HTTP /tool 仍在，操作板子会返回"未连接"）
+#   - web：拿不到串口，改用 --no-serial 起（纯看板/演示）；硬件网关接口
+#          /api/hardware/tool 会返回 503「硬件服务离线」，不影响看板与人脸演示
+#   - voice：移除 /dev/snd 透传并设 SMART_HOME_DISABLE_MIC=1（无麦克风）
 #   - camera：加 profile，默认不启动（桌面端摄像头直接用裸机 camera_stream.py）
 #
 #   docker compose -f docker-compose.yml -f docker-compose.desktop.yml up -d
@@ -13,6 +14,12 @@
 # 香橙派等真实 Linux 设备部署不要加本文件，直接 docker compose up -d。
 # ============================================================================
 services:
+  web:
+    devices: !reset null
+    device_cgroup_rules: !reset null
+    command: ["python", "-u", "run_web.py", "--no-serial",
+              "--host", "0.0.0.0", "--port", "5000"]
+
   voice:
     devices: !reset null
     environment:

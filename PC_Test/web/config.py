@@ -42,11 +42,18 @@ DEFAULTS: dict = {
         "port_a": "auto",
         "port_b": "auto",
     },
+    # web 是全系统唯一硬件网关：语音助手经 /api/hardware/tool 调用硬件，
+    # 串口只能被 web 拉起的 mcp_home_server 独占。
     # MCP 传感器快照轮询间隔（秒），拿到新数据即写入 SQLite
     "sensor_poll_interval": 2.0,
     "door": {
         # 香橙派推送人脸识别成功后自动开门（经 MCP 下发 B 板）
         "open_on_face_grant": True,
+    },
+    # 语音助手 HTTP 服务（唤醒/文本指令/对话实况代理的目标地址）。
+    # 环境变量 SMART_HOME_VOICE_URL 优先。
+    "voice": {
+        "url": "http://127.0.0.1:8101",
     },
     # 自动化引擎（HTTP 出站动作的主机放行策略）
     # 规则里的 URL 任何局域网客户端都能经 GET /api/automation/rules 读到，

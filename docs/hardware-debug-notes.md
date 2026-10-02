@@ -119,7 +119,8 @@ if (_pos > 0) {
 
 **解法**：
 
-- `devices:` 换成 `device_cgroup_rules: ["c 81:* rmw"]` + 挂载 `/dev`（与 voice 串口同理），
+- `devices:` 换成 `device_cgroup_rules: ["c 81:* rmw"]` + 挂载 `/dev`（与 **web 容器**的
+  串口透传同一套路子：`c 166:* rmw` + `/dev:/dev`），
   容器跟随宿主机重新枚举，拔插换 `/dev/videoN` 序号不再需要重建容器；
 - `camera_stream.py` 改成守护式：每轮重开前重新枚举节点、读帧失败就换句柄、
   连续失败按指数退避（1s→10s 封顶），没设备也照常起 HTTP 服务；

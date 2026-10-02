@@ -18,14 +18,16 @@
 | 方向 | 入口 | 默认地址 | 鉴权 | 适合做什么 |
 |------|------|---------|------|-----------|
 | 入 | Web REST | `http://<host>:5000` | ❌ 无 | 读写状态、控制设备、读写规则与全局状态 |
-| 入 | 语音助手 HTTP | `http://<host>:8101` | ❌ 无 | 免唤醒下指令、`POST /tool` 直调 MCP 工具 |
-| 入 | MCP（stdio） | 子进程 | — | LLM / 外部 agent 调 13 个硬件工具 |
+| 入 | 硬件工具网关 | `http://<host>:5000/api/hardware/{tools,tool}` | ❌ 无 | 取 13 个工具清单、静默执行硬件（与面板同权同账；语音助手走的就是它） |
+| 入 | 语音助手 HTTP | `http://<host>:8101` | ❌ 无 | 免唤醒下指令（`/say`）、看对话实况（`/events` SSE） |
+| 入 | MCP（stdio） | web 的子进程 | — | 13 个硬件工具的底层；外部调用请走上面的工具网关，不要另起一份 |
 | 入 | 摄像头 MJPEG | `http://<host>:8080/video_feed` | ❌ 无 | 取实时画面（热插拔：没画面时发占位帧，`/health` 说明原因） |
 | 出 | 规则「HTTP 请求」积木 | 你的服务 | — | 把事件/状态推给外部系统（唯一出站通道） |
 | 出 | Home Assistant 代理 | 你配置的 HA URL | HA token | 只在硬件管理页那条可选链路上 |
 
-系统**不会**主动连你（没有 webhook 回调、没有 MQTT 发布、没有 SSE/WebSocket 推送，
-`/api/ha/*` 也是被动的）。要让外部系统知道家里发生了什么，用第 3 节的出站积木，
+系统基本**不会**主动连你（没有 webhook 回调、没有 MQTT 发布；唯一的事件流是语音的
+对话实况 SSE：voice `/events`，web 同源代理为 `/api/voice/events`，面向自己的前端直播，
+不算对外集成点）。要让外部系统知道家里发生了什么，用第 3 节的出站积木，
 或者在 Web 进程内挂一个订阅者（第 2 节）。
 
 ---
@@ -115,9 +117,10 @@ automation:
 ### 2.5 MCP 工具面
 
 `PC_Test/mcp_home_server.py` 里每个 `@mcp.tool()` 就是一个工具（现 13 个），
-web 侧经 `hardware.py` 的 `call_tool(name, args)` 线程安全调用，外部也可以
-经语音助手 `POST :8101/tool` 调同一个名字。加一个纯软件工具（不碰新硬件）
-只需装饰器 + 实现；但它要能进自动化动作，还得走第 4 节「加一个执行器」那条链。
+它是 **web 拉起的 stdio 子进程**：web 侧经 `hardware.py` 的 `call_tool(name, args)`
+线程安全调用，外部（含语音助手）经 web 的 `POST /api/hardware/tool` 调同一个名字、
+`GET /api/hardware/tools` 拿清单。加一个纯软件工具（不碰新硬件）只需装饰器 + 实现；
+但它要能进自动化动作，还得走第 4 节「加一个执行器」那条链。
 
 ---
 
@@ -197,14 +200,19 @@ if/elif 链，所以「多一个设备」是全链路改动：
 curl -X POST http://<host>:5000/api/fan -H 'Content-Type: application/json' \
      -d '{"speed": 60, "_cid": "mygateway", "_seq": 1}'
 
-# 2) 经语音助手直调 MCP（静默、不经 LLM；web 侧不会因此记账，
-#    需要面板同步就再 POST /api/devices/manual_report）
-curl -X POST http://<host>:8101/tool -H 'Content-Type: application/json' \
-     -d '{"name": "door", "arguments": {"action": "open"}}'
+# 2) 经 web 硬件工具网关直调 MCP（静默、不经 LLM；web 执行完顺手做面板等效记账：
+#    写库 + 历史 + 广播 manual_control，无需再补报）
+curl -X POST http://<host>:5000/api/hardware/tool -H 'Content-Type: application/json' \
+     -d '{"name": "door", "arguments": {"action": "open"}, "source": "voice"}'
 ```
 
 `_cid` + `_seq` 是给弱网连点用的：同实例迟到的旧 seq 被丢弃、排队中的旧目标被
 新目标覆盖。外部程序每次自增 `_seq` 即可，省略也能用（退化为无乱序保护）。
+
+> 工具网关走的是「执行 + 记账」一条路，但**不经过**收口器（`_cid`/`_seq` 那套），
+> 语义与 `manual_report` 一样是「记这一次动作」；需要乱序保护请用第 1) 条面板接口。
+> `POST /api/devices/manual_report` 现在只剩**外部补偿**用途：硬件是在本系统之外
+> 被拨动的（手工操作、另一台网关）才用它补记账，语音助手已不再调用。
 
 ---
 
@@ -243,6 +251,7 @@ py -3.13 pi-staging/test_automation_api.py      # REST 冒烟
 py -3.13 pi-staging/test_frontend_blocks.py     # 前端静态契约（积木/版本号）
 py -3.13 pi-staging/test_extension_seams.py     # 数据总线 + HTTP 出站
 py -3.13 pi-staging/test_device_gate.py         # 命令收口器
+py -3.13 pi-staging/test_llm_provider.py        # 云端 LLM 供应商与 Key 来源
 py -3.13 pi-staging/test_reset_reconcile.py     # 复位对账
 py -3.13 pi-staging/test_camera_hotplug.py      # 摄像头枚举 / 重开 / 占位帧 / health
 ```
@@ -256,9 +265,13 @@ ssh HwHiAiUser@<host> 'cd ~/smart-home && tar xzf web.tgz && docker compose buil
 ```
 
 `~/smart-home` 是**非 git 副本**：覆盖前先跟本地 HEAD 比一遍，别把线上手工改动冲掉。
-**只重建 `web` 容器**——`voice` 容器握着 A/B 串口，重启它会丢串口；
-同一时刻只能有一个进程占用串口。改 `camera_stream.py` / `docker-compose.yml` 的 camera
-段时同理只动 camera（`docker compose build camera && docker compose up -d camera`）。
+**只重建 `web` 容器**——A/B 串口就在 web 拉起的 MCP 子进程里，重启 web 等于重启整条
+串口链路（B 板会被 DTR 复位一次，web 会自己做复位对账），但语音侧不受影响：它只是
+web 的 HTTP 客户端，会自动重试取工具清单。**不要重建 `voice` 容器来「恢复硬件」**，
+它已经不占串口；改了 `voice_assistant.py` / `voice_config.yaml` 才单独
+`docker compose build voice && docker compose up -d voice`。改 `camera_stream.py` /
+`docker-compose.yml` 的 camera 段时同理只动 camera（`docker compose build camera &&
+docker compose up -d camera`）。
 
 > `web_config.yaml` 是以 `:ro` 挂进容器的，改配置要落到**宿主机那份**
 > （`~/smart-home/web_config.yaml`）并在 web 容器里生效；改完 `docker compose up -d web` 重启即可。
@@ -273,8 +286,9 @@ ssh HwHiAiUser@<host> 'cd ~/smart-home && tar xzf web.tgz && docker compose buil
 - 只监听内网：不要把 :5000 / :8101 / :8080 暴露到公网；要对外就自己加反代 + 鉴权。
 - 出站默认不出内网：公网目标、`169.254.*`（云元数据）需要显式登记或开关，
   且不跟随 3xx ——这是为了堵住「内网 URL 用 302 把请求转到公网」。
-- 不要在 web 进程里直接开串口：`McpHardwareBridge` 经 MCP 子进程独占，
-  绕过它会与语音助手抢口。
+- 不要在 web 进程里绕过桥直接开串口：A/B 口由 `McpHardwareBridge` 的 MCP 子进程独占，
+  抢口会让整条硬件链路（含语音）失效。语音助手已完全不碰串口，硬件请一律经
+  `POST /api/hardware/tool`。
 - 不要在钩子/动作里做阻塞长活（见 2.2）。
 - 不要整表 `validate_rules` 失败就清空规则：引擎读盘是**逐条**校验、
   坏的只跳过并记进 `migration.invalid` 提示，改这块时保持该行为。
@@ -290,6 +304,6 @@ ssh HwHiAiUser@<host> 'cd ~/smart-home && tar xzf web.tgz && docker compose buil
 | 执行器注册表（替掉 `_perform` 的 if/elif） | 无 | 大：需先给现有设备补齐用例 |
 | 对外 API 鉴权开关 | 完全没有 | 中：会影响所有前端与语音联动，需一并改 |
 | CORS / 反向代理信任 | 无 | 小，但要和鉴权一起设计 |
-| 事件推送给外部（SSE/WebSocket） | 无（只有出站 HTTP 拉取式推送） | 中：需要新端点 + 客户端重连语义 |
+| 事件推送给外部（SSE/WebSocket） | 无对外端点（voice 的 `/events` SSE 只服务自己的对话实况，经 web `/api/voice/events` 同源代理） | 中：需要新端点 + 客户端重连语义 |
 | 规则级权限（谁能改规则） | 无 | 依赖鉴权 |
 | 多进程共享全局状态 | 单进程假设（与规则文件同目录） | 大：现在整个自动化层按单进程写 |

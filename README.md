@@ -14,7 +14,7 @@
 | 形态 | 决策层 | 协议转换 | 交付方式 |
 |------|--------|---------|---------|
 | **A：HA 生产架构** | Home Assistant | 串口↔MQTT 网关 | `docker/` + `gateway/` |
-| **B：智能终端栈** | Web 积木引擎 + Qwen2.5 语音 | MCP server | `PC_Test/docker-compose.yml` |
+| **B：智能终端栈** | Web 积木引擎 + Qwen2.5 语音 | MCP server（串口归 web） | `PC_Test/docker-compose.yml` |
 
 ---
 
@@ -24,7 +24,7 @@
 - **设备控制**：门 / 窗舵机、风扇、NeoPixel RGB 灯带、蜂鸣器、OLED、红外（NEC + 美的空调长码）
 - **Web 仪表盘**：实时监控、设备控制、历史图表（Flask + SQLite）
 - **人脸识别门禁**：YOLOv8-face + ArcFace，授权通过自动开门
-- **语音助手**：「Hey Bota」唤醒 + Qwen2.5（本地 llama.cpp / 云端百炼）+ 流式 TTS
+- **语音助手**：「Hey Bota」唤醒 + Qwen3.5（默认云端硅基流动 / 备选百炼 / 本地 llama.cpp 兜底）+ 流式 TTS
 - **积木式自动化**：Blockly 可视化编排「触发 → 条件 → 动作」，内置默认规则
 
 > 固件经 2026-09 正式版裁剪：A 板移除超声波 / 土壤、新增矩阵键盘（`V2.1`）；
@@ -57,7 +57,7 @@ Arduino-Uno-3-Smart-Home/
 ├── tools/                       # 红外原始码捕获 / 分析工具
 └── PC_Test/                     # 形态 B：PC 端工具 + 智能终端 Docker 栈
     ├── README.md                #   工具总览与快速开始
-    ├── docker-compose.yml       #   qwen/voice/web/camera 四容器
+    ├── docker-compose.yml       #   web(硬件网关,持串口)/voice/camera；qwen 在 local-llm profile
     └── web/automation/          #   积木式自动化引擎
 ```
 
@@ -76,8 +76,8 @@ Arduino-Uno-3-Smart-Home/
 
 ```bash
 cd PC_Test
-cp docker/.env.example .env        # 按实际串口/摄像头修改
-docker compose up -d --build       # 云端 LLM：叠加 docker-compose.dashscope.yml
+cp docker/.env.example .env        # 按实际串口/摄像头修改，并填 LLM_API_KEY
+docker compose up -d --build       # 默认云端 LLM（硅基流动，web 独占串口）
 ```
 
 详见 [PC_Test/README.md](PC_Test/README.md)。
@@ -89,7 +89,7 @@ docker compose up -d --build       # 云端 LLM：叠加 docker-compose.dashscop
 | 5000 | Web 仪表盘 |
 | 8080 | 摄像头 MJPEG |
 | 8101 | 语音助手 HTTP |
-| 8000 | 本地 LLM（OpenAI 兼容） |
+| 8000 | 本地 LLM（OpenAI 兼容，离线兜底；默认不启动） |
 | 8123 | Home Assistant（形态 A） |
 | 1883 | MQTT Broker（形态 A） |
 

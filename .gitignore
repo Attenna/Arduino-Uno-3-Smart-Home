@@ -34,6 +34,8 @@ PC_Test/_cam_test.py
 # 语音模式：模型、本地配置与密钥不入库
 PC_Test/models/
 PC_Test/voice_config.local.yaml
+PC_Test/llm_key.txt
+PC_Test/siliconflow_key.txt
 PC_Test/dashscope_key.txt
 
 # Web 仪表盘：运行时数据（SQLite/人脸注册照片/embeddings/HA 密钥配置）

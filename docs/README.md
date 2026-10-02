@@ -28,7 +28,7 @@
 | Module B 执行器板 | 接收命令驱动门/窗/风扇/灯/蜂鸣/OLED/红外 | [../module-b-output/DEPLOYMENT.md](../module-b-output/DEPLOYMENT.md) |
 | Gateway 网关 | 串口 ↔ MQTT 协议转换（形态 A，Orange Pi 上跑） | [../gateway/DEPLOYMENT.md](../gateway/DEPLOYMENT.md) |
 | Home Assistant + Docker | 业务决策层 + Mosquitto Broker（形态 A） | [../homeassistant/DEPLOYMENT.md](../homeassistant/DEPLOYMENT.md) |
-| PC_Test 工具集 | 面板/人脸/语音/摄像头 Docker 栈（形态 B） | [../PC_Test/DEPLOYMENT.md](../PC_Test/DEPLOYMENT.md) |
+| PC_Test 工具集 | 面板 + 硬件网关（独占串口）/人脸/语音/摄像头 Docker 栈（形态 B） | [../PC_Test/DEPLOYMENT.md](../PC_Test/DEPLOYMENT.md) |
 
 ---
 

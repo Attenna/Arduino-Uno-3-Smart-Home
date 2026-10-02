@@ -1,12 +1,13 @@
-"""Web 仪表盘服务入口。
+"""Web 仪表盘服务入口（全系统唯一硬件网关）。
 
 用法：
     py -3.13 run_web.py                      # 读 web_config.yaml，自动探测串口
     py -3.13 run_web.py --no-serial          # 不连硬件，纯看板/演示（人脸可用模拟）
     py -3.13 run_web.py --port-a COM7 --port-b COM6 --port 5000
 
-架构：本进程不直接开串口，而是以 MCP stdio client 方式拉起 mcp_home_server.py
-（与 voice_assistant 相同的单进程串口约束），因此不能与语音模式同时运行。
+架构：本进程以 MCP stdio client 方式拉起 mcp_home_server.py，独占 A/B 串口；
+语音助手不再碰串口，硬件动作经本服务的 GET /api/hardware/tools +
+POST /api/hardware/tool 调用，因此两者可同时运行、状态天然一致。
 """
 import argparse
 import logging
@@ -49,7 +50,7 @@ def main():
     print("  智能家居 Web 仪表盘启动中...")
     print(f"  请访问: http://localhost:{port}")
     if cfg["serial"]["enabled"]:
-        print("  硬件链路: MCP 子进程独占 A/B 串口（请勿同时运行语音模式）")
+        print("  硬件链路: MCP 子进程独占 A/B 串口（语音助手经 /api/hardware/tool 调用）")
     else:
         print("  硬件链路: 已禁用 (--no-serial)，设备控制将返回 503")
     print("=" * 56)

@@ -10,7 +10,8 @@
                                                                    ▼
                                     动作执行线程（支持延时、防重入）
                                                                    │
-                                                    bridge ─relay─▶ voice ─▶ Module B
+                                    hardware bridge（MCP stdio → mcp_home_server）
+                                                ─▶ Module B
 
 设计要点：
 - 传感器触发为**边沿触发**：条件由假变真的瞬间触发一次（跨阈值防刷屏）；
@@ -41,6 +42,7 @@ from .oled_carousel import (DEFAULT_PAGES, PAGES_VERSION, OledCarousel,
 from .schema import validate_rule, validate_rules
 from . import webhook
 import midea_ac
+from .. import voice_client
 from ..ac_state import AC_KEYS, ac_state_from_db, write_ac_state
 # RFID 卡号归一化：规则里存的与事件里带的两侧都归一后再比
 from ..database import normalize_uid
@@ -662,8 +664,8 @@ class AutomationEngine:
             # 必须跳过 OLED 轮播自己写的那条日志：它每换一页就写一条（reason=显示页），
             # 若把它当「最近自动化」显示，就会形成
             #   页面内容变 → 重发 → 又写一条日志 → 页面内容再变
-            # 的自反馈，OLED 会被反复重刷（实测 oled 调用量是全场第一，持续占着 relay
-            # 与串口，把用户命令挤到秒级）。
+            # 的自反馈，OLED 会被反复重刷（实测 oled 调用量是全场第一，持续占用串口，
+            # 把用户命令挤到秒级）。
             logs = [r for r in self.db.get_automation_logs(5)
                     if r.get("rule_id") != "oled_carousel"]
             if logs:
@@ -677,8 +679,8 @@ class AutomationEngine:
         return data
 
     def _oled_emit(self, line: int, text: str) -> None:
-        """轮播逐行下发；桥离线（且无 relay）时静默跳过。"""
-        if not self.bridge or (not self.bridge.online and not self.bridge.relay_url):
+        """轮播逐行下发；桥离线时静默跳过。"""
+        if not self.bridge or not self.bridge.online:
             return
         try:
             self.bridge.call_tool("oled", {"action": "show_text",
@@ -923,19 +925,19 @@ class AutomationEngine:
             return False, msg
         if device == "voice":
             # 语音助手自带 HTTP 触发口：wake 免唤醒词进入指令模式（遥控器按键 1
-            # 之类的「半自动」就是这条），say 直接让它播报/执行一句话
-            if self.bridge is None or not getattr(self.bridge, "relay_url", ""):
-                return False, "语音助手未配置（SMART_HOME_HW_RELAY）"
+            # 之类的「半自动」就是这条），say 直接让它播报/执行一句话。
+            # 与串口无关，独立经 voice_client 直达 :8101。
             act = action.get("action") or "wake"
+            base = voice_client.resolve_voice_url(self._cfg)
             if act == "wake":
-                ok, msg = self.bridge.voice_request("/trigger")
+                ok, msg = voice_client.voice_request(base, "/trigger")
                 return (True, "语音助手已唤醒") if ok else (False, msg)
             text = str(action.get("text") or "").strip()
             if not text:
                 return False, "语音指令文本不能为空"
-            ok, msg = self.bridge.voice_request("/say", {"text": text})
+            ok, msg = voice_client.voice_request(base, "/say", {"text": text})
             return (True, f"语音助手已接收：{text}") if ok else (False, msg)
-        if not self.bridge or not self.bridge.online and not self.bridge.relay_url:
+        if not self.bridge or not self.bridge.online:
             return False, "硬件桥离线"
         if device in ("door", "window"):
             # 积木动作用 open/close（窗另有 normal=45°）；DB 与页面约定 open/closed/normal

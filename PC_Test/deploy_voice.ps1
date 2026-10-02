@@ -74,8 +74,8 @@ if (Test-LlamaSmoke) {
 }
 
 if (-not $engineOk) {
-    Warn "本地推理引擎未就绪。可改用百炼云端模式："
-    Warn "  把百炼 Key 粘贴到 dashscope_key.txt（llm.mode 无需改，启动器会自动切换）"
+    Warn "本地推理引擎未就绪。可改用云端模式（默认硅基流动）："
+    Warn "  把 Key 粘贴到 llm_key.txt（llm.mode 无需改，启动器会自动切换）"
 }
 
 # ── 4. 下载 Sherpa-ONNX 语音模型（KWS + ASR + TTS，国内镜像）──
@@ -91,10 +91,10 @@ $checkExit = $LASTEXITCODE
 Write-Host ""
 if ($checkExit -eq 0) {
     Write-Host "部署完成！启动语音助手：" -ForegroundColor Green
-    Write-Host "    双击 start_voice.bat（自动拉起本地 Qwen 服务）" -ForegroundColor Green
-    Write-Host "    或：py -3.13 qwen_server.py ; py -3.13 voice_assistant.py" -ForegroundColor Green
+    Write-Host "    双击 start_voice.bat（自动拉起 Web 硬件网关，本地模式还会拉起 Qwen）" -ForegroundColor Green
+    Write-Host "    或完整栈： py -3.13 start_all.py    （Web:5000 + 语音:8101 + 摄像头:8080）" -ForegroundColor Green
 } else {
     Write-Host "自检有失败项，请按上方提示修复后重试。" -ForegroundColor Yellow
-    Write-Host "提示：若只是未插 Arduino 板（串口项失败），插上后可直接启动。" -ForegroundColor Yellow
+    Write-Host "提示：设备控制需要 Web 网关在线（自检里『硬件网关』项失败=run_web 未起或未插 A/B 板）。" -ForegroundColor Yellow
 }
 exit $checkExit

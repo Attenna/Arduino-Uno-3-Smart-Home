@@ -263,7 +263,7 @@ class OledCarousel:
         #
         # 旧实现只把当前页的行记进 _last_lines，越界行永远读到 None（≠ ""），
         # 所以每次切页都把多余行重清一遍——实测每 5s 白发 3~7 条 oled 命令，
-        # 白占 relay 与串口（用户命令被挤在后面）。
+        # 白占串口（用户命令被挤在后面）。
         prev = (self._last_lines + [""] * rows)[:rows]
         target = (rendered + [""] * rows)[:rows]
         for line_no in range(rows):

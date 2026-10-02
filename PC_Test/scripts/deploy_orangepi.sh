@@ -110,12 +110,12 @@ if [ -d /dev/snd ]; then
   ok "ALSA 声卡存在: /dev/snd"
   command -v arecord >/dev/null 2>&1 && arecord -l 2>/dev/null | grep -E '^card|设备|device' | head -4
 else
-  warn "未发现 /dev/snd（无音频设备；语音对话不可用，但硬件网关 /tool 正常）"
+  warn "未发现 /dev/snd（无音频设备；语音对话不可用，但 web 硬件网关 /api/hardware/tool 正常）"
 fi
 
 echo "================ 4. 模型文件 ================"
 need=(
-  "models/qwen/qwen2.5-3b-instruct-q4_k_m.gguf:本地 LLM（约 2GB；用 dashscope 云端可不要）"
+  "models/qwen/qwen2.5-3b-instruct-q4_k_m.gguf:本地 LLM（约 2GB；用硅基流动等云端可不要）"
   "models/face/yolov8n-face.pt:人脸检测"
   "models/face/recognition.onnx:ArcFace 人脸识别（约 174MB）"
   "models/sherpa/kws/tokens.txt:语音唤醒（文件名以实际为准，检查目录）"
@@ -153,16 +153,20 @@ fi
 echo "================ 完成 ================"
 cat <<'EOF'
 下一步（在 PC_Test 目录）：
-  1. 本地 LLM（较慢，香橙派 RK3588 CPU 约 5~10 tok/s，首次构建编译 llama 约 20~40 分钟）：
-       sudo docker compose up -d --build
-  2. 或用云端 LLM（推荐香橙派使用，免本地 3B、构建快很多）：
-       echo 'DASHSCOPE_API_KEY=sk-xxxx' >> .env
-       sudo docker compose -f docker-compose.yml -f docker-compose.dashscope.yml up -d --build
-  3. 首次部署注册人脸（新增人员后同样重跑并重启 web）：
-       sudo docker compose exec web python scripts/enroll_faces.py
-       sudo docker compose restart web
-  4. 查看：
-       sudo docker compose ps
-       sudo docker compose logs -f voice web
-  访问：  http://香橙派IP:5000  仪表盘/人脸 | :8080 摄像头 | :8101 语音控制台
+  默认走云端 LLM（推荐香橙派使用，免本地 3B、构建快很多；语音不再抢串口）：
+    1. 在 .env 填入 LLM_API_KEY=sk-xxxx（硅基流动 Key；用阿里云百炼则同时把
+       LLM_MODE 改成 dashscope、LLM_MODEL 改成 qwen-plus）
+    2. sudo docker compose up -d --build
+       # web 容器独占 A/B 串口并做硬件网关；voice 纯 HTTP 客户端；qwen 默认不启动
+
+  离线 fallback（无云端 Key，在香橙派本地跑 3B GGUF，首次编译 llama 约 20~40 分钟）：
+    sudo docker compose -f docker-compose.yml -f docker-compose.local-llm.yml up -d --build
+
+  首次部署注册人脸（新增人员后同样重跑并重启 web）：
+    sudo docker compose exec web python scripts/enroll_faces.py
+    sudo docker compose restart web
+  查看：
+    sudo docker compose ps
+    sudo docker compose logs -f web voice
+  访问：  http://香橙派IP:5000  仪表盘/人脸/硬件网关 | :8080 摄像头 | :8101 语音控制台
 EOF

@@ -1,5 +1,6 @@
-# voice_assistant.py —— 语音助手（Sherpa-ONNX KWS/ASR/TTS）+ 内置 MCP 串口客户端
-# 本容器独占 Arduino 串口（compose 里以 devices 透传 /dev/ttyUSB* 或 /dev/ttyACM*）。
+# voice_assistant.py —— 语音助手（Sherpa-ONNX KWS/ASR/TTS）
+# 本轮重构后本容器不再碰串口：硬件控制经 web 网关 HTTP（SMART_HOME_WEB_URL →
+# /api/hardware/tool），默认走云端 LLM，本地 llama.cpp 仅作离线 fallback。
 FROM python:3.12-slim
 
 # libportaudio2 = sounddevice 麦克风采集；libsndfile1 = 音频文件读写
@@ -23,5 +24,6 @@ HEALTHCHECK --interval=20s --timeout=8s --start-period=90s --retries=5 \
     CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8101/state',timeout=5).status==200 else 1)"
 
 ENTRYPOINT ["tini", "--"]
-# LLM 地址/串口/麦克风由 compose 环境变量注入（SMART_HOME_LLM_BASE_URL 等）
-CMD ["python", "-u", "voice_assistant.py", "--llm-mode", "local"]
+# LLM 模式/地址/网关/麦克风均由 compose 环境变量注入（SMART_HOME_LLM_MODE 等）。
+# 默认云端（硅基流动）；离线改走 local-llm override。
+CMD ["python", "-u", "voice_assistant.py"]

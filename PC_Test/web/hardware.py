@@ -1,15 +1,17 @@
-"""MCP 硬件桥：web 服务经 MCP 子进程独占访问 A/B 板串口。
+"""MCP 硬件桥：web 服务经 MCP 子进程独占访问 A/B 板串口，是全系统唯一硬件网关。
 
-串口单进程约束：web 服务本身绝不能直接打开 COM 口，否则会与 mcp_home_server
-抢串口。本桥在独立线程的 asyncio 循环里以 stdio MCP client 身份拉起
-``mcp_home_server.py``（与 voice_assistant 完全相同的方式）：
+串口单进程约束：其他进程（语音助手等）绝不能直接打开 COM 口。web 服务拉起
+``mcp_home_server.py`` stdio 子进程独占串口，并把硬件能力经 HTTP 开放出去：
+外部调用者走 ``GET /api/hardware/tools`` + ``POST /api/hardware/tool``
+（见 api/devices.py），不需要知道 MCP 与串口层的存在。
 
     Flask 路由 ──(线程安全 future)──▶ 本桥 ──MCP stdio──▶ mcp_home_server
                                                        ├─ Module B 执行器
                                                        └─ Module A 传感器快照
 
 后台每 sensor_poll_interval 秒调用一次 get_sensor_status，把 A 板新快照写入
-SQLite（Web 仪表盘看到的温湿度/门灯状态全部来自真实硬件，而非按钮点击）。
+SQLite（Web 仪表盘看到的温湿度/门灯状态全部来自真实硬件，而非按钮点击）；
+每 readback_interval 秒做一次 B 板回读/串口健康度刷新与复位对账。
 MCP 子进程退出时自动指数退避重连。
 """
 from __future__ import annotations
@@ -17,12 +19,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import sys
 import threading
 import time
-import urllib.error
-import urllib.request
 from collections import deque
 
 from .config import MCP_SERVER_PATH, PC_TEST_DIR
@@ -99,6 +98,30 @@ def readback_status(readback: dict) -> dict:
     return out
 
 
+def normalize_output_state(state: dict) -> dict | None:
+    """把 B 板 state 帧的原始电平（fan 0/255、light 0~255）归一化成 rb_* 字段。
+
+    换算成百分比/文本后才能和 db.fan_speed、light_brightness 直接对比。
+    state 为空返回 None，绝不写坏数据。
+    """
+    if not state:
+        return None
+
+    def _pct(raw, full):
+        try:
+            return max(0, min(100, round(int(raw) * 100 / full)))
+        except (TypeError, ValueError):
+            return None
+
+    return {
+        "rb_fan_speed": _pct(state.get("fan"), 255),
+        "rb_light_brightness": _pct(state.get("light"), 255),
+        "rb_door_status": state.get("door"),
+        "rb_window_status": state.get("window"),
+        "rb_buzzer_status": state.get("buzzer"),
+    }
+
+
 class McpHardwareBridge:
     def __init__(self, cfg: dict, db):
         self.db = db
@@ -110,11 +133,8 @@ class McpHardwareBridge:
         # B 板硬件回读轮询间隔：与 voice 侧心跳（10s）同频即可——回读值来自心跳
         # 缓存的 state 帧，这里只是搬运，不额外占用串口。
         self.readback_interval = float(cfg.get("readback_interval", 10.0))
-        # 串口归语音助手时（如 start_all 联动启动），硬件调用经其 POST /tool 转发。
-        # 环境变量 SMART_HOME_HW_RELAY 优先，其次 web_config.yaml: door.relay_url。
-        relay = (os.environ.get("SMART_HOME_HW_RELAY")
-                 or cfg.get("door", {}).get("relay_url") or "")
-        self.relay_url = str(relay).rstrip("/")
+        # MCP 工具的 OpenAI function schema（连接后 list_tools 缓存，供网关 API）
+        self.tool_schemas: list[dict] = []
 
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
@@ -123,9 +143,6 @@ class McpHardwareBridge:
         self._session = None
         self._call_lock: asyncio.Lock | None = None
         self._snapshot_lock = threading.Lock()
-        # relay（web → voice /tool）通道必须串行：所有命令共用同一条 USB 串口，
-        # 并发请求会在 A/B 板侧交错导致 ACK 超时与状态错乱（实测门连点触发雪崩）。
-        self._relay_lock = threading.Lock()
         self._online = False
         self._last_error = ""
         self._last_sensor_ts = None
@@ -170,16 +187,7 @@ class McpHardwareBridge:
 
     def start(self) -> None:
         if not self.enabled:
-            if self.relay_url:
-                # 串口归语音进程（Docker 联动/start_all 模式）：不拉 MCP 子进程，
-                # 改由独立线程经 relay HTTP 周期拉取 A 板快照并入库 + 转发控制。
-                self._thread = threading.Thread(target=self._relay_poll_loop,
-                                                name="hw-relay-poll", daemon=True)
-                self._thread.start()
-                logger.info("[硬件桥] relay 轮询模式: %s（每 %.0fs）",
-                            self.relay_url, self.poll_interval)
-            else:
-                logger.info("[硬件桥] serial.enabled=false，不拉 MCP 子进程（看板模式）")
+            logger.info("[硬件桥] serial.enabled=false，不拉 MCP 子进程（看板模式）")
             return
         self._thread = threading.Thread(target=self._thread_main,
                                         name="mcp-hardware-bridge", daemon=True)
@@ -202,6 +210,15 @@ class McpHardwareBridge:
         finally:
             self._loop.close()
 
+    @staticmethod
+    def _poll_interval(failures: int, base: float, cap: float = 30.0) -> float:
+        """连续失败次数 → 下次重连等待秒数：base 起步指数退避，封顶 cap。
+
+        串口/USB 可能暂不可用（未插/换口/驱动恢复中），按 2/4/8/16/30s 退避重试，
+        连上后归零。`failures` 从 0 起（首轮等 base 秒）。
+        """
+        return min(base * (2 ** max(0, failures)), cap)
+
     async def _supervise(self) -> None:
         """维护 MCP stdio 连接；断开/串口被占用时退避重连。"""
         from mcp import ClientSession, StdioServerParameters
@@ -213,10 +230,11 @@ class McpHardwareBridge:
         if self.port_b and self.port_b != "auto":
             args += ["--port-b", self.port_b]
 
-        backoff = 1.0
+        reconnect_round = 0
         while not self._stopping:
             params = StdioServerParameters(
                 command=sys.executable, args=args, cwd=str(PC_TEST_DIR))
+            wait: float | None = None
             try:
                 logger.info("[硬件桥] 启动 MCP 子进程: %s %s", sys.executable,
                             " ".join(args))
@@ -226,8 +244,14 @@ class McpHardwareBridge:
                         self._set_online(True)
                         self._call_lock = asyncio.Lock()
                         self._session = session
-                        backoff = 1.0
+                        reconnect_round = 0
                         tools = await session.list_tools()
+                        self.tool_schemas = [{
+                            "name": t.name,
+                            "description": t.description or "",
+                            "parameters": t.inputSchema or {
+                                "type": "object", "properties": {}},
+                        } for t in tools.tools]
                         logger.info("[硬件桥] MCP 已连接，工具: %s",
                                     [t.name for t in tools.tools])
                         await self._poll_loop(session)
@@ -235,14 +259,18 @@ class McpHardwareBridge:
                 raise
             except Exception as e:
                 self._last_error = str(e)
+                wait = self._poll_interval(reconnect_round, self.poll_interval)
                 logger.warning("[硬件桥] MCP 连接断开: %s（%.0fs 后重连）",
-                               e, backoff)
+                               e, wait)
             finally:
                 self._set_online(False)
                 self._session = None
-            # 串口可能正被语音模式占用，等待后重试
-            await asyncio.sleep(backoff)
-            backoff = min(backoff * 2, 30.0)
+                self.tool_schemas = []
+            if wait is None:
+                # _poll_loop 正常返回（多为收到停止信号），不额外等待
+                continue
+            await asyncio.sleep(wait)
+            reconnect_round += 1
 
     def _set_online(self, value: bool, error: str = "") -> None:
         with self._snapshot_lock:
@@ -252,6 +280,7 @@ class McpHardwareBridge:
     # ==================== 传感器轮询入库 ====================
 
     async def _poll_loop(self, session) -> None:
+        last_readback = 0.0
         while not self._stopping:
             await asyncio.sleep(self.poll_interval)
             try:
@@ -267,87 +296,34 @@ class McpHardwareBridge:
                 continue
             self._ingest_snapshot(payload.get("data") or {})
             self._ingest_events(payload.get("recent_events") or [])
+            if time.time() - last_readback >= self.readback_interval:
+                last_readback = time.time()
+                await self._readback_tick(session)
 
-    def _relay_poll_loop(self) -> None:
-        """relay 模式：串口在语音进程，本线程只做 HTTP 周期轮询 + 入库。
+    async def _readback_tick(self, session) -> None:
+        """低频节拍：刷新串口健康度 + B 板实际电平，随后做复位对账/未生效审计。
 
-        控制指令走 call_tool → _relay_call（Flask 请求线程同步调用），
-        本线程负责把 A 板传感器快照/事件持续写进 SQLite，供仪表盘展示。
-        voice 不可用时按指数退避（2→4→…→30s），避免故障期高频打爆/刷日志。
+        回读值来自 MCP 心跳缓存的 state 帧，这里只是搬运，不额外占用串口。
+        取不到就保持旧值：宁可让页面显示「离线」，也不拿坏数据写库。
         """
-        fail_streak = 0
-        last_readback = 0.0
-        while not self._stopping:
-            ok, text = self._relay_call("get_sensor_status", {}, timeout=15)
-            if ok:
-                fail_streak = 0
-                self._set_online(True)
-                try:
-                    payload = json.loads(text)
-                    self._ingest_snapshot(payload.get("data") or {})
-                    self._ingest_events(payload.get("recent_events") or [])
-                except json.JSONDecodeError:
-                    pass
-                # 硬件回读（低频）：把 B 板实际电平写进 rb_* 列，供面板对比出不一致
-                if time.time() - last_readback >= self.readback_interval:
-                    last_readback = time.time()
-                    self._refresh_serial_health()
-                    readback = self.read_output_state()
-                    if readback:
-                        try:
-                            self.db.set_output_readback(readback)
-                        except Exception as e:           # noqa: BLE001
-                            logger.debug("[硬件桥] 硬件回读写库失败: %s", e)
-                        # 回读新鲜：顺手做复位对账 / 「命令成功但状态未变」审计
-                        self._after_readback(readback)
-            else:
-                fail_streak += 1
-                self._set_online(False, text)
-            # 成功按 poll_interval；连续失败指数退避，封顶 30s（可中断睡眠）
-            interval = self._poll_interval(fail_streak, self.poll_interval)
-            waited = 0.0
-            while not self._stopping and waited < interval:
-                time.sleep(0.2)
-                waited += 0.2
-
-    @staticmethod
-    def _poll_interval(fail_streak: int, base: float) -> float:
-        """轮询节拍：成功 base 秒；第 n 次连续失败 base*2^n，封顶 30s。"""
-        if fail_streak <= 0:
-            return float(base)
-        return min(float(base) * (2 ** fail_streak), 30.0)
-
-    def read_output_state(self) -> dict | None:
-        """读 B 板「硬件回读」快照，归一化成与命令下发值同构的 rb_* 字段。
-
-        B 板的 state 帧给的是原始电平（fan 0/255、light 0~255、door open/closed），
-        这里换算成百分比/文本，才能和 db.fan_speed、light_brightness 直接对比。
-        取值失败返回 None，绝不写坏数据。
-        """
-        ok, text = self.call_tool("get_output_state", {}, timeout=5)
-        if not ok:
-            return None
         try:
-            payload = json.loads(text)
-        except json.JSONDecodeError:
-            return None
-        state = payload.get("state") or {}
-        if not state:
-            return None
-
-        def _pct(raw, full):
-            try:
-                return max(0, min(100, round(int(raw) * 100 / full)))
-            except (TypeError, ValueError):
-                return None
-
-        return {
-            "rb_fan_speed": _pct(state.get("fan"), 255),
-            "rb_light_brightness": _pct(state.get("light"), 255),
-            "rb_door_status": state.get("door"),
-            "rb_window_status": state.get("window"),
-            "rb_buzzer_status": state.get("buzzer"),
-        }
+            health = json.loads(await self._call(session, "get_serial_health", {}))
+            self.serial_health = health if isinstance(health, dict) else None
+            state = (json.loads(await self._call(session, "get_output_state", {}))
+                     or {}).get("state") or {}
+        except Exception as e:                            # noqa: BLE001
+            logger.debug("[硬件桥] 回读/健康度刷新失败: %s", e)
+            return
+        readback = normalize_output_state(state)
+        if not readback:
+            return
+        try:
+            self.db.set_output_readback(readback)
+        except Exception as e:                            # noqa: BLE001
+            logger.debug("[硬件桥] 硬件回读写库失败: %s", e)
+            return
+        # 回读新鲜：顺手做复位对账 / 「命令成功但状态未变」审计
+        self._after_readback(readback)
 
     def _after_readback(self, readback: dict) -> None:
         """一次回读节拍的后处理：复位对账 与「命令未生效」审计，二者互斥。
@@ -361,20 +337,6 @@ class McpHardwareBridge:
                                         boot=prev_inst is None or inst != prev_inst)
         else:
             self._audit_unapplied()
-
-    def _refresh_serial_health(self) -> None:
-        """低频刷新串口健康度缓存（get_serial_health），供 /api/status 与复位判定。
-
-        取不到就置空：宁可让页面显示「离线」，也不拿旧健康度冒充现状。
-        """
-        ok, text = self.call_tool("get_serial_health", {}, timeout=5)
-        health = None
-        if ok:
-            try:
-                health = json.loads(text)
-            except json.JSONDecodeError:
-                health = None
-        self.serial_health = health if isinstance(health, dict) else None
 
     def _b_reset_state(self) -> tuple:
         """取 (上次实例, 上次计数, 本次实例, 本次计数, 距上次复位秒数)，并推进基线。
@@ -605,12 +567,11 @@ class McpHardwareBridge:
                   timeout: float = 10.0) -> tuple[bool, str]:
         """线程安全地调用 MCP 工具，返回 (是否成功, 结果文本)。
 
-        本桥在线时直接走自有 MCP 子进程；本桥离线（如 --no-serial 联动模式）
-        但配置了 relay_url 时，转发给语音助手的 POST /tool 静默执行。
+        外部系统（语音助手等）经 /api/hardware/tool 过来的调用最终也走这里，
+        由本桥的 asyncio.Lock 串行化——所有设备共用 USB 串口，并发请求会在
+        A/B 板侧交错导致 ACK 超时与状态错乱（实测门连点触发雪崩）。
         """
         if not self.online or self._session is None or self._loop is None:
-            if self.relay_url:
-                return self._relay_call(name, args or {}, timeout=timeout)
             return False, f"硬件服务离线（MCP 未连接：{self.last_error or '串口未连接'}）"
         try:
             future = asyncio.run_coroutine_threadsafe(
@@ -621,78 +582,6 @@ class McpHardwareBridge:
         if _looks_like_error(text):
             return False, text
         # B 板不自报状态：任何执行器工具成功 ACK 都视为输出板在线
-        self._fire_ack(name, args or {})
-        return True, text
-
-    # ==================== 语音助手联动（面板 → 语音） ====================
-    # 语音助手（voice_assistant.py）自带 TriggerHTTPServer：/trigger 免唤醒词直接
-    # 进入指令模式，/state 查状态，/say 直接下发文本指令。它的地址就是 relay 地址
-    # （两个部署形态都由 SMART_HOME_HW_RELAY 指向语音助手）。
-
-    def voice_request(self, path: str, payload: dict | None = None,
-                      timeout: float = 3.0) -> tuple[bool, str]:
-        """请求语音助手 HTTP 接口，返回 (是否成功, 文本)。未配置 relay 时明确失败。"""
-        if not self.relay_url:
-            return False, "未配置语音助手地址（SMART_HOME_HW_RELAY / door.relay_url）"
-        url = f"{self.relay_url}{path}"
-        data = json.dumps(payload).encode("utf-8") if payload is not None else None
-        req = urllib.request.Request(
-            url, data=data,
-            headers={"Content-Type": "application/json",
-                     "X-Trigger-Source": "web"},
-            method="POST" if data is not None else "GET")
-        try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                body = json.loads(resp.read().decode("utf-8"))
-        except urllib.error.HTTPError as e:
-            try:
-                body = json.loads(e.read().decode("utf-8"))
-                return False, str(body.get("error") or f"语音助手 HTTP {e.code}")
-            except Exception:
-                return False, f"语音助手 HTTP {e.code}"
-        except Exception as e:
-            return False, f"语音助手不可达（{self.relay_url}）: {e}"
-        if not body.get("ok", True):
-            return False, str(body.get("error") or "语音助手拒绝了请求")
-        return True, json.dumps(body, ensure_ascii=False)
-
-    def _relay_call(self, name: str, args: dict, timeout: float = 10.0) -> tuple[bool, str]:
-        """经语音助手 POST /tool 转发硬件调用（串口归语音进程时的联动通道）。
-
-        全局串行：所有设备共用一条串口，排队等锁（最多 timeout），拿不到锁
-        快速失败，避免慢指令（舵机/红外数秒）期间请求在串口上交错雪崩。
-        """
-        if not self._relay_lock.acquire(timeout=timeout):
-            return False, "硬件正忙（上一条指令尚未执行完），请稍后再试"
-        try:
-            return self._relay_call_locked(name, args, timeout)
-        finally:
-            self._relay_lock.release()
-
-    def _relay_call_locked(self, name: str, args: dict,
-                           timeout: float) -> tuple[bool, str]:
-        url = f"{self.relay_url}/tool"
-        payload = json.dumps({"name": name, "arguments": args}).encode("utf-8")
-        req = urllib.request.Request(
-            url, data=payload,
-            headers={"Content-Type": "application/json"}, method="POST")
-        try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                body = json.loads(resp.read().decode("utf-8"))
-        except urllib.error.HTTPError as e:
-            try:
-                body = json.loads(e.read().decode("utf-8"))
-                return False, body.get("error") or body.get("result") or f"relay HTTP {e.code}"
-            except Exception:
-                return False, f"硬件联动失败: relay HTTP {e.code}"
-        except Exception as e:
-            return False, f"硬件联动失败（语音助手不可达 {self.relay_url}）: {e}"
-        if not body.get("ok"):
-            return False, str(body.get("error") or body.get("result") or "硬件联动被拒绝")
-        # relay 的 ok 只代表「工具被调用」，B 板超时等失败会写在 result 里
-        text = str(body.get("result") or "ok")
-        if _looks_like_error(text):
-            return False, text
         self._fire_ack(name, args or {})
         return True, text
 

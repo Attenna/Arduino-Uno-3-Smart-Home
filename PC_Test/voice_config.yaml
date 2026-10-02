@@ -1,23 +1,39 @@
-# 语音交互模式配置 —— voice_assistant.py / mcp_home_server.py / qwen_server.py 共用
+# 语音交互模式配置 —— voice_assistant.py 读取（mcp/qwen 相关项已随重构调整）
 # 命令行参数会覆盖本文件里的同名字段。
 # 复制为 voice_config.local.yaml 做个人定制（已被 .gitignore 忽略）。
 
-# ── 串口（auto = 自动探测；Module A=传感器，Module B=执行器）──
-serial:
-  port_a: auto        # 传感器板，如 COM7
-  port_b: auto        # 执行器板，如 COM6
+# ── web 硬件网关（本进程不碰串口/MCP，硬件动作全部经 HTTP 走这里）──
+# 环境变量 SMART_HOME_WEB_URL 优先（Docker 里为 http://web:5000）。
+gateway:
+  url: "http://127.0.0.1:5000"
 
-# ── LLM 引擎：Qwen2.5（国内合规，已移除 Ollama）──
-# mode=local      ：本地推理（离线，qwen_server.py 提供服务），权重经魔搭 ModelScope 下载
-# mode=dashscope  ：阿里云百炼 OpenAI 兼容端点（国内云服务，需 API Key）
+# ── LLM 引擎：默认外部 API（硅基流动 SiliconFlow，OpenAI 兼容，比本地推理快一个量级）──
+# mode=siliconflow：硅基流动云端（默认）——Key 申请 https://cloud.siliconflow.cn/account/ak
+# mode=dashscope  ：阿里云百炼云端（备选，OpenAI 兼容）
+# mode=local      ：本地推理（离线 fallback，qwen_server.py 提供服务）
+# Key 来源三选一，优先级从高到低：本文件 api_key > 环境变量 LLM_API_KEY /
+# SILICONFLOW_API_KEY / DASHSCOPE_API_KEY > 密钥文件 PC_Test/llm_key.txt
 llm:
-  mode: "local"
-  base_url: "http://127.0.0.1:8000/v1"        # local 模式：qwen_server.py 监听地址
-  # base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"  # dashscope 模式改用这行
-  api_key: "none"       # dashscope 模式填百炼 API Key（或设环境变量 DASHSCOPE_API_KEY）；local 无需
-  model: "qwen2.5-3b-instruct-q4_k_m"   # local=GGUF 文件名去 .gguf；dashscope 改 "qwen2.5-3b-instruct"
+  mode: "siliconflow"
+  base_url: "https://api.siliconflow.cn/v1"
+  api_key: "none"       # 留 none，把 sk-xxx 单独写进 llm_key.txt（已 gitignore）更安全
+  model: "Qwen/Qwen3.5-4B"   # 硅基流动模型广场里的 id（带组织前缀）；换名去广场复制
+  # api_key_file: "llm_key.txt"   # 相对 PC_Test 或绝对路径；默认已按 llm_key.txt →
+  #                                siliconflow_key.txt → dashscope_key.txt 依次找
+  # 附加请求体参数（每次 /chat/completions 都合并进去）。siliconflow 已在代码里默认关思考：
+  #   {"enable_thinking": false}
+  # Qwen3.5 属思考型模型，开着思考会先把 reasoning_content 流完才出正文，首字延迟 20~60s；
+  # 硅基流动只认顶层 enable_thinking，vLLM 那套 chat_template_kwargs 它不认。
+  # 想改回思考模式或给别的 mode 加参数就在这里覆盖，例如：
+  # extra_body:
+  #   enable_thinking: true
+  #   max_tokens: 512
+  # 切百炼：mode: "dashscope"，base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"，
+  #         model: "qwen-plus"
+  # 切本地：mode: "local"，base_url: "http://127.0.0.1:8000/v1"，
+  #         model: "qwen2.5-3b-instruct-q4_k_m"
   system_prompt: |
-    你是智能家居语音助手，控制一台通过串口连接的 Arduino 智能家居模型。
+    你是智能家居语音助手，控制一台经 web 硬件网关连接的 Arduino 智能家居模型。
     规则：
     1) 涉及硬件操作（灯/门/窗/风扇/蜂鸣器/OLED/数码管）必须调用对应工具，禁止编造执行结果。
     2) 查询当前状态（温度、湿度、是否有人等）必须先调 get_sensor_status，再用真实数据回答。
@@ -25,15 +41,17 @@ llm:
     4) 不确定用户意图时简短反问，不要乱调设备。
     设备能力：门、窗、风扇（可调速）、RGB 灯、蜂鸣器、OLED 屏、数码管、红外发射。
   local:                # mode=local 时生效（qwen_server.py 读取）
-    gguf_path: "models/qwen/qwen2.5-3b-instruct-q4_k_m.gguf"  # 3B-Q4 ~2GB，工具调用成功率显著高于 1.5B
+    gguf_path: "models/qwen/qwen2.5-3b-instruct-q4_k_m.gguf"  # 3B-Q4 ~2GB
     n_ctx: 8192         # 上下文长度
     n_threads: 0        # CPU 线程数，0=自动
-    n_gpu_layers: 0     # 目标机香橙派 AI Pro（昇腾 NPU，llama.cpp 不支持）→ 纯 CPU；0
+    n_gpu_layers: 0     # 香橙派 AI Pro（昇腾 NPU，llama.cpp 不支持）→ 纯 CPU；0
     port: 8000
+
+# ── 多轮对话上下文（保留最近 N 轮 user/assistant，追问有记忆；0=每句独立）──
+history_rounds: 4
 
 # ── Sherpa-ONNX 语音前端（KWS 唤醒 + 流式 ASR + 本地 TTS，全离线，香橙派 CPU 可实时）──
 # 模型下载: py -3.13 download_sherpa_models.py
-# 香橙派 AI Pro 的昇腾 NPU 暂不走（Sherpa ACL 后端面向 910 系列），全链路 CPU + INT8 即可。
 sherpa:
   provider: "cpu"       # sherpa 引擎推理后端（cpu；INT8 模型在香橙派多核 ARM 上足够实时）
   num_threads: 2        # KWS/ASR 推理线程（香橙派可试 4）
@@ -71,15 +89,16 @@ wake:
 # ── 手动输入通道（键盘文字对话/空行语音触发；HTTP 供香橙派按钮/手机/外部程序接入）──
 trigger:
   keyboard: true         # 终端里打字回车=文本指令；空回车=开启语音监听（不想误触可关）
-  http: true             # 开启 HTTP 接口
+  http: true             # 开启 HTTP 接口（控制台网页 + /trigger /say /state /events）
   host: "0.0.0.0"        # 监听地址（0.0.0.0=局域网可访问；127.0.0.1=仅本机）
   port: 8101
   # 用法：
-  #   浏览器开 http://<香橙派IP>:8101/  点按钮开语音，或直接输入文字发送
+  #   浏览器开 http://<香橙派IP>:8101/  聊天式控制台（点麦克风或直接打字，对话实况流）
   #   开语音监听: curl http://<香橙派IP>:8101/trigger
   #   直接下发文本指令: curl -X POST http://<香橙派IP>:8101/say -H "Content-Type: application/json" -d "{\"text\":\"把灯打开\"}"
   #                    curl "http://<香橙派IP>:8101/say?text=把灯打开"
-  #   GPIO 按钮守护进程：按下时 curl /trigger；其他系统要控家直接 POST /say
+  #   对话实况（SSE）: curl -N http://<香橙派IP>:8101/events
+  #   GPIO 按钮守护进程：按下时 curl /trigger；其他系统要对话直接 POST /say
 
 # ── 麦克风 ──
 mic:

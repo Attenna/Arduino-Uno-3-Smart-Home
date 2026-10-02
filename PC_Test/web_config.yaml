@@ -5,8 +5,9 @@ server:
   host: "0.0.0.0"     # 局域网可访问；仅本机用 127.0.0.1
   port: 5000
 
-# 硬件链路：web 不直接开串口，而是拉起 mcp_home_server.py 子进程（MCP stdio）。
-# 串口同一时刻只能被一个进程占用——运行本服务时不要同时运行语音模式。
+# 硬件链路：web 是全系统唯一硬件网关——本进程拉起 mcp_home_server.py 子进程
+# （MCP stdio）独占 A/B 串口；语音助手等外部调用者经 HTTP
+# （GET /api/hardware/tools + POST /api/hardware/tool）使用硬件，不碰串口。
 serial:
   enabled: true       # false = 纯看板/演示模式（设备控制接口返回 503）
   port_a: auto        # Module A 传感器，如 COM7
@@ -18,10 +19,11 @@ sensor_poll_interval: 2.0
 door:
   # 香橙派推送人脸识别成功（/api/face/notify）后自动经 MCP 开门
   open_on_face_grant: true
-  # 串口归语音助手时（start_all.py 联动栈，本服务 --no-serial），
-  # 硬件控制/人脸开门转发到语音助手的 POST /tool（静默，不经语音播报）。
-  # start_all.py 会用环境变量 SMART_HOME_HW_RELAY 自动注入；手动联跑时可在此填写。
-  # relay_url: "http://127.0.0.1:8101"
+
+# ── 语音助手 HTTP 服务（面板「语音」页与自动化「语音」动作的代理目标）────
+# 环境变量 SMART_HOME_VOICE_URL 优先（Docker 里为 http://voice:8101）。
+voice:
+  url: "http://127.0.0.1:8101"
 
 # ── 摄像头实时画面（人脸识别页面 /api/camera/stream 同源代理）──────────────
 # 环境变量 SMART_HOME_CAMERA_URL 优先于这里（Docker 里为 http://camera:8080/video_feed，

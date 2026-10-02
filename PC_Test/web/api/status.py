@@ -19,7 +19,6 @@ def get_status():
     status["hardware_bridge"] = {
         "enabled": bridge is not None and bridge.enabled,
         "online": bridge.online if bridge else False,
-        "relay": bridge.relay_url if bridge else None,
         "last_error": bridge.last_error if bridge else None,
     }
     status["device_mismatch"] = output_mismatch(status)

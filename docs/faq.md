@@ -57,20 +57,27 @@ ls -l /dev/serial/by-id/
 
 **Q8：首次 `docker compose build` 很慢？**
 
-qwen 镜像需要在 aarch64 上编译 llama.cpp，约 20~40 分钟，属正常现象。
-想更快可改用云端 LLM：叠加 `docker-compose.dashscope.yml`（免本地 3B，构建快、省内存）。
+默认编排**不构建** qwen 镜像——本地 LLM 在 `profiles: ["local-llm"]` 后面，默认走云端（硅基流动）。
+只有叠加 `docker-compose.local-llm.yml` 时才需要编译 llama.cpp，aarch64 上约 20~40 分钟，属正常现象。
 
 **Q9：香橙派跑不动本地 3B 模型？**
 
-在 `.env` 设置 `DASHSCOPE_API_KEY`，然后：
+不用跑：默认引擎就是云端（硅基流动 `Qwen/Qwen3.5-4B`，OpenAI 兼容）。在 `.env` 设置 `LLM_API_KEY` 后直接：
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.dashscope.yml up -d --build
+docker compose up -d --build
+```
+
+需要完全离线（无外网 / 不想用云端 Key）时，才叠加本地 LLM 覆盖文件：
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.local-llm.yml up -d --build
 ```
 
 **Q10：模型文件怎么准备？**
 
-- 在有网环境运行 `download_qwen.py`、`download_sherpa_models.py` 直接下载；
+- 在有网环境运行 `download_qwen.py`、`download_sherpa_models.py` 直接下载
+  （Sherpa 三件套必装；Qwen 权重只有走本地兜底、起了 `qwen` 容器时才需要）；
 - 或从 Windows 用 `scp` 把 `models/` 传到香橙派。
 模型不进镜像、不进 git，约 2.6GB，详见 [PC_Test/README.md](../PC_Test/README.md)。
 
@@ -87,7 +94,9 @@ docker compose -f docker-compose.yml -f docker-compose.dashscope.yml up -d --bui
 
 **Q12：串口报"拒绝访问" / PermissionError？**
 
-串口同一时刻只能被一个进程占用。关闭其他占用程序（其他 Python 进程、Arduino 串口监视器等）。
+串口同一时刻只能被一个进程占用。形态 B 里 A/B 口由 **web 服务拉起的 MCP 子进程独占**
+（语音助手完全不碰串口），所以只要 web 在跑，别的 Python 进程、`test_serial.py`、
+Arduino 串口监视器就都打不开同一组 COM 口。Linux 下报 Permission denied 则按 Q6 加 `dialout` 组。
 
 **Q13：板子反复重启（监视器刷多条 `ready`）？**
 
@@ -168,26 +177,40 @@ python voice_assistant.py --list-mic
 可以。终端直接打字回车；或调用 HTTP：`POST /say {"text":"把灯打开"}`、
 `GET /say?text=...`。Web 面板也提供等价按钮。
 
-**Q26：模型回答了但设备没动？**
+**Q26：语音回应要等十几秒，首字特别慢？**
+
+默认模型 `Qwen/Qwen3.5-4B` 是思考型模型，会先把「思考过程」（`reasoning_content`）
+流完才吐正文，实测首字 20~60s。代码里已对硅基流动默认带上顶层
+`enable_thinking: false`，实测首字降到 ~1s，工具调用不变。想改回思考模式或加别的
+请求参数，用 `llm.extra_body` 覆盖即可（注意硅基流动不认 vLLM 那套
+`chat_template_kwargs` 写法）。用 `--test-llm` 可以直接看耗时：
+
+```bash
+py -3.13 voice_assistant.py --test-llm "现在屋里有人吗"
+```
+
+**Q27：模型回答了但设备没动？**
 
 查看模型是否真正产生工具调用。小模型偶发只回文本或生成半截 JSON，重说一次即可；
-3B 模型工具调用成功率显著更高，建议作为默认。
+默认引擎已是云端（硅基流动 `Qwen/Qwen3.5-4B`，备选百炼 `qwen-plus`），工具调用成功率与速度都显著优于本地 3B，
+本地推理只作为离线兜底（`llm.mode: local`）。工具调用最终经 web 的
+`POST /api/hardware/tool` 下发，`/api/automation/logs`、历史记录里都能看到来源标注。
 
 ---
 
 ## 六、自动化
 
-**Q27：规则配置了却不触发？**
+**Q28：规则配置了却不触发？**
 
 - 确认规则已启用、冷却时间已过；
 - 用 `/api/automation/preview` 查看当前真实数据下触发/条件是否成立；
 - 传感器触发可设「持续 N 秒」，注意该条件是否过严。
 
-**Q28：误删了默认规则怎么办？**
+**Q29：误删了默认规则怎么办？**
 
 在自动化页点「恢复内置规则」，或调用 `POST /api/automation/rules/restore`。
 
-**Q29：全屋模式（自动/手动/离家）是怎么工作的？**
+**Q30：全屋模式（自动/手动/离家）是怎么工作的？**
 
 已经没有「全屋模式状态机」了——屋子处于什么模式，现在就是一个全局状态变量
 `g:全屋模式`（enum：auto/manual/away），由积木自己读写：
@@ -200,7 +223,7 @@ python voice_assistant.py --list-mic
 「📌 ＋ 新建状态」用一块顶层「状态定义」积木（名字 + 类型 + 当前值）建它，条目卡片只
 显示当前值，值本身由规则里的「设置全局状态」积木维护；读它则用条件里的「📌 状态」积木。
 
-**Q30：手动操作后为什么一会儿不被自动规则覆盖（手动优先）？**
+**Q31：手动操作后为什么一会儿不被自动规则覆盖（手动优先）？**
 
 面板/语音操作设备时，Web 会广播一个 `manual_control` 事件（不带任何设备专属策略）。
 内置的 `manual_mark_灯` 一类规则收到它，把 `g:手动优先_灯` 先置假、延时 3 秒再置真，
@@ -208,7 +231,7 @@ python voice_assistant.py --list-mic
 因为带着 `g:手动优先_灯 == 否` 的条件而让位。整套逻辑都是普通规则，可在页面上改时长、
 删掉或换成别的设备。
 
-**Q31：风扇为什么默认不自动开？**
+**Q32：风扇为什么默认不自动开？**
 
 风扇安全线：`temp_hot` 等「开风扇」的预设额外要求 `g:允许自动开风扇 == 是`，
 该变量默认为「否」，所以默认只有手动才会转风扇。点开列表页那条「📌 允许自动开风扇」条目，
@@ -218,7 +241,7 @@ python voice_assistant.py --list-mic
 自动开风扇的规则全部失效；② 自己新写的开风扇规则不会自动带这条线，需要放开自动化
 控制风扇时，请自己在规则里加上它。
 
-**Q32：OLED 轮播不更新 / 想关掉？**
+**Q33：OLED 轮播不更新 / 想关掉？**
 
 通过 `PUT /api/automation/oled` 修改 `enabled`、`interval`、`pages`。
 第二页的 Home Mode / Presence / Fan Auto 三个值直接读全局状态

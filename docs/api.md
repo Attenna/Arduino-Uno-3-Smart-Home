@@ -4,10 +4,12 @@
 
 | 服务 | 默认地址 | 使用者 |
 |------|---------|--------|
-| Web 仪表盘 REST API | `http://<host>:5000` | 前端 / 第三方程序 |
-| 语音助手 HTTP API | `http://<host>:8101` | Web 转发 / 外部系统 / 按钮 |
-| MCP 工具 | stdio（或经 `/tool`） | LLM / 语音助手 / Web |
-| 本地 LLM（OpenAI 兼容） | `http://<host>:8000/v1` | 语音助手 |
+| Web 仪表盘 REST API | `http://<host>:5000` | 前端 / 第三方程序 / 语音助手（硬件网关） |
+| 语音助手 HTTP API | `http://<host>:8101` | Web 同源代理 / 外部系统 / 按钮 |
+| 硬件工具网关 | `http://<host>:5000/api/hardware/*` | 语音助手 / 外部程序（与面板同权同账） |
+| MCP 工具 | stdio（Web 服务的子进程，独占 A/B 串口） | 仅 Web 内部 |
+| 云端 LLM（OpenAI 兼容，默认） | `https://api.siliconflow.cn/v1` | 语音助手（硅基流动；备选百炼 `https://dashscope.aliyuncs.com/compatible-mode/v1`） |
+| 本地 LLM（OpenAI 兼容，离线兜底） | `http://<host>:8000/v1` | 语音助手（`llm.mode: local`） |
 | 摄像头 MJPEG | `http://<host>:8080` | 浏览器 / Web 代理 |
 
 ---
@@ -27,18 +29,19 @@
 |------------|------|
 | 400 | 参数缺失 / 取值非法 |
 | 404 | 资源不存在 |
-| 502 | 经 Web 转发给语音助手的请求失败（上游返回非 2xx 或不可达） |
+| 502 | 上游/硬件执行失败：经 Web 转发给语音助手的请求失败（上游非 2xx 或不可达）、`POST /api/hardware/tool` 工具下发后硬件回失败 |
 | 503 | 依赖未就绪，**两种来源要分开看**（见下） |
 
-### 503 的两类含义
+### 503 的几类含义
 
 | 类别 | 触发条件 | 典型 `error` 文案 | 出现的接口 |
 |------|---------|------------------|-----------|
-| 硬件链路不可用 | 硬件桥未初始化 / 串口离线且无 relay / MCP 调用失败 / 上游摄像头、语音不可达 | `硬件服务未启动（硬件桥未初始化）`、`硬件控制失败`、`语音助手未配置（SMART_HOME_HW_RELAY）` | `POST /api/{door,window,light,fan,ac}`、`/api/hardware/self_test`、`/api/voice/*`、`/api/camera/stream` |
-| 自动化引擎未启动 | 只在 `create_app(start_hardware=False)`（单测/被嵌入调用）或硬件桥初始化失败时出现。**`--no-serial` 不会关掉引擎**——生产 web 容器正是 `--no-serial` + `SMART_HOME_HW_RELAY` 在跑自动化（改走 voice 的 `/tool` 中继） | `自动化引擎未启动` | `/api/automation/*`（除 `capabilities`） |
+| 硬件链路不可用 | web 的硬件桥未初始化（MCP 子进程没起 / 串口未启用 / 演示模式 `--no-serial`）/ 工具清单为空 | `硬件服务未启动（硬件桥未初始化）`、`硬件控制失败`、`硬件服务未就绪（MCP 未连接或串口未启用）` | `POST /api/{door,window,light,fan,ac}`、`GET /api/hardware/tools`、`POST /api/hardware/tool`、`/api/hardware/self_test` |
+| 上游服务不可达 | 摄像头或语音助手连不上（`voice.url` / `SMART_HOME_VOICE_URL` 指向的进程没起） | `语音助手不可达（http://…）` | `/api/camera/stream`、`GET /api/voice/status` |
+| 自动化引擎未启动 | 只在 `create_app(start_hardware=False)`（单测/被嵌入调用）或硬件桥初始化失败时出现。**`--no-serial` 只是桌面/演示降级**，不是生产形态：串口归 web 独占后，生产 web 直接带着硬件桥跑自动化 | `自动化引擎未启动` | `/api/automation/*`（除 `capabilities`） |
 
 > 读接口（`GET /api/door` 等）直接返回数据库里的最近状态，**不会**因串口离线而 503；
-> `POST /api/devices/manual_report` 只记账、不碰硬件，同样不会 503。
+> `POST /api/devices/manual_report` 与工具网关里的记账部分只记账、不碰硬件，同样不会 503。
 
 ### 鉴权与跨域：目前**没有**
 
@@ -94,7 +97,6 @@
   "hardware_bridge": {
     "enabled": true,
     "online": true,
-    "relay": "http://voice:8101",
     "last_error": null
   },
   "device_mismatch": null,
@@ -106,7 +108,8 @@
 > 以及 `ac_swing_ud / ac_swing_lr / ac_eco / ac_fzc` 等扩展列（按数据可得性出现）。
 >
 > `device_mismatch` 是 B 板硬件回读与库中期望状态的比对结果（一致时为 `null`）；
-> `serial_health` 由硬件桥低频刷新，来自 MCP `get_serial_health`，桥未启动时为 `null`。
+> `serial_health` 由 web 的硬件桥在自己的循环里低频轮询 MCP `get_serial_health` 得到
+> （串口就在本进程的 MCP 子进程里，不再跨容器取回），桥未启动时为 `null`。
 
 ### GET `/api/health`
 
@@ -151,8 +154,10 @@ GET 与 POST 等价（便于浏览器地址栏直接点）。
 
 ## 2.3 设备控制
 
-> 只有**下发硬件的 POST** 才可能 503（桥未初始化 / 串口离线且无 relay / MCP 调用失败），
-> 同名 GET 读的是数据库，不碰硬件；`manual_report` 也只记账。见 §1「503 的两类含义」。
+> 只有**下发硬件的 POST** 才可能 503（web 的硬件桥未初始化 / MCP 调用失败），
+> 同名 GET 读的是数据库，不碰硬件；`manual_report` 也只记账。见 §1「503 的几类含义」。
+> 这组接口与下方「硬件工具网关」是同一套执行 + 记账路径，所以面板、语音、外部程序
+> 看到的状态与历史完全一致。
 
 ### 门（Door）
 
@@ -283,7 +288,8 @@ GET 与 POST 等价（便于浏览器地址栏直接点）。
 
 ### POST `/api/devices/manual_report`
 
-供语音助手/外部系统在动作已执行后**只记账、不下发**，使面板状态/历史与真实硬件一致：
+供**不受本进程控制**的外部执行者（有人手工拨了继电器、另一台网关在操作）在动作已执行后
+**只记账、不下发**，使面板状态/历史与真实硬件一致：
 
 ```json
 { "device": "door", "status": "open", "source": "voice" }
@@ -291,9 +297,62 @@ GET 与 POST 等价（便于浏览器地址栏直接点）。
 
 支持 `device` = `door` / `window` / `light` / `fan` / `ac`（ac 需传 `state` 对象）。
 
-> 本接口**只记账、不下发硬件**（动作已由语音/外部系统执行完），因此不会 503，
+> 本接口**只记账、不下发硬件**（动作已由外部执行完），因此不会 503，
 > 也不参与 `_cid`/`_seq` 收口器；成功后同样广播 `manual_control` 事件，
 > 让「手动优先」类积木规则照常生效。窗口状态在此接受 `open/closed/normal`。
+>
+> ⚠️ 本系统的语音助手**已不再调用本接口**：串口归 web 独占后，语音走下面的工具网关，
+> 执行与记账一次完成，无需二段式回传。
+
+### 硬件工具网关（语音助手 / 外部程序共用）
+
+> 串口归 web：`mcp_home_server.py` 是 web 的 MCP stdio 子进程，A/B 口只有它一个读者。
+> 语音助手完全不碰串口，所有硬件动作都经这两个端点走 web，因此与面板**同权同账**。
+
+#### GET `/api/hardware/tools`
+
+返回全部 MCP 硬件工具的 function schema（语音助手启动时据此向大模型注册工具）：
+
+```json
+{ "tools": [ { "name": "door", "description": "…", "parameters": { "type": "object", "properties": { … } } } ] }
+```
+
+> MCP 未连接或串口未启用（`{"error":"硬件服务未就绪（MCP 未连接或串口未启用）"}`）→ 503。
+> 调用方拿到的是扁平的 `name/description/parameters`，需要自行包成 OpenAI 的
+> `{"type":"function","function":{…}}` 再交给模型（语音助手即这么做）。
+
+#### POST `/api/hardware/tool`
+
+静默执行一个工具（不经 LLM、不发语音），成功后做**与面板操作等价**的记账：
+
+```json
+{ "name": "door", "arguments": { "action": "open" }, "source": "voice", "timeout": 10 }
+```
+
+| 字段 | 说明 |
+|------|------|
+| `name` | 工具名，见 §4 |
+| `arguments` | 对象，参数与 §4 完全相同 |
+| `source` | `voice` / `web`，仅用于历史记录里的来源标注（缺省记为「外部」） |
+| `timeout` | 可选，秒；缺省 10（`ac` / `ir` 为 20） |
+
+响应：
+
+```json
+{ "ok": true, "name": "door", "result": "…" }
+```
+
+| 状态码 | 场景 |
+|--------|------|
+| 400 | `name` 为空 / `arguments` 不是对象 |
+| 503 | 硬件桥未初始化（web 没起 MCP 子进程或串口未启用） |
+| 502 | 工具执行返回失败（`ok:false`，`result` 里是错误文本） |
+
+> 记账内容与面板点击完全一致：更新 SQLite 状态 → 写历史 → 广播 `manual_control`
+> 事件（全屋切「手动优先」）。只有**执行器类**工具会记账，只读工具
+> （`get_sensor_status` / `get_serial_health` / `get_output_state` / `self_test`）不动库。
+>
+> 同样**无鉴权**：能连到 :5000 即可操作硬件，本系统按可信局域网设计（见 §1）。
 
 ## 2.4 门禁（Access）
 
@@ -462,13 +521,19 @@ GET 与 POST 等价（便于浏览器地址栏直接点）。
 
 ### 语音（对 :8101 的同源代理）
 
+地址来自 `voice.url`（或环境变量 `SMART_HOME_VOICE_URL`），默认 `http://127.0.0.1:8101`；
+这条通道只做「唤醒 / 文本指令 / 状态 / 对话实况」，与硬件链路无关。
+
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/api/voice/status` | 语音助手在线状态 + 状态机（IDLE/COMMAND/THINKING/FOLLOWUP） |
+| GET | `/api/voice/status` | 语音助手在线状态 + 状态机（IDLE/COMMAND/THINKING/FOLLOWUP）；离线时 503 |
 | POST | `/api/voice/wake` | 免唤醒词进入指令模式 |
 | POST | `/api/voice/say` | 直接下发文本指令 `{"text":"..."}` |
+| GET | `/api/voice/events` | **SSE 对话实况流**（原样透传语音助手 `/events`，`text/event-stream`） |
 
-> `POST /api/voice/wake|say`：relay 未配置 → 503；上游请求失败 → 502。
+> `POST /api/voice/wake|say`：上游不可达或返回非 2xx → 502；`text` 为空 → 400。
+> `/api/voice/events` 上游连不上时返回一条 `{"type":"system","text":"语音助手不可达（…）"}`
+> 事件后结束（HTTP 仍是 200，前端 `EventSource` 会自动重连）。
 
 ## 2.8 Home Assistant 代理（可选通道）
 
@@ -503,15 +568,17 @@ GET 与 POST 等价（便于浏览器地址栏直接点）。
 # 3. 语音助手 HTTP API（:8101）
 
 零依赖标准库实现，供手机网页、GPIO 按钮、外部程序与 Web 容器调用。
+语音助手**不碰串口**：硬件动作一律经 web 的 `POST /api/hardware/tool`（见 §2.3），
+本服务不再有 `/tool`。
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/` | 内置控制台网页（大圆按钮 + 文本输入） |
+| GET | `/` | 内置控制台网页（聊天式深色对话界面：麦克风 + 文本输入 + 对话实况） |
 | GET/POST | `/trigger` | 开启语音监听（进入 COMMAND） |
 | GET | `/say?text=<文本>` | 直接下发文本指令 |
 | POST | `/say` | 下发文本指令，body：`{"text":"..."}` |
 | GET | `/state` | 返回当前状态机状态 |
-| POST | `/tool` | **直调 MCP 工具**（不经 LLM、不发语音） |
+| GET | `/events` | **SSE 对话实况流**（`text/event-stream`） |
 
 ### GET `/state`
 
@@ -519,33 +586,26 @@ GET 与 POST 等价（便于浏览器地址栏直接点）。
 { "state": "IDLE" }
 ```
 
-### POST `/tool`
+### GET `/events`
 
-```json
-{
-  "name": "door",
-  "arguments": { "action": "open" }
-}
-```
+`Content-Type: text/event-stream`，每条事件一行 `data: {json}\n\n`，空闲 15 秒发一次
+`: ping` 注释行做心跳（防代理掐断）。新连接先收 `hello`（含最近历史），随后实时增量。
 
-响应：
+| `type` | 附带字段 | 含义 |
+|--------|---------|------|
+| `hello` | `state`, `history`, `info` | 建连首包：当前状态机 + 环形历史（最近 200 条）+ 摘要（网关/LLM） |
+| `state` | `state` | 状态机切换（IDLE/COMMAND/THINKING/FOLLOWUP） |
+| `partial` | `text` | 流式 ASR 的中间结果 |
+| `user` | `text`, `source` | 一句完整用户指令（`source` 如「语音」「键盘」） |
+| `delta` | `text` | 大模型回复的流式 token |
+| `tool` | `name`, `arguments`, `ok`, `result` | 一次硬件工具调用（经 web 网关执行）及其结果 |
+| `turn_end` | — | 本轮回答结束 |
+| `system` | `text` | 系统提示（唤醒成功、已打断播报、调用失败等） |
 
-```json
-{ "ok": true, "name": "door", "result": "..." }
-```
+每条事件都带 `ts`（Unix 秒）。浏览器用 `new EventSource('/events')` 即可；
+Web 面板经 `GET /api/voice/events` 同源代理同一条流（见 §2.7）。
 
-| 状态码 | 场景 |
-|--------|------|
-| 400 | JSON 解析失败 / `name` 为空 / `arguments` 不是对象 |
-| 503 | MCP 工具通道不可用（语音进程没起串口） |
-| 502 | 工具执行返回失败（`ok:false`，`result` 里是错误文本） |
-| 500 | 调用过程抛异常 |
-
-可在请求头加 `X-Trigger-Source` 标记调用来源（仅日志用途，**不是鉴权**）。
-`get_sensor_status` 成功时不写访问日志，其余调用（含任何失败）都会记来源 IP 与耗时。
-
-> 经 `/tool` 的调用**不会**回传 `manual_report`：那是给语音自己发起的动作用的，
-> web 转发若回传会把面板的自动调节误判成「用户手动操作」。
+可在 `/trigger` / `/say` 请求头加 `X-Trigger-Source` 标记来源（仅日志/记账用途，**不是鉴权**）。
 
 示例：
 
@@ -564,8 +624,9 @@ curl http://<host>:8101/trigger
 
 # 4. MCP 工具（mcp_home_server.py）
 
-`mcp_home_server.py` 以 stdio 方式提供 MCP 服务，独占 A/B 串口，共 **13 个工具**。
-也可经语音助手 `POST /tool` 以 HTTP 方式调用（工具名/参数相同）。
+`mcp_home_server.py` 以 stdio 方式提供 MCP 服务，由 **web 作为子进程启动并独占 A/B 串口**，
+共 **13 个工具**。本进程之外的调用方（语音助手 / 外部程序）经 web 的
+`POST /api/hardware/tool` 以 HTTP 方式调用（工具名/参数相同，见 §2.3）。
 
 | 工具 | 主要参数 | 作用 |
 |------|---------|------|
@@ -583,7 +644,7 @@ curl http://<host>:8101/trigger
 | `get_output_state` | 无 | B 板（执行器）硬件回读状态：门/窗/风扇/灯/蜂鸣器实际电平 + 观测时刻 + 最近命令（只读） |
 | `self_test` | 无 | B 板固件自检（V2.9+）：命令成败计数、风扇两脚方向/电平、灯带 `show()` 次数、数据脚拉高/拉低读回（只读） |
 
-调用示例（经 `/tool`）：
+调用示例（`POST /api/hardware/tool` 的 body）：
 
 ```json
 { "name": "fan", "arguments": { "action": "set_speed", "value": 150 } }
@@ -597,9 +658,14 @@ curl http://<host>:8101/trigger
 
 ---
 
-# 5. 本地 LLM API（qwen_server.py，:8000）
+# 5. 本地 LLM API（qwen_server.py，:8000，离线兜底）
 
-OpenAI 兼容接口（llama.cpp 后端）：
+OpenAI 兼容接口（llama.cpp 后端）。
+
+> **默认不走这里**：语音助手默认用硅基流动（`llm.mode: siliconflow`，
+> `https://api.siliconflow.cn/v1`，OpenAI 兼容；备选百炼 `dashscope`）。
+> 本地服务是离线兜底：`llm.mode: local` + `base_url: http://<host>:8000/v1`
+> （Docker 下叠加 `docker-compose.local-llm.yml` 才会起 `qwen` 容器）。
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
