@@ -71,6 +71,6 @@
 // ---- 设备标识 ----
 #define BOARD_TYPE          "MODULE_B"
 #define BOARD_ROLE          "OUTPUT_NODE"
-#define FW_VERSION          "V2.6"  // V2.2 起红外支持美的长码；V2.3 修 D12(SPI MISO) 被 OLED 抢成 INPUT 导致发不出红外；V2.4 setup 开头提前锁死风扇 D7/D8；V2.5 风扇每 loop 引脚自愈（被外设改回 INPUT 时抢回并上报）；V2.6 响应回显请求 id，服务端可丢弃迟到响应
+#define FW_VERSION          "V2.7"  // V2.2 起红外支持美的长码；V2.3 修 D12(SPI MISO) 被 OLED 抢成 INPUT 导致发不出红外；V2.4 setup 开头提前锁死风扇 D7/D8；V2.5 风扇每 loop 引脚自愈（被外设改回 INPUT 时抢回并上报）；V2.6 响应回显请求 id，服务端可丢弃迟到响应；V2.7 看门狗 WDTO_2S（固件挂死 2s 自动复位，不再需要人工插拔）
 
 #endif // CONFIG_B_H

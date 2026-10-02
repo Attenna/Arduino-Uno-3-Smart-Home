@@ -8,6 +8,7 @@
 // ============================================
 
 #include <Arduino.h>
+#include <avr/wdt.h>
 #include "Config.h"
 #include "core/CommandDispatcher.h"
 #include "Protocol.h"
@@ -16,6 +17,12 @@ CommandDispatcher dispatcher;
 Protocol protocol;
 
 void setup() {
+    // 看门狗善后：先清掉「上次是看门狗复位」的标志并关掉 WDT，再往下初始化。
+    // 不清 WDRF 的话，复位后该标志仍置位，会在 loop 还没跑起来时被反复复位
+    // （表现为板子不停重启）；关掉则保证初始化阶段不会被自己打断。
+    MCUSR = 0;
+    wdt_disable();
+
     // 抢在一切初始化之前把蜂鸣器引脚拉到"静默"电平。
     // MCU 复位后所有引脚是高阻，而 Buzzer::begin() 排在 door/window/fan/light
     // 之后（第 5 个），这中间有几十毫秒到数秒的窗口；有源低电平蜂鸣器在高阻
@@ -34,9 +41,15 @@ void setup() {
     dispatcher.begin();
     protocol.begin(dispatcher);
     protocol.sendReady();
+
+    // 初始化全部完成后再使能看门狗：固件挂死 2 秒内自动复位重来，不再需要人工
+    // 插拔。复位后执行器回固件默认，上位机侧已有「B 板复位→DB 对账」按硬件回读
+    // 把状态拉回一致（见 PC_Test/web/hardware.py）。
+    wdt_enable(WDTO_2S);
 }
 
 void loop() {
+    wdt_reset();              // 喂狗：一次 loop 远快于 2s，正常时永不触发
     protocol.handleSerial();  // 处理下行命令
     dispatcher.update();      // 舵机释放 / 蜂鸣 / 数码管刷新
 }
