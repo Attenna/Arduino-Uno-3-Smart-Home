@@ -11,8 +11,9 @@
 用户想找回删掉的预设，可在页面点「恢复内置规则」。
 
 每条 preset 的语义与触发时机：
-    face_open_door 授权人脸通过 → 开门（原分离在 face.py 里的硬编码，本规则可停用）
-    face_open_close 门禁通过 → 全屋自动 + 10 秒后自动关门
+    access_open_door 门禁通过（人脸/刷卡/键盘任一）→ 开门
+    access_auto_close 门禁通过 → 全屋自动 + 10 秒后自动关门
+    access_denied_buzzer 门禁被拒 → 蜂鸣器提示（默认停用）
     door_in/door_out 门动作结合 g:有人在家 判定进门/出门 → 自动 / 离家
     presence_motion/presence_timeout PIR 维护 g:有人在家（1200 秒保持窗口，
         替代旧引擎的 person_present 判定）
@@ -49,7 +50,9 @@ from __future__ import annotations
 
 # 预设版本：升级时 +1，引擎会把新版本里新增的预设补进现有规则集。
 # v4：全屋模式/人在家/手动优先/风扇安全线全部改挂全局状态（g:* 变量）。
-PRESETS_VERSION = 4
+# v5：门禁预设改吃统一的 access_granted（人脸/刷卡/键盘任一），并新增被拒提示；
+#     旧 face_open_door / face_open_close 就地迁移成 access_* 两条（见 engine.py）。
+PRESETS_VERSION = 5
 
 # ---- 常用片段（避免 10 条手动优先规则里反复手打同一个变量 id）----
 _MODE = "g:全屋模式"
@@ -105,26 +108,36 @@ def _manual_priority_rules() -> list[dict]:
 
 DEFAULT_RULES: list[dict] = [
     {
-        "preset": "face_open_door",
-        "name": "授权人脸通过 → 开门",
+        "preset": "access_open_door",
+        "name": "门禁通过 → 开门",
         "enabled": True,
-        # face_granted 事件由 face.py 在鉴权通过后广播；开门 DB 状态/历史由动作自行写入
-        "trigger": {"kind": "event", "event": "face_granted"},
+        # access_granted 由 access_guard 在白名单命中后广播（method=face/rfid/keypad）；
+        # 开门的 DB 状态与历史由 door 动作自己写入。停用这条 = 只鉴权不开门。
+        "trigger": {"kind": "event", "event": "access_granted"},
         "actions": [{"device": "door", "status": "open"}],
         "cooldown": 2,
     },
     {
-        "preset": "face_open_close",
+        "preset": "access_auto_close",
         "name": "门禁通过：全屋自动 + 10秒后关门",
         "enabled": True,
-        "trigger": {"kind": "event", "event": "face_granted"},
-        # 开门由上面 face_open_door 承接，这里只负责「判定进门」与延时关门；
+        "trigger": {"kind": "event", "event": "access_granted"},
+        # 开门由上面 access_open_door 承接，这里只负责「判定进门」与延时关门；
         # 手动优先窗口内不抢用户刚设好的门状态
         "conditions": [_not_grace("door")],
         "actions": [_set_mode("auto"),
                     {"device": "delay", "seconds": 10},
                     {"device": "door", "status": "close"}],
         "cooldown": 3,
+    },
+    {
+        "preset": "access_denied_buzzer",
+        "name": "门禁被拒：蜂鸣器提示【默认停用】",
+        "enabled": False,
+        # 拒绝事件来自陌生人脸/未登记卡片；默认停用，免得有人路过被反复吵
+        "trigger": {"kind": "event", "event": "access_denied"},
+        "actions": [{"device": "buzzer", "count": 2, "on_ms": 250, "off_ms": 200}],
+        "cooldown": 15,
     },
     {
         "preset": "door_in",

@@ -8,6 +8,10 @@ get_status / save_config / reload_model / known_faces …），内部把「检�
     simulation_mode=false ：YOLOFaceDetector 检测人脸；若 data/face/embeddings.pkl
                             存在（scripts/enroll_faces.py 生成），再用嵌入比对给出
                             身份（ArcFace ONNX 或零依赖灰度余弦）。
+
+除了离线脚本，门禁页也能直接录入：``enroll_faces()`` 把浏览器截来的帧里检出的
+人脸存进 data/face/authorized/<姓名>/，只重算这一个身份的均值原型并热加载识别器，
+不必停服务重跑 enroll_faces.py。
 """
 from __future__ import annotations
 
@@ -15,12 +19,16 @@ import base64
 import json
 import logging
 import random
+import re
+import shutil
+import threading
+import time
 from pathlib import Path
 
 from ..config import (AUTHORIZED_DIR, EMBEDDINGS_PATH, FACE_MODEL_PATH,
                       RECOGNITION_MODEL_PATH, FACE_CONFIG_PATH,
                       load_config)
-from ..utils import ConnectionHealth, RequestThrottler
+from ..utils import ConnectionHealth, RequestThrottler, safe_base64_decode
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +38,28 @@ _DEFAULT_KNOWN_FACES = {
     "FACE002": "家庭成员A",
     "FACE003": "家庭成员B",
 }
+
+# 一次录入请求最多收几张帧（浏览器端本来就只截几帧，这里只是兜住恶意/误操作）
+MAX_ENROLL_FRAMES = 12
+# 检出人脸的最小边长（像素）：再小的帧嵌入质量差，宁缺勿滥
+MIN_FACE_SIDE = 56
+# 每个身份最多参与原型计算的注册照张数（取文件名最新的 N 张）
+MAX_IDENTITY_IMAGES = 20
+# 单次录入的图像体积上限（MB）
+ENROLL_IMAGE_MAX_MB = 4.0
+
+
+def identity_name(name: str) -> str:
+    """人员姓名 → 人脸库目录名，也就是识别用的 face_id。
+
+    目录名会被拼进路径，所以要挡掉分隔符与 ``..``；姓名本身可以是中文，
+    清洗后原样回显在门禁页上，用户看到的就是数据库里存的凭证标识。
+    """
+    cleaned = re.sub(r'[\\/:*?"<>|\s]+', "_", str(name or "").strip()).strip("._")
+    if not cleaned:
+        raise ValueError("姓名不能为空或只含标点符号")
+    return cleaned[:32]
+
 
 
 class FaceEngine:
@@ -45,6 +75,7 @@ class FaceEngine:
         self.throttler = RequestThrottler(
             min_interval=float(self.config.get("recognition_interval", 1.5)))
         self.health = ConnectionHealth("FaceRecognition")
+        self._enroll_lock = threading.Lock()
         if not self.simulation_mode:
             self._load_model()
 
@@ -340,3 +371,198 @@ class FaceEngine:
             self.save_config(self.config)
             return True
         return False
+
+    # ==================== 运行时录入（门禁页） ====================
+
+    def _identity_dir(self, name: str) -> Path:
+        identity = identity_name(name)
+        path = AUTHORIZED_DIR / identity
+        if path.parent != AUTHORIZED_DIR:           # 清洗规则之外的双保险
+            raise ValueError(f"非法的人脸库目录名: {identity}")
+        return path
+
+    def _enroll_extractor(self):
+        """取当前 embeddings 库用的同一个提特征器。
+
+        换特征空间（比如把 method 从灰度余弦改成 ArcFace）会让旧原型全部失效，
+        所以录入必须跟随库里已写明的 method，而不是配置文件里新写的那个。
+        """
+        from .recognizer import create_embedding_extractor
+
+        if self.recognizer is not None:
+            return (self.recognizer.extractor, self.recognizer.method,
+                    self.recognizer.image_size)
+        recog_cfg = self.config.get("recognition", {})
+        method = str(recog_cfg.get("method", "simple_grayscale_cosine"))
+        size = int(recog_cfg.get("image_size", 112))
+        return (create_embedding_extractor(method=method,
+                                           model_path=str(RECOGNITION_MODEL_PATH),
+                                           image_size=size), method, size)
+
+    @staticmethod
+    def _empty_database(method: str, image_size: int) -> dict:
+        return {"version": 2, "method": method,
+                "model_path": str(RECOGNITION_MODEL_PATH),
+                "image_size": image_size, "identities": []}
+
+    def _apply_database(self, database: dict) -> None:
+        """把新算好的库装回运行中的识别器（认人立即生效，不用重启服务）。"""
+        if self.recognizer is not None:
+            self.recognizer.database = database
+            self.recognizer.identities = database["identities"]
+            return
+        self._load_model()
+
+    def _detect_face_crops(self, frame, limit: int = 3) -> list:
+        """检出画面里的人脸并裁出来，按面积从大到小排（录入取最大的那张）。"""
+        try:
+            detections = self.detector.detect(frame)
+        except Exception as e:                        # noqa: BLE001
+            logger.error("人脸检测失败: %s", e)
+            self.health.record_failure(str(e))
+            return []
+
+        height, width = frame.shape[:2]
+        crops = []
+        for det in detections:
+            x1, y1, x2, y2 = det.xyxy_int()
+            pad = int(max(x2 - x1, y2 - y1) * 0.15)
+            left, top = max(0, x1 - pad), max(0, y1 - pad)
+            right, bottom = min(width, x2 + pad), min(height, y2 + pad)
+            crop = frame[top:bottom, left:right]
+            if crop.size:
+                crops.append(((right - left) * (bottom - top), crop))
+        crops.sort(key=lambda item: item[0], reverse=True)
+        return [crop for _area, crop in crops[:limit]]
+
+    def enroll_faces(self, name: str, images_base64: list[str]) -> dict:
+        """把门禁页截来的几帧存成该人员的注册照，并重算、热加载他的身份原型。
+
+        只重算这一个身份：全库重建（scripts/enroll_faces.py）留给离线场景。
+        """
+        from .recognizer import build_identity, save_embedding_database
+
+        identity_dir = self._identity_dir(name)
+        if self.simulation_mode or self.detector is None:
+            self.reload_model()
+        if self.detector is None or self.simulation_mode:
+            return {"ok": False,
+                    "error": "人脸识别模型未加载（当前为模拟模式），无法录入真实人脸"}
+        if not self.config.get("recognition", {}).get("enabled", True):
+            return {"ok": False, "error": "人脸配置里 recognition.enabled=false，身份识别已关闭"}
+
+        import cv2
+        import numpy as np
+
+        blobs: list[bytes] = []
+        decode_failed = 0
+        for raw in list(images_base64 or [])[:MAX_ENROLL_FRAMES]:
+            try:
+                blobs.append(safe_base64_decode(raw, max_size_mb=ENROLL_IMAGE_MAX_MB))
+            except ValueError:
+                decode_failed += 1
+        if not blobs:
+            return {"ok": False, "error": "没有可用的图像数据（请确认页面已有摄像头画面）"}
+
+        # 微秒级时间戳：同一秒内连点两次「录入人脸」，秒级戳会让第二批
+        # 直接覆盖第一批的同名文件（注册照静默变少，原型也跟着退化）
+        stamp = time.strftime("%Y%m%d_%H%M%S") + f"_{int(time.time() * 1e6) % 1_000_000:06d}"
+        accepted: list[Path] = []
+        rejected: list[str] = []
+        with self._enroll_lock:
+            identity_dir.mkdir(parents=True, exist_ok=True)
+            for idx, blob in enumerate(blobs):
+                frame = cv2.imdecode(np.frombuffer(blob, dtype=np.uint8),
+                                     cv2.IMREAD_COLOR)
+                if frame is None:
+                    rejected.append("图像解码失败")
+                    continue
+                crops = self._detect_face_crops(frame)
+                if not crops:
+                    rejected.append("画面里没有人脸")
+                    continue
+                crop = crops[0]
+                height, width = crop.shape[:2]
+                if min(height, width) < MIN_FACE_SIDE:
+                    rejected.append(f"人脸太小（{width}x{height}）")
+                    continue
+                path = identity_dir / f"enroll_{stamp}_{idx:02d}.jpg"
+                if not cv2.imwrite(str(path), crop):
+                    rejected.append("照片写入失败")
+                    continue
+                accepted.append(path)
+
+            if not accepted:
+                return {"ok": False,
+                        "error": f"{len(blobs)} 帧都没有合格的正面人脸：" +
+                                 "；".join(dict.fromkeys(rejected)),
+                        "rejected": rejected}
+
+            extractor, method, image_size = self._enroll_extractor()
+            identity = build_identity(identity_dir, extractor,
+                                      max_images=MAX_IDENTITY_IMAGES)
+            if identity is None:
+                return {"ok": False, "error": "注册照都读不出来，身份未建立"}
+
+            database = dict(self.recognizer.database) if self.recognizer is not None \
+                else self._empty_database(method, image_size)
+            database["method"] = method
+            database["image_size"] = image_size
+            database["identities"] = [
+                i for i in (database.get("identities") or [])
+                if str(i.get("name")) != identity["name"]] + [identity]
+            save_embedding_database(database, EMBEDDINGS_PATH)
+            self._apply_database(database)
+            self.add_known_face(identity["name"], identity["name"])
+            self.health.record_success()
+
+        logger.info("[人脸录入] %s：%d 张新照，库内共 %d 张",
+                    identity["name"], len(accepted), identity["image_count"])
+        return {"ok": True, "face_id": identity["name"],
+                "accepted": len(accepted), "rejected": rejected,
+                "decode_failed": decode_failed,
+                "images": identity["image_count"],
+                "images_dir": str(identity_dir)}
+
+    def forget_identity(self, name: str) -> dict:
+        """删人时用：清掉该人员的注册照片，并把身份从 embeddings 库里摘出去。"""
+        from .recognizer import save_embedding_database
+
+        identity_dir = self._identity_dir(name)
+        with self._enroll_lock:
+            removed_dir = identity_dir.is_dir()
+            if removed_dir:
+                shutil.rmtree(identity_dir, ignore_errors=True)
+            self.remove_known_face(identity_dir.name)
+
+            if self.recognizer is None:
+                return {"ok": True, "photos_removed": removed_dir,
+                        "identities": 0}
+            database = dict(self.recognizer.database)
+            kept = [i for i in database.get("identities") or []
+                    if str(i.get("name")) != identity_dir.name]
+            if len(kept) == len(database.get("identities") or []):
+                return {"ok": True, "photos_removed": removed_dir,
+                        "identities": len(kept or [])}
+            database["identities"] = kept
+            if not kept:
+                # 空库会让 load_embedding_database 抛异常，不如直接删掉文件
+                EMBEDDINGS_PATH.unlink(missing_ok=True)
+                self.recognizer = None
+                return {"ok": True, "photos_removed": removed_dir, "identities": 0}
+            save_embedding_database(database, EMBEDDINGS_PATH)
+            self.recognizer.database = database
+            self.recognizer.identities = kept
+            logger.info("[人脸删除] 已移除身份 %s，库内剩 %d 人",
+                        identity_dir.name, len(kept))
+            return {"ok": True, "photos_removed": removed_dir, "identities": len(kept)}
+
+    def person_face_state(self, name: str) -> dict:
+        """门禁页回显用：这个人当前有没有注册照、几张。"""
+        identity_dir = self._identity_dir(name)
+        if not identity_dir.is_dir():
+            return {"face_id": identity_dir.name, "images": 0}
+        from .recognizer import collect_face_images
+
+        return {"face_id": identity_dir.name,
+                "images": len(collect_face_images(identity_dir))}

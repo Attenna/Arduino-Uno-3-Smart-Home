@@ -9,7 +9,8 @@ V2.1 固件已裁剪的能力（故意不列）：
   - buzzer_status(raw) / fan_level / light_level(raw 0-255) —— 旧 B 板 state 帧的
     原始电平，V2.1 裁剪后写入方 database.ingest_output() 已删除，永远为 NULL，
     不能作为条件源（执行器真值改用 P1 的 rb_* 回读列）；
-  - face_denied —— 人脸拒绝时只写库不广播事件，不是真实事件。
+  - face_granted —— v5 起门禁鉴权统一广播 access_granted/access_denied（带
+    method=face/rfid/keypad），旧事件名不再有广播方，规则已就地迁移。
 
 V2.1 已移除的遗留设备：空调（虚拟设备，无任何真实执行器接线），已在数据库/API/前端全局删除。
 
@@ -78,6 +79,12 @@ IR_KEYS = [
 # 矩阵键盘（A 板 D4 第一横列 / A4 第一纵列）：4x4 键盘实际只用到 0-9 与 * / #
 KEYPAD_KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "*", "#"]
 
+# 门禁验证方式（access_guard 在广播事件时写进 method 字段；积木触发块可按它过滤）
+ACCESS_METHODS = [{"id": "face", "label": "人脸识别"},
+                  {"id": "rfid", "label": "刷房卡"},
+                  {"id": "keypad", "label": "键盘密码"}]
+ACCESS_METHOD_IDS = [m["id"] for m in ACCESS_METHODS]
+
 # 事件触发块。choices 供前端下拉（按键类事件让用户直接选键名，无需手填十六进制码）
 #
 # ！！每条都必须带 payload，且 payload 里必须含 "event" 键 ！！
@@ -96,9 +103,14 @@ EVENT_TRIGGERS = {
     # RFID 刷卡事件：uid 是可选的过滤参数（不填=任意卡片都触发）
     "rfid": {"label": "RFID：刷到卡片", "param": "uid", "param_label": "卡号",
              "payload": {"event": "rfid"}},
-    # 人脸授权（由 web 侧广播，非 A 板固件）
-    "face_granted": {"label": "人脸识别：授权人员通过",
-                     "payload": {"event": "face", "status": "granted"}},
+    # 门禁鉴权结果：web 侧 access_guard 统一广播（人脸 / 刷卡 / 键盘密码）。
+    # 「谁算什么身份」在后端白名单，开门/延时关门/报警全由积木规则决定。
+    "access_granted": {"label": "门禁：验证通过", "param": "method",
+                       "param_label": "验证方式", "choices": ACCESS_METHODS,
+                       "payload": {"event": "access", "status": "granted"}},
+    "access_denied": {"label": "门禁：验证被拒绝", "param": "method",
+                      "param_label": "验证方式", "choices": ACCESS_METHODS,
+                      "payload": {"event": "access", "status": "denied"}},
     "keypad": {"label": "矩阵键盘：按下指定键", "param": "key", "param_label": "按键",
                "default": "1",
                "choices": [{"id": k, "label": k} for k in KEYPAD_KEYS],

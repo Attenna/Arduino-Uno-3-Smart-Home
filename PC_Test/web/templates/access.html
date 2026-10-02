@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title data-i18n="access.title">门禁管理 - 智能家居</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=20260930b">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=20261003b">
 </head>
 <body>
     <nav class="navbar">
@@ -28,7 +28,7 @@
             <span data-i18n="system.online">系统在线</span>
             <span id="currentTime" class="time-display">--:--:--</span>
         </div>
-        <button class="lang-switch" onclick="setLang(I18N.currentLang === 'zh' ? 'en' : 'zh')" ><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <button class="lang-switch" onclick="toggleAccessLang()" ><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <circle cx="12" cy="12" r="10"/>
                 <line x1="2" y1="12" x2="22" y2="12"/>
                 <path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/>
@@ -103,13 +103,33 @@
                         </div>
                     </div>
 
-                    <!-- 模拟推送按钮（测试用） -->
-                    <div class="access-result" id="accessResult"></div>
-                    <div class="btn-group" style="margin-top:16px">
-                        <button class="btn" onclick="simulatePush('FACE001', 0.95)" data-i18n="access.sim_admin">模拟推送 - 管理员</button>
-                        <button class="btn" onclick="simulatePush('FACE002', 0.88)" data-i18n="access.sim_family">模拟推送 - 家庭成员A</button>
-                        <button class="btn btn-danger" onclick="simulatePush('FACE999', 0.45)" data-i18n="access.sim_unknown">模拟推送 - 未知人员</button>
+                    <!-- 录入人脸：点人员条目上的「录入人脸」后，从这里截实时画面帧 -->
+                    <div class="enroll-face hidden" id="enrollFacePanel">
+                        <div class="enroll-head">
+                            <span class="enroll-title" data-i18n="access.enroll_face">录入人脸</span>
+                            <span class="enroll-who" id="enrollWho">--</span>
+                            <span class="enroll-count" id="enrollCount">0/8</span>
+                        </div>
+                        <p class="enroll-tip" data-i18n="access.enroll_face_tip">正对摄像头，让脸占画面三分之一以上，采集 3~8 张（可轻微换角度）。</p>
+                        <div class="enroll-thumbs" id="enrollThumbs"></div>
+                        <div class="btn-group btn-group-tight">
+                            <button class="btn btn-sm" id="shotBtn" onclick="captureEnrollFrame()" data-i18n="access.capture">截一帧</button>
+                            <button class="btn btn-sm" id="burstBtn" onclick="burstEnroll()" data-i18n="access.capture_burst">自动连拍</button>
+                            <button class="btn btn-sm btn-accent" id="submitBtn" onclick="submitEnrollFaces()" data-i18n="access.submit">提交录入</button>
+                            <button class="btn btn-sm btn-danger" onclick="cancelEnroll()" data-i18n="access.cancel">取消</button>
+                        </div>
                     </div>
+
+                    <!-- 链路自测：拿名单里的真实人员走一遍鉴权（不碰硬件） -->
+                    <div class="access-test">
+                        <select id="testPerson" class="input-field"></select>
+                        <select id="testMethod" class="input-field" data-i18n-options="access.method_opt">
+                            <option value="face">人脸识别</option>
+                            <option value="rfid">刷房卡</option>
+                        </select>
+                        <button class="btn btn-sm" onclick="runAccessTest()" data-i18n="access.run_test">自测鉴权</button>
+                    </div>
+                    <div class="access-result hidden" id="accessResult"></div>
                 </div>
             </div>
 
@@ -122,8 +142,14 @@
                         <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/>
                     </svg>
                     <h3 data-i18n="access.persons">授权人员</h3>
+                    <button class="btn btn-sm" onclick="loadPersons()" data-i18n="access.refresh">刷新</button>
                 </div>
                 <div class="card-body">
+                    <!-- 录入房卡：等待把卡贴到读卡器上的会话状态条 -->
+                    <div class="card-enroll-bar hidden" id="cardBar">
+                        <span id="cardBarText">--</span>
+                        <button class="btn btn-sm" onclick="cancelCardEnroll()" data-i18n="access.cancel">取消</button>
+                    </div>
                     <div class="person-list" id="personList">
                         <div class="loading" data-i18n="history.loading">加载中...</div>
                     </div>
@@ -131,9 +157,9 @@
                         <h4 data-i18n="access.add_person">添加授权人员</h4>
                         <div class="form-row">
                             <input type="text" id="newPersonName" placeholder="姓名" class="input-field" data-i18n-placeholder="access.name">
-                            <input type="text" id="newPersonRFID" placeholder="人脸ID" class="input-field" data-i18n-placeholder="access.face_id">
                             <button class="btn" onclick="addPerson()" data-i18n="access.add">添加</button>
                         </div>
+                        <p class="person-hint" data-i18n="access.add_hint">建好后点条目上的「录入人脸 / 录入房卡」用摄像头与读卡器采集凭证。</p>
                     </div>
                 </div>
             </div>
@@ -204,7 +230,7 @@
         </div>
     </main>
 
-    <script src="{{ url_for('static', filename='js/lang.js') }}?v=20260930b"></script>
-    <script src="{{ url_for('static', filename='js/access.js') }}?v=20260930b"></script>
+    <script src="{{ url_for('static', filename='js/lang.js') }}?v=20261003b"></script>
+    <script src="{{ url_for('static', filename='js/access.js') }}?v=20261003b"></script>
 </body>
 </html>

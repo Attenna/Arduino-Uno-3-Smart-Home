@@ -112,7 +112,18 @@ automation:
 在这里加一条 = 页面能选 + 保存能过校验；只在页面加而这里没有 = 保存 400。
 
 原则（文件头写得明说）：**只列真实存在的能力**。固件编译期裁掉的东西
-（超声波、土壤、数码管、`face_denied`）故意不列，免得出现「能选但永远不成立」的假能力。
+（超声波、土壤、数码管、`buzzer_status(raw)` 原始电平）故意不列，免得出现「能选但永远不成立」的假能力。
+
+门禁是这套原则下最近的一次改动（`presets_version` 5）：后端 `access_guard` 只广播
+`access_granted` / `access_denied` 两个事件，载荷带 `method`（`face` / `rfid` / `keypad`）、
+`person`、`credential`，不带任何设备动作；规则里可以整体不管方式，也可以只针对刷卡
+（积木「门禁：验证通过」的方式下拉，`method` 过滤参数）。原来那个只有人脸含义的
+`face_granted` 已没有广播方，旧规则文件里的它会被就地迁移成
+`access_granted{method:"face"}`（内置预设同理改名，规则 id 与启用状态保持不变）。
+
+「谁算什么凭证」留在后端白名单，开门/延时关门/被拒报警全在规则里 —— 想在门禁链路上
+挂自己的动作，订阅引擎事件即可（`extensions.bind_automation()`），不要去 `access_guard`
+里加硬编码的 `door.open()`。
 
 ### 2.5 MCP 工具面
 
@@ -256,6 +267,8 @@ py -3.13 pi-staging/test_serial_ports_env.py    # 串口定位：SMART_HOME_PORT
 py -3.13 pi-staging/test_voice_audio_loopback.py # 语音环回：TTS 出声 → ASR 认字 → 唤醒复位
 py -3.13 pi-staging/test_reset_reconcile.py     # 复位对账
 py -3.13 pi-staging/test_camera_hotplug.py      # 摄像头枚举 / 重开 / 占位帧 / health
+py -3.13 pi-staging/test_access_guard.py        # 门禁白名单鉴权 / 通行日志 / 房卡录入会话
+py -3.13 pi-staging/test_face_enrollment.py     # 运行时录入：检脸→存照→重算原型→热加载
 ```
 
 部署到香橙派（形态 B）：

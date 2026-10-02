@@ -1,8 +1,22 @@
-// ==================== 门禁管理页面 JS（香橙派人脸识别展示版）===========================
-// 功能：接收香橙派推送的人脸识别结果，展示实时识别状态和事件记录
+// ==================== 门禁管理页 JS ====================
+// 这一页只管「谁有什么凭证」和「把凭证录进来」：
+//   录入人脸 —— 从同源代理的 MJPEG 实时画面截几帧，交给后端检脸入库；
+//   录入房卡 —— 开一个等待会话，用户把卡贴到读卡器上，卡号从串口事件里取。
+// 开门、延时关门、被拒报警都不在这里：鉴权结果广播成积木事件，由 /automation 决定。
 
 let facePollTimer = null;
 let lastEventId = null;
+let persons = [];
+
+// 截帧数量与后端 face/engine.py 的 MAX_ENROLL_FRAMES 对齐
+const ENROLL_MAX_FRAMES = 8;
+const ENROLL_MIN_FRAMES = 1;
+const BURST_INTERVAL_MS = 700;
+// 截帧缩放上限：识别器自己会再缩放，传太大只是浪费请求体（后端限 4MB/帧）
+const CAPTURE_MAX_WIDTH = 640;
+
+let enroll = { personId: null, name: '', frames: [], burst: null };
+let card = { sid: null, deadline: 0, timer: null };
 
 document.addEventListener('DOMContentLoaded', () => {
     updateClock();
@@ -12,10 +26,19 @@ document.addEventListener('DOMContentLoaded', () => {
     loadFaceEvents();
     startFacePolling();
     startFaceStream();
+    document.getElementById('personList').addEventListener('click', onPersonAction);
 });
+
+function esc(value) {
+    return String(value === null || value === undefined ? '' : value)
+        .replace(/[&<>"']/g, c => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+        }[c]));
+}
 
 // ==================== 摄像头实时画面 ====================
 // 后端 /api/camera/stream 同源代理 camera_stream 的 MJPEG；断流自动重连。
+// 同源是「录入人脸」能截帧的前提：跨域画面会让 canvas 被污染，toDataURL 直接抛错。
 
 let faceStreamRetry = null;
 
@@ -73,18 +96,32 @@ async function apiGet(url) {
     }
 }
 
-async function apiPost(url, data) {
+async function apiSend(url, data, method = 'POST') {
     try {
         const res = await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(data)
+            method,
+            headers: data === undefined ? {} : { 'Content-Type': 'application/json' },
+            body: data === undefined ? null : JSON.stringify(data),
         });
         return await res.json();
     } catch (e) {
         console.error('API error:', e);
         return null;
     }
+}
+
+// 后端按 {error, error_en} / {message, message_en} 双语返回，这里按当前语言取
+function pick(obj, kind) {
+    const en = I18N.currentLang === 'en';
+    if (kind === 'error') return (en ? (obj.error_en || obj.error) : obj.error) || '';
+    return (en ? (obj.message_en || obj.message) : obj.message) || '';
+}
+
+function report(res, okType = 'success') {
+    if (!res) { showNotification(t('access.net_error'), 'error'); return false; }
+    if (res.error) { showNotification(pick(res, 'error'), 'error'); return false; }
+    showNotification(pick(res, 'message'), okType);
+    return true;
 }
 
 // ==================== 实时识别结果轮询 ====================
@@ -166,30 +203,274 @@ function updateFaceResultDisplay(event) {
     loadAccessLogs();
 }
 
-// ==================== 模拟香橙派推送（测试用） ====================
+// ==================== 授权人员管理 ====================
 
-async function simulatePush(faceId, confidence) {
-    const resultEl = document.getElementById('accessResult');
-    resultEl.textContent = t('access.pushing');
-    resultEl.className = 'access-result';
+async function loadPersons() {
+    const list = await apiGet('/api/access/persons');
+    if (!list) return;
+    persons = list;
+    renderPersons();
+    renderTestPicker();
+}
 
-    // 调用 /api/face/notify 模拟香橙派推送
-    const res = await apiPost('/api/face/notify', {
-        face_id: faceId,
-        confidence: confidence,
-        image_path: `/tmp/face_${faceId}.jpg`,
-        device_source: 'orange_pi_test'
+// 语言切换：人员条目与两张表都是 JS 渲染的，不在 data-i18n 覆盖范围内，
+// 切完要立刻用缓存重渲染（表里还有 t() 文案，只能重新取一次）
+function toggleAccessLang() {
+    setLang(I18N.currentLang === 'zh' ? 'en' : 'zh');
+    renderPersons();
+    renderTestPicker();
+    loadAccessLogs();
+    loadFaceEvents();
+}
+
+function renderPersons() {
+    const listEl = document.getElementById('personList');
+    let html = '';
+    const colors = ['#00e5ff', '#00e676', '#7c4dff', '#ff9100', '#ff1744'];
+
+    persons.forEach((p, i) => {
+        const faceTag = p.face_id
+            ? `${t('access.face_ok')} ${p.face_images || 0}${t('access.faces_unit')}`
+            : `<span class="cred-missing">${t('access.face_none')}</span>`;
+        const cardTag = p.rfid_uid
+            ? `${t('access.card_ok')} ${esc(p.rfid_uid)}`
+            : `<span class="cred-missing">${t('access.card_none')}</span>`;
+        const disabled = p.enabled ? '' : ' person-disabled';
+        html += `
+            <div class="person-item${disabled}" data-id="${p.id}">
+                <div class="person-info">
+                    <div class="person-avatar" style="background: ${colors[i % colors.length]}">${esc(p.name.charAt(0))}</div>
+                    <div>
+                        <div class="person-name">${esc(p.name)}${p.enabled ? '' : ` <span class="cred-missing">${t('access.disabled_tag')}</span>`}</div>
+                        <div class="person-cred">${faceTag} · ${cardTag}</div>
+                    </div>
+                </div>
+                <div class="person-actions">
+                    <button class="btn btn-sm" data-act="face">${t('access.enroll_face')}</button>
+                    <button class="btn btn-sm" data-act="card">${t('access.enroll_card')}</button>
+                    <button class="btn btn-sm" data-act="toggle">${p.enabled ? t('access.disable') : t('access.enable')}</button>
+                    <button class="btn btn-sm btn-danger" data-act="delete">${t('access.delete')}</button>
+                </div>
+            </div>
+        `;
     });
 
-    if (res) {
-        if (res.granted) {
-            resultEl.textContent = res.message;
-            resultEl.className = 'access-result granted';
-        } else {
-            resultEl.textContent = res.message;
-            resultEl.className = 'access-result denied';
-        }
+    listEl.innerHTML = html || `<div class="loading">${t('access.no_persons')}</div>`;
+}
+
+async function onPersonAction(ev) {
+    const btn = ev.target.closest('button[data-act]');
+    if (!btn) return;
+    const item = btn.closest('.person-item');
+    const id = Number(item.dataset.id);
+    const person = persons.find(p => p.id === id) || {};
+    switch (btn.dataset.act) {
+        case 'face': startFaceEnroll(id, person.name || ''); break;
+        case 'card': startCardEnroll(id); break;
+        case 'toggle':
+            await setEnabled(id, !person.enabled); break;
+        case 'delete': await removePerson(id, person.name || ''); break;
     }
+}
+
+async function addPerson() {
+    const input = document.getElementById('newPersonName');
+    const name = input.value.trim();
+    if (!name) { showNotification(t('notify.enter_name'), 'error'); return; }
+    const res = await apiSend('/api/access/persons', { name });
+    if (report(res)) { input.value = ''; loadPersons(); }
+}
+
+async function setEnabled(id, enabled) {
+    const res = await apiSend(`/api/access/persons/${id}/enabled`, { enabled });
+    if (report(res)) loadPersons();
+}
+
+async function removePerson(id, name) {
+    if (!confirm(t('access.confirm_delete') + '\n' + name)) return;
+    const res = await apiSend(`/api/access/persons/${id}`, undefined, 'DELETE');
+    if (report(res)) loadPersons();
+}
+
+// ==================== 录入人脸（浏览器截帧） ====================
+
+function startFaceEnroll(personId, name) {
+    stopBurst();
+    enroll = { personId, name, frames: [], burst: null };
+    document.getElementById('enrollWho').textContent = name || '--';
+    document.getElementById('enrollFacePanel').classList.remove('hidden');
+    renderEnrollFrames();
+    showNotification(t('access.enroll_started'), 'info');
+}
+
+function cancelEnroll() {
+    stopBurst();
+    enroll = { personId: null, name: '', frames: [], burst: null };
+    document.getElementById('enrollFacePanel').classList.add('hidden');
+}
+
+function captureEnrollFrame() {
+    if (enroll.personId === null) { showNotification(t('access.enroll_none'), 'error'); return false; }
+    if (enroll.frames.length >= ENROLL_MAX_FRAMES) {
+        showNotification(t('access.enroll_full'), 'info');
+        stopBurst();
+        return false;
+    }
+    const img = document.getElementById('faceLiveImg');
+    if (!img || !img.naturalWidth) { showNotification(t('access.no_frame'), 'error'); return false; }
+    const scale = Math.min(1, CAPTURE_MAX_WIDTH / img.naturalWidth);
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(img.naturalWidth * scale);
+    canvas.height = Math.round(img.naturalHeight * scale);
+    canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+    let url;
+    try {
+        url = canvas.toDataURL('image/jpeg', 0.92);
+    } catch (e) {
+        // 画面不是同源时 canvas 会被污染，这里明确告诉用户而不是静默失败
+        showNotification(t('access.canvas_blocked'), 'error');
+        stopBurst();
+        return false;
+    }
+    enroll.frames.push(url);
+    renderEnrollFrames();
+    return true;
+}
+
+function burstEnroll() {
+    if (enroll.personId === null) { showNotification(t('access.enroll_none'), 'error'); return; }
+    if (enroll.burst) { stopBurst(); return; }
+    const btn = document.getElementById('burstBtn');
+    btn.classList.add('btn-active');
+    const tick = () => {
+        if (!captureEnrollFrame() || enroll.frames.length >= ENROLL_MAX_FRAMES) stopBurst();
+    };
+    tick();
+    enroll.burst = setInterval(tick, BURST_INTERVAL_MS);
+}
+
+function stopBurst() {
+    if (enroll.burst) clearInterval(enroll.burst);
+    enroll.burst = null;
+    const btn = document.getElementById('burstBtn');
+    if (btn) btn.classList.remove('btn-active');
+}
+
+function renderEnrollFrames() {
+    document.getElementById('enrollCount').textContent =
+        `${enroll.frames.length}/${ENROLL_MAX_FRAMES}`;
+    document.getElementById('enrollThumbs').innerHTML = enroll.frames
+        .map((src, i) => `<img class="enroll-thumb" src="${src}" alt="${i + 1}">`).join('');
+    document.getElementById('submitBtn').disabled =
+        enroll.frames.length < ENROLL_MIN_FRAMES;
+}
+
+async function submitEnrollFaces() {
+    stopBurst();
+    if (enroll.personId === null || !enroll.frames.length) {
+        showNotification(t('access.enroll_none'), 'error');
+        return;
+    }
+    const target = enroll.personId;
+    const btn = document.getElementById('submitBtn');
+    btn.disabled = true;
+    btn.textContent = t('access.enrolling');
+    const res = await apiSend(`/api/access/persons/${target}/enroll/face`,
+        { images: enroll.frames });
+    btn.textContent = t('access.submit');
+    btn.disabled = false;
+    if (res && !res.error) {
+        cancelEnroll();
+        loadPersons();
+        const rejected = ((res.detail || {}).rejected || []);
+        showNotification(pick(res, 'message')
+            + (rejected.length ? t('access.enroll_rejected') + rejected.length : ''), 'success');
+    } else {
+        report(res);
+    }
+}
+
+// ==================== 录入房卡（等待刷卡） ====================
+
+async function startCardEnroll(personId) {
+    if (card.sid) await cancelCardEnroll(true);
+    const res = await apiSend(`/api/access/persons/${personId}/enroll/rfid`);
+    if (!res || res.error || !res.session) { report(res); return; }
+    card = {
+        sid: res.session.id,
+        deadline: Date.now() + (res.timeout_seconds || 45) * 1000,
+        timer: null,
+    };
+    const bar = document.getElementById('cardBar');
+    bar.classList.remove('hidden');
+    tickCardBar();
+    card.timer = setInterval(async () => {
+        if (Date.now() > card.deadline) {
+            stopCardPolling();
+            document.getElementById('cardBar').classList.add('hidden');
+            showNotification(t('access.card_timeout'), 'error');
+            return;
+        }
+        tickCardBar();
+        const st = await apiGet(`/api/access/enroll/rfid/${card.sid}`);
+        if (!st) return;
+        if (st.state === 'pending') return;
+        stopCardPolling();
+        bar.classList.add('hidden');
+        if (st.state === 'matched') {
+            showNotification(t('access.card_bound') + (st.uid || ''), 'success');
+            loadPersons();
+        } else if (st.state === 'conflict') {
+            showNotification(st.error || t('access.card_conflict'), 'error');
+            loadPersons();
+        } else {
+            showNotification(st.error || t('access.card_error'), 'error');
+        }
+    }, 1000);
+}
+
+function tickCardBar() {
+    const left = Math.max(0, Math.ceil((card.deadline - Date.now()) / 1000));
+    document.getElementById('cardBarText').textContent =
+        `${t('access.card_waiting')} ${left}s`;
+}
+
+async function cancelCardEnroll(silent) {
+    if (card.sid) await apiSend(`/api/access/enroll/rfid/${card.sid}`, undefined, 'DELETE');
+    stopCardPolling();
+    document.getElementById('cardBar').classList.add('hidden');
+    if (!silent) showNotification(t('access.card_cancelled'), 'info');
+}
+
+function stopCardPolling() {
+    if (card.timer) clearInterval(card.timer);
+    card = { sid: null, deadline: 0, timer: null };
+}
+
+// ==================== 链路自测 ====================
+
+function renderTestPicker() {
+    const sel = document.getElementById('testPerson');
+    const keep = sel.value;
+    sel.innerHTML = persons.map(p =>
+        `<option value="${p.id}">${esc(p.name)}</option>`).join('');
+    // 语言切换会重渲染整条下拉，别把用户刚选的人跳回第一个
+    if (keep && persons.some(p => String(p.id) === keep)) sel.value = keep;
+    sel.disabled = !persons.length;
+}
+
+async function runAccessTest() {
+    const id = Number(document.getElementById('testPerson').value);
+    const method = document.getElementById('testMethod').value;
+    const out = document.getElementById('accessResult');
+    if (!id) { showNotification(t('access.pick_person'), 'error'); return; }
+    out.classList.remove('hidden', 'granted', 'denied');
+    out.textContent = t('access.verifying');
+    const res = await apiSend('/api/access/test', { person_id: id, method });
+    if (!res || res.error) { out.textContent = pick(res || {}, 'error'); report(res); return; }
+    out.textContent = pick(res, 'message');
+    out.classList.add(res.granted ? 'granted' : 'denied');
+    loadAccessLogs();
 }
 
 // ==================== 人脸识别事件列表 ====================
@@ -220,72 +501,16 @@ async function loadFaceEvents() {
         html += `
             <tr>
                 <td>${timeStr}</td>
-                <td>${evt.person_name || (lang === 'zh' ? '未知' : 'Unknown')}</td>
-                <td>${evt.face_id || '--'}</td>
+                <td>${esc(evt.person_name) || (lang === 'zh' ? '未知' : 'Unknown')}</td>
+                <td>${esc(evt.face_id) || '--'}</td>
                 <td>${evt.confidence ? (evt.confidence * 100).toFixed(1) + '%' : '--'}</td>
                 <td><span class="status-tag ${statusClass}">${statusText}</span></td>
-                <td>${evt.device_source || 'orange_pi'}</td>
+                <td>${esc(evt.device_source) || 'orange_pi'}</td>
             </tr>
         `;
     });
 
     body.innerHTML = html;
-}
-
-// ==================== 授权人员管理 ====================
-
-async function loadPersons() {
-    const persons = await apiGet('/api/access/persons');
-    if (!persons) return;
-
-    const listEl = document.getElementById('personList');
-    let html = '';
-
-    persons.forEach((p, i) => {
-        const initial = p.name.charAt(0);
-        const colors = ['#00e5ff', '#00e676', '#7c4dff', '#ff9100', '#ff1744'];
-        const color = colors[i % colors.length];
-        const faceIdDisplay = p.face_id || t('access.unset');
-        html += `
-            <div class="person-item">
-                <div class="person-info">
-                    <div class="person-avatar" style="background: ${color}">${initial}</div>
-                    <div>
-                        <div class="person-name">${p.name}</div>
-                        <div class="person-rfid">${I18N.currentLang === 'zh' ? '人脸ID' : 'Face ID'}: ${faceIdDisplay}</div>
-                    </div>
-                </div>
-            </div>
-        `;
-    });
-
-    listEl.innerHTML = html || '<div class="loading">' + t('access.no_persons') + '</div>';
-}
-
-async function addPerson() {
-    const nameInput = document.getElementById('newPersonName');
-    const rfidInput = document.getElementById('newPersonRFID');
-    const name = nameInput.value.trim();
-    const faceId = rfidInput.value.trim();
-
-    if (!name) {
-        showNotification(t('notify.enter_name'), 'error');
-        return;
-    }
-
-    const res = await apiPost('/api/access/persons', { name: name, face_id: faceId });
-    if (res) {
-        if (res.message) {
-            const msg = I18N.currentLang === 'en' ? (res.message_en || res.message) : res.message;
-            showNotification(msg, 'success');
-            nameInput.value = '';
-            rfidInput.value = '';
-            loadPersons();
-        } else if (res.error) {
-            const err = I18N.currentLang === 'en' ? (res.error_en || res.error) : res.error;
-            showNotification(err, 'error');
-        }
-    }
 }
 
 // ==================== 门禁日志 ====================
@@ -295,20 +520,23 @@ async function loadAccessLogs() {
     if (!logs) return;
 
     const body = document.getElementById('accessLogBody');
+    const lang = I18N.currentLang;
+    const locale = lang === 'zh' ? 'zh-CN' : 'en-US';
     let html = '';
 
     logs.forEach(log => {
         const dt = new Date(log.timestamp);
-        const locale = I18N.currentLang === 'zh' ? 'zh-CN' : 'en-US';
         const timeStr = dt.toLocaleString(locale);
         const statusClass = log.status === 'granted' ? 'granted' : 'denied';
         const statusText = log.status === 'granted' ? t('access.log_granted') : t('access.log_denied');
+        const method = (lang === 'zh' ? ACCESS_METHOD_ZH : ACCESS_METHOD_EN)[log.access_type]
+            || log.access_type;
 
         html += `
             <tr>
                 <td>${timeStr}</td>
-                <td>${log.person_name}</td>
-                <td>${log.access_type.toUpperCase()}</td>
+                <td>${esc(log.person_name)}</td>
+                <td>${esc(method)}</td>
                 <td><span class="status-tag ${statusClass}">${statusText}</span></td>
             </tr>
         `;
@@ -316,3 +544,6 @@ async function loadAccessLogs() {
 
     body.innerHTML = html || '<tr><td colspan="4">' + t('access.no_records') + '</td></tr>';
 }
+
+const ACCESS_METHOD_ZH = { face: '人脸识别', rfid: '刷房卡', keypad: '键盘密码' };
+const ACCESS_METHOD_EN = { face: 'Face', rfid: 'Room card', keypad: 'Keypad' };

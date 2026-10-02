@@ -111,13 +111,13 @@ docker compose up -d camera                        # 容器没起（Exited）时
 
 ```text
 面板(Blockly) ─▶ 规则JSON(schema.py) ─▶ 引擎(engine.py) ─▶ bridge(MCP 子进程，独占串口) ▶ Module B
-     传感器快照(SENSOR:)、事件(EVENT:)、人脸授权 ─▶ 引擎注入(边沿/条件/冷却)
+     传感器快照(SENSOR:)、事件(EVENT:)、门禁鉴权结果(access_granted/access_denied) ─▶ 引擎注入(边沿/条件/冷却)
 ```
 
 - `capabilities.py`   积木下拉的能力清单（传感器/事件/比较符/执行器/全局状态变量），前端与校验共用
 - `schema.py`         规则 JSON 模型与校验（触发/条件/那么/否则/冷却）
 - `engine.py`         规则引擎：触发沿、持续秒数、条件组合、动作线程、防重入、记录
-- `default_rules.py`  内置默认规则积木（高温控风扇、光敏调光、雨水关窗、烟雾报警、人脸开门、离家关全屋、按键/红外切换等），可增删/停用
+- `default_rules.py`  内置默认规则积木（门禁开门/延时关门/被拒蜂鸣、高温控风扇、光敏调光、雨水关窗、烟雾报警、离家关全屋、按键/红外切换等），可增删/停用
 - `global_state.py`   全局状态仓库：自由命名变量（bool/number/enum/text），积木读写，落盘 `data/global_state.json`；每个变量在自动化页是一张「📌 状态」条目卡片，由顶层「状态定义」积木新建/改名/删除
 - `oled_carousel.py`  OLED 轮播（扁平数据源 + 内容去重）
 

@@ -47,10 +47,6 @@ DEFAULTS: dict = {
     # 串口只能被 web 拉起的 mcp_home_server 独占。
     # MCP 传感器快照轮询间隔（秒），拿到新数据即写入 SQLite
     "sensor_poll_interval": 2.0,
-    "door": {
-        # 香橙派推送人脸识别成功后自动开门（经 MCP 下发 B 板）
-        "open_on_face_grant": True,
-    },
     # 语音助手 HTTP 服务（唤醒/文本指令/对话实况代理的目标地址）。
     # 环境变量 SMART_HOME_VOICE_URL 优先。
     "voice": {

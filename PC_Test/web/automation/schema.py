@@ -18,7 +18,8 @@ from __future__ import annotations
 
 from . import webhook
 from .capabilities import (
-    ACTION_DEVICES, COMPARATORS, CONDITION_SOURCES, EVENT_TRIGGERS,
+    ACCESS_METHOD_IDS, ACTION_DEVICES, COMPARATORS, CONDITION_SOURCES,
+    EVENT_TRIGGERS,
 )
 from .global_state import is_var_id
 # RFID 卡号归一化（"AA BB CC DD"）与上报值全等比对，避免大小写/分隔符导致匹配失败
@@ -103,6 +104,13 @@ def validate_trigger(trig: dict, var_types: dict | None = None) -> dict:
                 clean["uid"] = normalize_uid(trig["uid"])
             except ValueError as e:
                 raise ValidationError(f"RFID 卡号非法：{e}")
+        # 门禁事件可限定验证方式（不填=人脸/刷卡/键盘任一）
+        if trig.get("method") not in (None, ""):
+            method = str(trig["method"]).strip()
+            if method not in ACCESS_METHOD_IDS:
+                raise ValidationError(
+                    f"门禁验证方式只能是 {'/'.join(ACCESS_METHOD_IDS)}，得到 {method!r}")
+            clean["method"] = method
         return clean
     if kind == "interval":
         seconds = _as_number(trig.get("seconds"), "周期触发块")

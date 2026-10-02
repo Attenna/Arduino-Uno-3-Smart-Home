@@ -186,13 +186,29 @@ function defineBlocks() {
             this.setTooltip('设备刚被人在面板或语音里手动设置时触发；「手动优先冷却」类仲裁由积木规则自己表达');
         },
     };
-    Blockly.Blocks['trig_face'] = {
+    // 门禁通过/被拒各一块，「验证方式」留空 = 任意方式（access_guard 统一广播，
+    // 人脸/刷卡/键盘都走同一条规则；只想要人脸时选「人脸识别」即可）
+    Blockly.Blocks['trig_access'] = {
         init: function () {
             this.appendDummyInput()
-                .appendField('当 😊 人脸识别：授权通过');
+                .appendField('当 🚪 门禁验证通过')
+                .appendField(new Blockly.FieldDropdown(accessMethodOptions), 'M')
+                .appendField('（不筛方式=人脸/刷卡/键盘任一）');
             this.setPreviousStatement(true, 'TRIG');
             this.setNextStatement(false);
             this.setColour(30);
+            this.setTooltip('白名单命中后广播；开门、延时关门这些动作都由规则自己决定');
+        },
+    };
+    Blockly.Blocks['trig_access_denied'] = {
+        init: function () {
+            this.appendDummyInput()
+                .appendField('当 🚪 门禁被拒绝')
+                .appendField(new Blockly.FieldDropdown(accessMethodOptions), 'M');
+            this.setPreviousStatement(true, 'TRIG');
+            this.setNextStatement(false);
+            this.setColour(30);
+            this.setTooltip('凭证不在白名单（含陌生人脸/未登记卡）时广播，可用来拉蜂鸣器、拍照留证');
         },
     };
     Blockly.Blocks['trig_event_other'] = {
@@ -645,7 +661,7 @@ function eventOptions() {
 }
 // 已拆成专用积木的事件；其余（烟雾/雨水/人体红外的沿）留在通用「事件」块里
 const DEDICATED_EVENTS = ['touch_on', 'touch_off', 'keypad', 'ir', 'rfid',
-                          'manual_control', 'face_granted'];
+                          'manual_control', 'access_granted', 'access_denied'];
 function otherEventOptions() {
     const opts = eventOptions().filter(o => !DEDICATED_EVENTS.includes(o[1]));
     return opts.length ? opts : [['（无其它事件）', '']];
@@ -654,6 +670,14 @@ function manualDeviceOptions() {
     const e = CAPS.events.find(x => x.id === 'manual_control');
     const opts = ((e && e.choices) || []).map(c => [c.label, c.id]);
     return opts.length ? opts : [['风扇', 'fan']];
+}
+// 门禁「验证方式」下拉：首项是「不筛方式」，与后端 access_granted{method} 可选过滤一致
+function accessMethodOptions() {
+    const e = CAPS.events.find(x => x.id === 'access_granted');
+    const opts = [['不筛方式', '']];
+    for (const c of ((e && e.choices) || [])) opts.push([c.label, c.id]);
+    return opts.length > 1 ? opts : [['不筛方式', ''], ['人脸识别', 'face'],
+                                     ['刷房卡', 'rfid'], ['键盘密码', 'keypad']];
 }
 
 // ── 全局状态积木的下拉（变量清单是运行期的，来自 CAPS.state_vars）──
@@ -800,7 +824,8 @@ function buildToolbox() {
           <block type="trig_ir"></block>
           <block type="trig_rfid"></block>
           <block type="trig_manual"></block>
-          <block type="trig_face"></block>
+          <block type="trig_access"></block>
+          <block type="trig_access_denied"></block>
           <block type="trig_event_other"><field name="EVT">${evt[0][1]}</field></block>
         </category>
       </category>
@@ -914,6 +939,10 @@ function summarizeTrigger(t) {
         if (t.device) {
             const d = ((e && e.choices) || []).find(x => x.id === t.device);
             label += ` · ${d ? d.label : t.device}`;
+        }
+        if (t.method) {
+            const m = ((e && e.choices) || []).find(x => x.id === t.method);
+            label += ` · ${m ? m.label : t.method}`;
         }
         if (t.uid) label += ` · 卡 ${t.uid}`;
         return label;
@@ -1566,8 +1595,18 @@ function triggerToJson(b) {
             if (dev) json.device = dev;   // 空 = 任意设备的手动操作
             return json;
         }
-        case 'trig_face':
-            return { kind: 'event', event: 'face_granted' };
+        case 'trig_access': {
+            const json = { kind: 'event', event: 'access_granted' };
+            const m = b.getFieldValue('M');
+            if (m) json.method = m;       // 空 = 任意验证方式都算通过
+            return json;
+        }
+        case 'trig_access_denied': {
+            const json = { kind: 'event', event: 'access_denied' };
+            const m = b.getFieldValue('M');
+            if (m) json.method = m;
+            return json;
+        }
         case 'trig_event_other': {
             const evt = b.getFieldValue('EVT');
             if (!evt) return null;
@@ -1748,8 +1787,11 @@ function fillTrigger(trig) {
         } else if (evt === 'manual_control') {
             b = createTyped('trig_manual');
             if (trig.device) b.setFieldValue(optionValue(manualDeviceOptions(), trig.device, 'fan'), 'DEV');
-        } else if (evt === 'face_granted') {
-            b = createTyped('trig_face');
+        } else if (evt === 'access_granted' || evt === 'access_denied') {
+            b = createTyped(evt === 'access_granted' ? 'trig_access' : 'trig_access_denied');
+            if (trig.method) {
+                b.setFieldValue(optionValue(accessMethodOptions(), trig.method, ''), 'M');
+            }
         } else {
             b = createTyped('trig_event_other');
             b.setFieldValue(optionValue(otherEventOptions(), evt, ''), 'EVT');

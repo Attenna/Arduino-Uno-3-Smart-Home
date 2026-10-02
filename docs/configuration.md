@@ -45,7 +45,6 @@
 | 键 | 默认 | 说明 |
 |----|------|------|
 | `sensor_poll_interval` | `2.0` | 后台轮询 MCP `get_sensor_status` 的间隔（秒） |
-| `door.open_on_face_grant` | `true` | 人脸授权通过后自动开门 |
 | `voice.url` | `http://127.0.0.1:8101` | 语音助手 HTTP 地址：面板「语音」页与自动化「唤醒/播报」动作的代理目标（与硬件链路无关）。环境变量 `SMART_HOME_VOICE_URL` 优先，容器内为 `http://voice:8101` |
 | `camera.stream_url` | `http://127.0.0.1:8080/video_feed` | 摄像头 MJPEG 上游地址 |
 

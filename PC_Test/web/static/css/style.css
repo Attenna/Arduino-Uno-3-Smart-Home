@@ -1250,6 +1250,129 @@ body {
     font-family: 'Courier New', monospace;
 }
 
+/* 人员条目：凭证状态 + 每条自己的录入/停用/删除动作 */
+.person-cred {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-family: 'Courier New', monospace;
+}
+
+.person-item.person-disabled {
+    opacity: 0.55;
+}
+
+.person-actions {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
+.cred-missing {
+    color: var(--accent-orange, #ff9100);
+}
+
+.person-hint {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 8px;
+    line-height: 1.5;
+}
+
+.card-enroll-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 8px 12px;
+    margin-bottom: 10px;
+    border-radius: 10px;
+    border: 1px dashed var(--accent-cyan);
+    background: rgba(0, 229, 255, 0.08);
+    font-size: 12px;
+}
+
+/* 录入人脸：实时画面下方的截帧暂存区 */
+.enroll-face {
+    margin-top: 16px;
+    padding: 12px;
+    border-radius: 12px;
+    border: 1px solid var(--border-color);
+    background: var(--bg-secondary);
+}
+
+.enroll-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 13px;
+}
+
+.enroll-title {
+    font-weight: 600;
+    color: var(--accent-cyan);
+}
+
+.enroll-who {
+    font-weight: 600;
+}
+
+.enroll-count {
+    margin-left: auto;
+    font-family: 'Courier New', monospace;
+    color: var(--text-secondary);
+}
+
+.enroll-tip {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin: 6px 0 10px;
+    line-height: 1.5;
+}
+
+.enroll-thumbs {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+    min-height: 8px;
+}
+
+.enroll-thumb {
+    width: 56px;
+    height: 56px;
+    object-fit: cover;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+}
+
+.access-test {
+    display: flex;
+    gap: 8px;
+    margin-top: 16px;
+    flex-wrap: wrap;
+}
+
+.access-test select {
+    flex: 0 1 auto;
+    min-width: 130px;
+}
+
+.btn-accent {
+    border-color: var(--accent-cyan);
+    color: var(--accent-cyan);
+}
+
+.btn-accent:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.btn-active {
+    border-color: var(--accent-green);
+    color: var(--accent-green);
+}
+
 .add-person h4 {
     font-size: 13px;
     color: var(--text-secondary);

@@ -16,10 +16,6 @@ serial:
 # 后台轮询 MCP get_sensor_status 的间隔（秒），新快照写入 SQLite
 sensor_poll_interval: 2.0
 
-door:
-  # 香橙派推送人脸识别成功（/api/face/notify）后自动经 MCP 开门
-  open_on_face_grant: true
-
 # ── 语音助手 HTTP 服务（面板「语音」页与自动化「语音」动作的代理目标）────
 # 环境变量 SMART_HOME_VOICE_URL 优先（Docker 里为 http://voice:8101）。
 voice:

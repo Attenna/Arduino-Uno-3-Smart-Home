@@ -157,18 +157,23 @@ Module B:  main → Protocol → Parser/Dispatcher → Drivers → Arduino Hardw
 
 ## 7. 关键链路时序
 
-### 7.1 人脸识别 → 自动开门（形态 B）
+### 7.1 门禁鉴权 → 自动开门（形态 B）
 
 ```text
-camera ──MJPEG──▶ web 人脸引擎(YOLO+ArcFace)
-                      │ 识别到授权人脸 (face granted)
+camera ──MJPEG──▶ web 人脸引擎(YOLO+ArcFace)   Module A RC522 ──串口──▶ web 硬件桥
+                      │ 识别结果                       │ rfid 事件（录入会话优先取卡）
+                      ▼                               ▼
+                 access_guard 白名单鉴权（凭证 → 人员 + 通行日志）
+                      │ access_granted{method: face|rfid|keypad}
                       ▼
-                 积木规则 face_open_door ──▶ web 硬件桥(MCP) ──▶ Module B 开门
-                      │
+                 积木规则 access_open_door ──▶ web 硬件桥(MCP) ──▶ Module B 开门
+                      │                                    └─ 延时关门 access_auto_close
                       └── 与面板动作同一套记账：更新状态 / 写历史 / manual_control
 ```
 
-> 开门由默认积木规则 `face_open_door`（`face_granted` 事件驱动）完成，用户可停用/编辑。
+> 后端只做「凭证 → 人员」的白名单判定与通行日志，开门/延时关门/被拒报警全由积木规则
+> 决定（预设 `access_open_door` / `access_auto_close` / `access_denied_buzzer`），
+> 事件按 `method`（face / rfid / keypad）可分别筛选；在 /automation 页可改可停用。
 
 ### 7.2 语音指令 → 工具调用（形态 B）
 

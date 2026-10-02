@@ -153,6 +153,13 @@ class AutomationEngine:
     # v4 起删除的预设：touch_toggle 拆成两条条件规则，档位 cycle 类不再重建
     _REMOVED_PRESETS = ("ir_fan_cycle", "ir_light_cycle_2", "ir_light_cycle_3",
                         "touch_toggle")
+    # v5：门禁鉴权事件由「只有人脸」的 face_granted 换成统一的 access_granted
+    # （带 method=face/rfid/keypad）。旧事件名不再有任何广播方，因此自定义规则
+    # 里的 face_granted 触发就地换成等价写法，行为不变（只有人脸通过时才触发）。
+    _LEGACY_EVENT_MAP = {"face_granted": ("access_granted", "face")}
+    # 同批改名的预设：语义没变，保留用户开关与规则 id，只把内容换成新版
+    _PRESET_RENAMES = {"face_open_door": "access_open_door",
+                       "face_open_close": "access_auto_close"}
 
     def load(self) -> None:
         # 种子全局状态先就位：迁移与规则里都会引用 g:xxx，变量必须先存在
@@ -189,12 +196,14 @@ class AutomationEngine:
         if self.seed_presets():
             self._write_rules()
         elif self._migration_info and self._migration_info.get("migrated"):
-            # 迁移结果落盘，下次启动不再重复迁移（写盘会带上 presets_version=4）
+            # 迁移结果落盘，下次启动不再重复迁移（写盘会带上当前 PRESETS_VERSION）
             self._write_rules()
 
     def _rule_is_legacy(self, rule: dict) -> bool:
-        """规则里是否还有引擎硬编码时代的源/动作引用（home_mode / person_present 等）。"""
+        """规则里是否还有引擎硬编码时代的源/动作/事件引用（home_mode、face_granted 等）。"""
         trig = rule.get("trigger") or {}
+        if trig.get("kind") == "event" and trig.get("event") in self._LEGACY_EVENT_MAP:
+            return True
         if trig.get("kind") == "sensor" and (
                 trig.get("sensor") in self._LEGACY_SOURCE_MAP
                 or trig.get("sensor") in self._LEGACY_UNMAPPABLE):
@@ -240,7 +249,12 @@ class AutomationEngine:
         new = copy.deepcopy(rule)
         changed = False
         warns: list[str] = []
-        for holder in [new.get("trigger") or {}] + list(new.get("conditions") or []):
+        trig = new.get("trigger") or {}
+        if trig.get("kind") == "event" and trig.get("event") in self._LEGACY_EVENT_MAP:
+            # 旧的门禁事件只有人脸一条来源；换成统一事件 + 限定方式，行为等价
+            trig["event"], trig["method"] = self._LEGACY_EVENT_MAP[trig["event"]]
+            changed = True
+        for holder in [trig] + list(new.get("conditions") or []):
             sensor = holder.get("sensor")
             if sensor in self._LEGACY_UNMAPPABLE:
                 return None, False, f"条件源「{sensor}」已随引擎仲裁拆除，无法映射"
@@ -304,6 +318,7 @@ class AutomationEngine:
             if pid in self._REMOVED_PRESETS:
                 dropped.append(name)
                 continue
+            pid = self._PRESET_RENAMES.get(pid, pid)
             if pid in v4_by_pid and presets_version < PRESETS_VERSION:
                 new = copy.deepcopy(v4_by_pid[pid])
                 new["id"] = rule.get("id") or None
@@ -834,6 +849,9 @@ class AutomationEngine:
                         return
                 except ValueError:
                     return
+            # 门禁事件的验证方式过滤（不填=任一方式：人脸/刷卡/键盘都算）
+            if trig.get("method") and str(event.get("method", "")) != trig["method"]:
+                return
             label = EVENT_TRIGGERS[trig["event"]]["label"]
             self._fire(rule, reason=label)
 

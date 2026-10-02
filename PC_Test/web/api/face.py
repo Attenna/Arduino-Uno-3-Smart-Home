@@ -1,10 +1,9 @@
-"""人脸识别 API：帧识别、引擎配置、已知人脸、香橙派结果推送。"""
+"""人脸识别 API：帧识别、引擎配置、已知人脸、识别结果推送（联动门禁）。"""
 import base64
 
 from flask import Blueprint, jsonify, request
 
-from .. import extensions
-from ..extensions import db, face_engine
+from ..extensions import access_guard, db, face_engine
 from ..utils import safe_base64_decode
 
 bp = Blueprint("face", __name__)
@@ -87,62 +86,32 @@ def face_remove_known(face_id):
                     "error_en": f"Face not found: {face_id}"}), 404
 
 
-# ==================== 香橙派识别结果推送（联动门禁）====================
+# ==================== 识别结果推送（联动门禁）====================
 
 @bp.route("/api/face/notify", methods=["POST"])
 def face_notify():
-    """香橙派/边缘设备推送人脸识别结果：入库 -> 鉴权 -> 授权后自动开门。"""
+    """香橙派/边缘设备推送人脸识别结果：记事件 → 白名单鉴权 → 广播门禁事件。
+
+    开门不在这里。通过后广播 ``access_granted``（method=face），由积木规则
+    （内置 ``access_open_door`` / ``access_auto_close``）决定开不开门、几点关门 ——
+    想「只鉴权不开门」，在 /automation 页停用那两条规则即可。
+    """
     data = request.json or {}
     face_id = data.get("face_id", "")
-    confidence = data.get("confidence")
-    image_path = data.get("image_path", "")
-    device_source = data.get("device_source", "orange_pi")
-
     if not face_id:
         return jsonify({"error": "缺少 face_id",
                         "error_en": "Missing face_id"}), 400
 
-    matched = db.find_authorized(face_id, "face")
-    if matched is None:
-        for person in db.get_authorized_persons():
-            if person.get("face_id") == face_id:
-                matched = person
-                break
-
-    person_name = matched["name"] if matched else None
-    event_id = db.add_face_event(
-        face_id=face_id, person_name=person_name, confidence=confidence,
-        image_path=image_path, device_source=device_source)
-
-    if matched:
-        # 开门动作已下沉为默认积木规则 face_open_door（face_granted 事件驱动，
-        # 用户可停用/编辑）。此处只校验身份（安全边界）与记录，不再直接下发硬件。
-        # door 直连开着时若有人想纯鉴权不开门，去掉那条积木规则即可。
-        db.add_access_log(matched["name"], "face", "granted",
-                          credential=face_id, command_status=None)
-        if event_id:
-            db.update_face_event_status(event_id, "granted", verified=True)
-        # 通知自动化引擎：触发 face_granted 事件 → 默认积木规则开门/迎客等
-        if extensions.automation is not None:
-            extensions.automation.on_event(
-                {"event": "face", "status": "granted",
-                 "person": matched["name"], "face_id": face_id})
-        return jsonify({
-            "granted": True, "person": matched["name"], "face_id": face_id,
-            "event_id": event_id,
-            "message": f"欢迎 {matched['name']}!",
-            "message_en": f"Welcome {matched['name']}!",
-        })
-
-    db.add_access_log("未知人员", "face", "denied", credential=face_id)
-    if event_id:
-        db.update_face_event_status(event_id, "denied", verified=False)
-    return jsonify({
-        "granted": False, "person": None, "face_id": face_id,
-        "event_id": event_id,
-        "message": "人脸未识别，访问被拒绝",
-        "message_en": "Face not recognized, access denied",
-    })
+    result = access_guard.handle_face_result(
+        face_id, confidence=data.get("confidence"),
+        image_path=data.get("image_path", ""),
+        device_source=data.get("device_source", "orange_pi"))
+    granted, person = result["granted"], result["person"]
+    result.update({
+        "message": f"欢迎 {person}!" if granted else "人脸未识别，访问被拒绝",
+        "message_en": f"Welcome {person}!" if granted
+                      else "Face not recognized, access denied"})
+    return jsonify(result)
 
 
 @bp.route("/api/face/events")

@@ -356,38 +356,70 @@ GET 与 POST 等价（便于浏览器地址栏直接点）。
 
 ## 2.4 门禁（Access）
 
+本模块只管「谁有什么凭证」和「把凭证录进来」；开门、延时关门、被拒报警都不在这里，
+鉴权结果统一广播成 `access_granted` / `access_denied` 事件，由 /automation 页的积木规则决定。
+
 | 方法 | 路径 | 说明 |
 |------|------|------|
+| GET | `/api/access/persons` | 授权人员列表（含人脸/房卡状态） |
+| POST | `/api/access/persons` | 新增人员（只要姓名；凭证之后单独录入） |
+| DELETE | `/api/access/persons/<id>` | 删除人员，并清掉他的注册照与识别身份 |
+| POST | `/api/access/persons/<id>/enabled` | 停用 / 启用（凭证保留但不认） |
+| POST | `/api/access/persons/<id>/enroll/face` | 录入人脸：前端从实时画面截的 base64 帧 |
+| POST | `/api/access/persons/<id>/enroll/rfid` | 录入房卡：开一个等待刷卡的会话 |
+| GET | `/api/access/enroll/rfid/<sid>` | 轮询录入会话状态 |
+| DELETE | `/api/access/enroll/rfid/<sid>` | 取消录入会话 |
 | GET | `/api/access/logs` | 通行记录列表 |
-| POST | `/api/access/verify` | 凭证校验（人脸 / RFID） |
-| GET | `/api/access/persons` | 授权人员列表 |
-| POST | `/api/access/persons` | 新增授权人员 |
+| POST | `/api/access/test` | 链路自测：拿名单里的真实人员走完整鉴权（不碰硬件） |
 
-`POST /api/access/verify` 请求：
+`GET /api/access/persons` 返回：
 
 ```json
-{ "verify_type": "face", "face_id": "person_01" }
+[{ "id": 1, "name": "张三", "face_id": "张三", "rfid_uid": "AA 53 0C 07",
+   "enabled": true, "face_images": 6 }]
 ```
 
-通过响应：
+`face_id` 就是人脸库的目录名（清洗后的姓名），`face_images` 是该身份当前的注册照张数。
+
+### 录入人脸（浏览器截帧）
+
+`POST /api/access/persons/<id>/enroll/face` 请求（一次最多 12 帧，单帧 ≤4MB）：
 
 ```json
-{
-  "granted": true,
-  "person": "张三",
-  "message": "验证通过，欢迎 张三!",
-  "message_en": "Verified, Welcome 张三!"
-}
+{ "images": ["data:image/jpeg;base64,...", "..."] }
 ```
 
-> 校验通过后会向自动化引擎投递 `face`/`granted` 事件（触发开门等规则）。
-> RFID 校验使用 `verify_type:"rfid"` + `rfid_tag`。
-
-`POST /api/access/persons` 请求：
+后端逐帧检脸，太小的丢弃，合格的存进 `data/face/authorized/<face_id>/`，
+重算该身份的均值原型并热加载识别器（认人立即生效，不用重启）：
 
 ```json
-{ "name": "张三", "face_id": "person_01", "rfid_tag": "AA 53 0C 07" }
+{ "message": "已录入 4 张人脸照片（张三）", "message_en": "Enrolled 4 face image(s): 张三",
+  "detail": { "rejected": ["人脸太小"], "images": 6, "dir": "…/authorized/张三" },
+  "person": { "…": "同列表行" } }
 ```
+
+同一身份最多留最新的 20 张参与原型；重复点「录入人脸」是追加，不会产生第二个同名身份。
+
+### 录入房卡（等待刷卡）
+
+`POST …/enroll/rfid` 返回 `{"session": {"id": "1a2b3c4d", "state": "pending", …},
+"timeout_seconds": 45}`，用户在这 45 秒内把卡贴到 A 板 RC522 上；前端轮询
+`GET /api/access/enroll/rfid/<sid>`，`state` 依次为 `pending` / `matched`（带 `person`）/
+`conflict`（卡已绑别人）/ `expired` / `error`。
+
+等待会话存在时，这张卡会被录入流程取走而**不当作一次鉴权**（否则新卡必然记一条拒绝）。
+
+### 自测
+
+`POST /api/access/test` 请求 `{"method": "face"|"rfid", "person_id": 1}`，
+身份取自数据库、走与真实刷卡完全相同的鉴权 + 日志 + 事件广播路径，返回：
+
+```json
+{ "granted": true, "person": "张三", "method": "face", "credential": "张三",
+  "message": "验证通过，欢迎 张三!", "message_en": "Verified, Welcome 张三!" }
+```
+
+> 该人员没有对应凭证时返回 400（`该人员还没有录入人脸/房卡`）。
 
 ## 2.5 人脸（Face）
 
@@ -425,9 +457,11 @@ GET 与 POST 等价（便于浏览器地址栏直接点）。
 
 授权通过时返回 `{"granted": true, "person": "张三", "event_id": 12}`，并：
 写 `access_logs`（granted）+ 更新 `face_events` 状态 → 向自动化引擎投递
-`{"event":"face","status":"granted"}` 事件。**开门动作不写死在这里**，
-由内置规则 `face_open_door`（人脸·授权 → 开门）执行，可在自动化页停用或改成
-「先播报欢迎语」；未授权只记 denied 并发 `granted:false`，**不产生自动化事件**。
+`{"event":"access","status":"granted","method":"face",…}` 事件（积木里对应
+`access_granted`，可按 `method` 筛选）。**开门动作不写死在这里**，
+由内置规则 `access_open_door`（门禁·验证通过 → 开门）执行，可在自动化页停用或改成
+「先播报欢迎语」；未授权记 denied 并广播 `access_denied`，
+需要报警时挂一条 `access_denied_buzzer` 规则即可（默认停用）。
 
 > 本接口同样**无鉴权**：能连到 :5000 的客户端可以伪造 `face_id` 触发开门规则。
 > 需要收紧时，请在边缘设备与 Web 之间自行加反向代理/网络隔离，或删掉那条积木规则。
