@@ -6,8 +6,9 @@
 V2.1 固件已裁剪的能力（故意不列）：
   - 超声波 distance、土壤 soil_moisture/soil_dry —— Module A 编译期关闭；
   - 数码管 display(TM1637) —— Module B 编译期关闭，硬件不存在；
-  - buzzer_status / fan_level / light_level(raw 0-255) —— 只有 database.ingest_output()
-    会写，而它全仓没有任何调用方，永远为 NULL，不能作为条件源；
+  - buzzer_status(raw) / fan_level / light_level(raw 0-255) —— 旧 B 板 state 帧的
+    原始电平，V2.1 裁剪后写入方 database.ingest_output() 已删除，永远为 NULL，
+    不能作为条件源（执行器真值改用 P1 的 rb_* 回读列）；
   - face_denied —— 人脸拒绝时只写库不广播事件，不是真实事件。
 
 V2.1 已移除的遗留设备：空调（虚拟设备，无任何真实执行器接线），已在数据库/API/前端全局删除。

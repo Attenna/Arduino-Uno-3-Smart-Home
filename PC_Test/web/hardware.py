@@ -26,6 +26,7 @@ import urllib.request
 from collections import deque
 
 from .config import MCP_SERVER_PATH, PC_TEST_DIR
+from .readback import output_mismatch
 
 logger = logging.getLogger(__name__)
 
@@ -53,20 +54,27 @@ def _looks_like_error(text: str) -> bool:
 _B_RESET_BOOT_WINDOW_S = 120.0   # 距上次复位小于该秒数 ⇒ 本次启动刚把 B 板复位
 
 
-def reset_needs_reconcile(prev_count, reset_count, last_reset_ago_s,
+def reset_needs_reconcile(prev_instance, prev_count, instance, count,
+                          last_reset_ago_s,
                           boot_window_s: float = _B_RESET_BOOT_WINDOW_S) -> bool:
-    """判断是否要做一次「B 板复位 → DB 对账」。
+    """判断「B 板是否在上次观测之后复位过」，决定要不要做 DB 对账。
 
-    * 本进程首次判定（prev_count 为 None）：容器与 MCP 通常一起重启，此时
-      reset_count 恒从 1 开始、看不出增量，只能改用「上次复位距今多久」来判断
-      是不是本次开串口造成的复位；
-    * 之后看 reset_count 是否比上次多（运行期真复位：欠压 / DTR 抖动 / 看门狗）。
+    `reset_count` 是 MCP **进程内**的计数，重启即归零——只看「是否增大」会漏掉
+    （实测踩过：上一进程 4、新进程 1，增量为负，复位被整段漏掉）。因此按实例标识判：
+
+    * 本进程首次观测：容器与 MCP 通常一起重启，新 MCP 刚打开过串口（必然 DTR 复位），
+      用「距上次复位多久」判断；web 单独重启且 MCP 已跑很久时返回 False，
+      由「命令未生效」审计去兜这类不一致；
+    * 实例变了：**换了 MCP 进程**，开串口那一刻必然复位过 B 板 → 一定对账；
+    * 实例没变：`reset_count` 变大即运行期真复位（欠压 / DTR 抖动 / 看门狗）。
     """
-    if reset_count is None:
+    if instance is None or count is None:
         return False
-    if prev_count is None:
+    if prev_instance is None:
         return last_reset_ago_s is not None and last_reset_ago_s <= boot_window_s
-    return reset_count > prev_count
+    if instance != prev_instance:
+        return True
+    return count > prev_count
 
 
 def readback_status(readback: dict) -> dict:
@@ -135,6 +143,12 @@ class McpHardwareBridge:
         self.command_ack_listener = None
         # B 板复位对账：上次见到的 reset_count（None = 本进程还没建基线）
         self._last_b_reset_count: int | None = None
+        # 上次见到的 MCP 实例标识：换实例 = 换了 MCP 进程 = B 板刚被复位过
+        self._b_health_instance: str | None = None
+        # 串口健康度缓存（get_serial_health 的低频快照，供 /api/status 上仪表盘）
+        self.serial_health: dict | None = None
+        # 「命令成功但状态未变」审计去重：上一轮记过的不一致组合
+        self._audited_mismatch: set = set()
 
     # ==================== 生命周期 ====================
 
@@ -271,14 +285,15 @@ class McpHardwareBridge:
                 # 硬件回读（低频）：把 B 板实际电平写进 rb_* 列，供面板对比出不一致
                 if time.time() - last_readback >= self.readback_interval:
                     last_readback = time.time()
+                    self._refresh_serial_health()
                     readback = self.read_output_state()
                     if readback:
                         try:
                             self.db.set_output_readback(readback)
                         except Exception as e:           # noqa: BLE001
                             logger.debug("[硬件桥] 硬件回读写库失败: %s", e)
-                        # 回读新鲜：顺手看 B 板是否复位过，必要时把 DB 拉回一致
-                        self._reconcile_after_reset(readback)
+                        # 回读新鲜：顺手做复位对账 / 「命令成功但状态未变」审计
+                        self._after_readback(readback)
             else:
                 fail_streak += 1
                 self._set_online(False, text)
@@ -328,25 +343,85 @@ class McpHardwareBridge:
             "rb_buzzer_status": state.get("buzzer"),
         }
 
-    def _reconcile_after_reset(self, readback: dict) -> None:
+    def _after_readback(self, readback: dict) -> None:
+        """一次回读节拍的后处理：复位对账 与「命令未生效」审计，二者互斥。
+
+        判定为 B 板复位时原因已明确，走对账（把 DB 拉回硬件）；否则才看是否存在
+        「命令 ACK 成功、过了稳定期、硬件回读仍不跟随」的静默失效。
+        """
+        prev_inst, prev_count, inst, count, ago = self._b_reset_state()
+        if reset_needs_reconcile(prev_inst, prev_count, inst, count, ago):
+            self._reconcile_after_reset(readback, count,
+                                        boot=prev_inst is None or inst != prev_inst)
+        else:
+            self._audit_unapplied()
+
+    def _refresh_serial_health(self) -> None:
+        """低频刷新串口健康度缓存（get_serial_health），供 /api/status 与复位判定。
+
+        取不到就置空：宁可让页面显示「离线」，也不拿旧健康度冒充现状。
+        """
+        ok, text = self.call_tool("get_serial_health", {}, timeout=5)
+        health = None
+        if ok:
+            try:
+                health = json.loads(text)
+            except json.JSONDecodeError:
+                health = None
+        self.serial_health = health if isinstance(health, dict) else None
+
+    def _b_reset_state(self) -> tuple:
+        """取 (上次实例, 上次计数, 本次实例, 本次计数, 距上次复位秒数)，并推进基线。
+
+        实例标识来自 MCP（进程级随机串）：换实例 = 换了 MCP 进程 = 换进程那一刻必然
+        复位过 B 板。比只看 reset_count 增量可靠（计数是进程内的，重启即归零）。
+        """
+        health = self.serial_health or {}
+        b = health.get("b") or {}
+        instance = health.get("instance")
+        count, ago = b.get("reset_count"), b.get("last_reset_ago_s")
+        prev_instance, prev_count = self._b_health_instance, self._last_b_reset_count
+        self._b_health_instance, self._last_b_reset_count = instance, count
+        return prev_instance, prev_count, instance, count, ago
+
+    def _audit_unapplied(self) -> None:
+        """「命令成功但状态未变」审计（P2 防呆）。
+
+        命令 ACK 成功、且已过稳定期，硬件回读仍与命令值不符——这是真正的静默失效
+        （指令被吞、驱动没动），与 B 板复位无关。此时**不改 DB**（保持不一致，看板上
+        继续告警），只留一条审计。同一批不一致还在就不重复记，状态变化才记一次。
+        """
+        try:
+            status = self.db.get_current_status()
+        except Exception as e:                           # noqa: BLE001
+            logger.debug("[硬件桥] 命令未生效审计读状态失败: %s", e)
+            return
+        mismatch = output_mismatch(status)
+        marker = {(m["device"], str(m["commanded"]), str(m["readback"]))
+                  for m in mismatch}
+        if marker == self._audited_mismatch:
+            return
+        self._audited_mismatch = marker
+        if not mismatch:
+            return
+        logger.warning("[硬件桥] 命令成功但状态未变：%s", mismatch)
+        try:
+            self.db.add_automation_log(
+                rule_id="cmd_not_applied", rule_name="命令未生效审计", triggered=1,
+                conditions_hold=0,
+                reason="命令 ACK 成功但硬件回读未跟随（已过稳定期，非 B 板复位）",
+                success=0, detail=json.dumps(mismatch, ensure_ascii=False))
+        except Exception as e:                           # noqa: BLE001
+            logger.debug("[硬件桥] 命令未生效审计写库失败: %s", e)
+
+    def _reconcile_after_reset(self, readback: dict, count=None,
+                               boot: bool = False) -> None:
         """B 板复位后用硬件回读把 DB 执行器值拉回一致（只写库、不动硬件）。
 
         reset_count 由 get_serial_health 给出：MCP 读线程每收到一帧 B 板 ready 即 +1
-        （上电、DTR 复位、看门狗都会发）。判定见 reset_needs_reconcile。只写真正
-        变化的列，一次复位最多记一条审计，避免刷屏。
+        （上电、DTR 复位、看门狗都会发）。是否该对账由 reset_needs_reconcile 判定。
+        只写真正变化的列，一次复位最多记一条审计，避免刷屏。
         """
-        ok, text = self.call_tool("get_serial_health", {}, timeout=5)
-        count = ago = None
-        if ok:
-            try:
-                health_b = (json.loads(text) or {}).get("b") or {}
-                count = health_b.get("reset_count")
-                ago = health_b.get("last_reset_ago_s")
-            except (json.JSONDecodeError, AttributeError):
-                pass
-        prev, self._last_b_reset_count = self._last_b_reset_count, count
-        if not reset_needs_reconcile(prev, count, ago):
-            return
         try:
             current = self.db.get_current_status()
         except Exception as e:                           # noqa: BLE001
@@ -363,7 +438,7 @@ class McpHardwareBridge:
                 conditions_hold=1,
                 reason="B 板复位（固件执行器已回默认），按硬件回读同步 DB；"
                        f"reset_count={count}，"
-                       + ("本次启动即复位" if prev is None else "运行期复位"),
+                       + ("本次启动即复位" if boot else "运行期复位"),
                 success=1,
                 detail=json.dumps({k: {"before": current.get(k), "after": v}
                                    for k, v in changed.items()},

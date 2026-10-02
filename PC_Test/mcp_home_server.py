@@ -22,6 +22,7 @@ import json
 import sys
 import threading
 import time
+import uuid
 from collections import deque
 from typing import Literal, Optional
 
@@ -117,6 +118,11 @@ class HomeController:
 
     def __init__(self, ser_a=None, ser_b=None, port_a: Optional[str] = None,
                  port_b: Optional[str] = None):
+        # 进程实例标识/启动时刻：随 get_serial_health 上报。上游（web 的复位对账）
+        # 靠它判断「MCP 换进程了」——换进程那一刻开串口必然复位 B 板，而 reset_count
+        # 是进程内计数、重启归零，只看增量会漏判。
+        self._instance = uuid.uuid4().hex[:8]
+        self._started_ts = time.time()
         self.ser_a = ser_a
         # port_a 仅 A 板读线程重连用（必须是 by-id 等稳定路径）
         self.port_a = port_a
@@ -544,6 +550,11 @@ class HomeController:
         """串口链路健康度快照（只读，供 get_serial_health / 排障）。"""
         now = time.time()
         return json.dumps({
+            # 进程实例标识：每起一个 MCP 进程换一个。上游据此判断「换了 MCP 进程」——
+            # 换进程那一刻开串口必然 DTR 复位 B 板，而 reset_count 是进程内计数、
+            # 重启即归零，只看增量会漏（上游 hardware.py 的复位对账依赖本字段）。
+            "instance": self._instance,
+            "uptime_s": round(now - self._started_ts, 1),
             "a": {
                 "connected": self.ser_a is not None,
                 "read_err_streak": self._a_err_count,

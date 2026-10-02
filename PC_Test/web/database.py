@@ -18,8 +18,8 @@ logger = logging.getLogger(__name__)
 BASE = Path(__file__).resolve().parent
 SENSORS = ('temperature', 'humidity', 'light_raw', 'smoke', 'rain', 'distance',
            'touch', 'motion', 'soil_moisture', 'soil_dry')
-OUTPUTS = ('door_status', 'window_status', 'fan_speed', 'fan_level',
-           'light_status', 'light_brightness', 'light_level', 'buzzer_status',
+OUTPUTS = ('door_status', 'window_status', 'fan_speed',
+           'light_status', 'light_brightness', 'buzzer_status',
            # 美的空调（红外遥控）：都是"已收到 ACK 的指令状态"，与其它执行器一样持久保留
            'ac_status', 'ac_mode', 'ac_temperature', 'ac_fan',
            'ac_swing_ud', 'ac_swing_lr', 'ac_eco', 'ac_fzc', 'ac_timer')
@@ -106,7 +106,9 @@ class SmartHomeDB:
                 fan_speed INTEGER,
                 door_status TEXT, window_status TEXT, light_status TEXT,
                 light_brightness INTEGER, last_updated TEXT)''')
-            extra = {k: 'INTEGER' for k in ('light_raw','smoke','rain','distance','touch','motion','soil_moisture','soil_dry','fan_level','light_level','device_uptime_ms',
+            # fan_level / light_level 是旧 B 板 state 帧的原始电平列，V2.1 裁剪后
+            # 已无任何写入方，不再建（老库里的历史列留着不影响）
+            extra = {k: 'INTEGER' for k in ('light_raw','smoke','rain','distance','touch','motion','soil_moisture','soil_dry','device_uptime_ms',
                                             'ac_swing_ud','ac_swing_lr','ac_eco','ac_fzc')}
             extra.update({k: 'TEXT' for k in ('buzzer_status','sensor_last_seen','output_last_seen',
                                               'ac_status','ac_mode','ac_fan')})
@@ -253,28 +255,6 @@ class SmartHomeDB:
             c.execute('INSERT INTO sensor_history('+','.join(sample)+') VALUES('+','.join('?' for _ in sample)+')',tuple(sample.values()))
             c.execute('INSERT INTO temperature_history(timestamp,temperature,humidity) VALUES(?,?,?)',(seen,values['temperature'],values['humidity']))
             self._update(c, {**values,'sensor_last_seen':seen,'device_uptime_ms':uptime,'last_updated':seen})
-
-    def ingest_output(self, message):
-        if message.get('module') != 'output' or message.get('type') != 'state':
-            raise ValueError('非 B 板状态')
-        if message['door'] not in ('open','closed') or message['window'] not in ('open','closed','normal') or message['buzzer'] not in ('on','off'):
-            raise ValueError('B 板状态无效')
-        fan = number(message['fan'],0,255,True)
-        light = number(message['light'],0,255,True)
-        if fan is None or light is None:
-            raise ValueError('缺少执行器等级')
-        seen = utcnow()
-        values = dict(door_status=message['door'],window_status=message['window'],fan_level=fan,
-                      fan_speed=100 if fan > 0 else 0,light_level=light,light_brightness=round(light*100/255),
-                      light_status='on' if light else 'off',buzzer_status=message['buzzer'],output_last_seen=seen,last_updated=seen)
-        with self.connection() as c:
-            old = c.execute('SELECT * FROM system_status WHERE id=1').fetchone()
-            for device, label in [('door','前门'),('window','客厅窗户')]:
-                if old[device+'_status'] != values[device+'_status']:
-                    c.execute('INSERT INTO door_window_history(timestamp,device_type,device_name,status) VALUES(?,?,?,?)',(seen,device,label,values[device+'_status']))
-            if old['light_level'] != light:
-                c.execute('INSERT INTO light_history(timestamp,light_name,status,brightness) VALUES(?,?,?,?)',(seen,'客厅主灯',values['light_status'],values['light_brightness']))
-            self._update(c, values)
 
     def add_hardware_event(self, message):
         with self.connection() as c:

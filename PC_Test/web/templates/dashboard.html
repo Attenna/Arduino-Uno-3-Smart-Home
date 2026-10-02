@@ -49,6 +49,9 @@
             <div class="mismatch-row" data-i18n="mismatch.unavailable">硬件回读不可用</div>
         </div>
 
+        <!-- 串口链路健康度：A/B 板连接状态与重连/复位/告警计数（后端低频刷新） -->
+        <div id="serialHealth" class="serial-health hidden"></div>
+
         <!-- 第一行: 核心状态卡片 -->
         <div class="dashboard-grid">
             <!-- 温湿度卡片 -->
@@ -333,6 +336,6 @@
     </main>
 
     <script src="{{ url_for('static', filename='js/lang.js') }}"></script>
-    <script src="{{ url_for('static', filename='js/main.js') }}?v=20261002a"></script>
+    <script src="{{ url_for('static', filename='js/main.js') }}?v=20261002b"></script>
 </body>
 </html>

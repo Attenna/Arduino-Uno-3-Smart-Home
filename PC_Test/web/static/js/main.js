@@ -368,6 +368,9 @@ function updateDashboard(data) {
     // 硬件回读一致性指示器
     updateMismatchIndicator(data);
 
+    // 串口链路健康度（A/B 板连接、重连/复位/告警计数）
+    updateSerialHealth(data);
+
     // 统计
     if (data.statistics) {
         updateStats(data.statistics);
@@ -419,10 +422,44 @@ function updateMismatchIndicator(data) {
     }
 }
 
+// ==================== 串口链路健康度 ====================
+// 数据来自后端低频刷新的 get_serial_health：A/B 板是否连着，以及 B 板重连/复位/
+// 告警/心跳失败计数。正常时低调一行；离线或出现重连/告警/心跳失败才高亮。
+// 注意 reset_count > 0 是正常的（MCP 每次启动开串口都会复位一次 B 板），不当作异常。
+function updateSerialHealth(data) {
+    const el = document.getElementById('serialHealth');
+    if (!el) return;
+    const health = data.serial_health;
+    if (!health || !health.b) {
+        el.className = 'serial-health warn';
+        el.textContent = t('serial.title') + '：' + t('serial.unavailable');
+        return;
+    }
+    const a = health.a || {};
+    const b = health.b || {};
+    const reopens = Number(b.reopen_count) || 0;
+    const alerts = Number(b.alert_count) || 0;
+    const hbFails = Number(b.heartbeat_fails) || 0;
+    const parts = [
+        'A ' + t(a.connected ? 'serial.online' : 'serial.offline'),
+        'B ' + t(b.connected ? 'serial.online' : 'serial.offline'),
+        t('serial.reopen') + ' ' + reopens,
+        t('serial.reset') + ' ' + (Number(b.reset_count) || 0),
+        t('serial.alert') + ' ' + alerts,
+        t('serial.hbfail') + ' ' + hbFails,
+    ];
+    const bad = !a.connected || !b.connected || reopens > 0 || alerts > 0 || hbFails > 0;
+    el.className = 'serial-health ' + (bad ? 'warn' : 'ok');
+    el.textContent = t('serial.title') + '：' + parts.join(' · ');
+}
+
 // 语言切换：切换后立即用缓存状态重渲染指示器，避免告警文案被 applyI18n 重置为默认值
 function toggleDashboardLang() {
     setLang(I18N.currentLang === 'zh' ? 'en' : 'zh');
-    if (lastStatus) updateMismatchIndicator(lastStatus);
+    if (lastStatus) {
+        updateMismatchIndicator(lastStatus);
+        updateSerialHealth(lastStatus);
+    }
 }
 
 function updateStats(stats) {

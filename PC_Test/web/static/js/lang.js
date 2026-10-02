@@ -54,6 +54,16 @@ const I18N = {
             'mismatch.dev_door': '门',
             'mismatch.dev_window': '窗',
 
+            // 串口链路健康度（A/B 板连接 + 重连/复位/告警计数）
+            'serial.title': '串口',
+            'serial.unavailable': '健康度不可用',
+            'serial.online': '在线',
+            'serial.offline': '离线',
+            'serial.reopen': '重连',
+            'serial.reset': 'B板复位',
+            'serial.alert': '告警',
+            'serial.hbfail': '心跳失败',
+
             // 门窗
             'door.title': '门窗状态',
             'door.front': '前门',
@@ -309,6 +319,16 @@ const I18N = {
             'mismatch.dev_light': 'Light',
             'mismatch.dev_door': 'Door',
             'mismatch.dev_window': 'Window',
+
+            // Serial link health (A/B boards + reopen/reset/alert counters)
+            'serial.title': 'Serial',
+            'serial.unavailable': 'health unavailable',
+            'serial.online': 'online',
+            'serial.offline': 'offline',
+            'serial.reopen': 'reopen',
+            'serial.reset': 'B resets',
+            'serial.alert': 'alerts',
+            'serial.hbfail': 'hb fails',
 
             // Door & Window
             'door.title': 'Door & Window Status',
