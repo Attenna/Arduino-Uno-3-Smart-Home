@@ -463,6 +463,15 @@ class HomeController:
             try:
                 raw = ser.readline()
             except Exception as e:                   # noqa: BLE001
+                # 句柄被重开路径换走了：_send_b（命令响应超时）与心跳线程都会重开 B
+                # 口，它们 close 掉旧 fd 后，本线程手里的 ser 就成了死句柄，readline
+                # 必然抛——pyserial 内部常给出 "'NoneType' object cannot be
+                # interpreted as an integer" 这类牛头不对马嘴的 TypeError。这不是链路
+                # 故障（重开是正常自愈，成功日志由 _reopen_b 打），所以不计入异常计数、
+                # 不打误导日志，直接换到新句柄继续读。
+                if ser is not self.ser_b:
+                    self._b_stop.wait(0.2)
+                    continue
                 self._note_b_error(e)
                 self._b_stop.wait(0.5)
                 continue
