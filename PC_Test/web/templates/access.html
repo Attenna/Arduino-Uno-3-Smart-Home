@@ -1,10 +1,10 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title data-i18n="access.title">门禁管理 - 智能家居</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=20260930b">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=20261002k">
 </head>
 <body>
     <nav class="navbar">
@@ -58,6 +58,14 @@
                 <div class="card-body">
                     <!-- 摄像头实时画面：后端同源代理 camera_stream 的 MJPEG -->
                     <div class="face-live-view">
+                        <div class="cam-badge" id="camBadge">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M23 7l-7 5 7 5V7z"/>
+                                <rect x="1" y="5" width="15" height="14" rx="2"/>
+                            </svg>
+                            <span data-i18n="access.live">实时</span>
+                            <span class="cam-badge-dot"></span>
+                        </div>
                         <img id="faceLiveImg" class="face-live-img" alt="Live camera stream">
                         <div class="face-live-hint" id="faceLiveHint">
                             <p data-i18n="access.stream_loading">正在连接摄像头实时画面...</p>
@@ -204,7 +212,7 @@
         </div>
     </main>
 
-    <script src="{{ url_for('static', filename='js/lang.js') }}?v=20260930b"></script>
-    <script src="{{ url_for('static', filename='js/access.js') }}?v=20260930b"></script>
+    <script src="{{ url_for('static', filename='js/lang.js') }}?v=20261002k"></script>
+    <script src="{{ url_for('static', filename='js/access.js') }}?v=20261002k"></script>
 </body>
 </html>

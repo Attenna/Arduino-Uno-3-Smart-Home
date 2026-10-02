@@ -110,6 +110,7 @@ const I18N = {
             'remote.door_close': '关门',
             'remote.ac_on': '开空调',
             'remote.ac_off': '关空调',
+            'remote.camera': '摄像头',
 
             // 历史数据
             'history.title': '历史数据 - 智能家居',
@@ -180,6 +181,7 @@ const I18N = {
             'access.no_records': '暂无记录',
             // 人脸识别展示面板
             'access.live_face': '实时人脸识别',
+            'access.live': '实时',
             'access.listening': '监听中',
             'access.stream_loading': '正在连接摄像头实时画面...',
             'access.stream_unavailable': '摄像头画面不可用（检查摄像头服务是否运行）',
@@ -376,6 +378,7 @@ const I18N = {
             'remote.door_close': 'Close Door',
             'remote.ac_on': 'AC On',
             'remote.ac_off': 'AC Off',
+            'remote.camera': 'Camera',
 
             // History
             'history.title': 'History - Smart Home',
@@ -446,6 +449,7 @@ const I18N = {
             'access.no_records': 'No records',
             // Face Recognition Display Panel
             'access.live_face': 'Live Face Recognition',
+            'access.live': 'Live',
             'access.listening': 'Listening',
             'access.stream_loading': 'Connecting to live camera...',
             'access.stream_unavailable': 'Camera stream unavailable (check the camera service)',

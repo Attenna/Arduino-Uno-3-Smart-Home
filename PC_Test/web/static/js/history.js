@@ -48,13 +48,13 @@ function initHistoryChart() {
             datasets: [{
                 label: '温度',
                 data: [],
-                borderColor: '#00e5ff',
-                backgroundColor: 'rgba(0, 229, 255, 0.1)',
+                borderColor: '#c8892f',
+                backgroundColor: 'rgba(200, 137, 47, 0.1)',
                 borderWidth: 2,
                 fill: true,
                 tension: 0.4,
                 pointRadius: 2,
-                pointBackgroundColor: '#00e5ff'
+                pointBackgroundColor: '#c8892f'
             }]
         },
         options: {
@@ -63,28 +63,28 @@ function initHistoryChart() {
             plugins: {
                 legend: {
                     labels: {
-                        color: '#8ba4b8',
+                        color: '#857767',
                         font: { size: 12 },
                         usePointStyle: true
                     }
                 },
                 tooltip: {
-                    backgroundColor: 'rgba(15, 25, 35, 0.9)',
-                    borderColor: '#2a4a5e',
+                    backgroundColor: 'rgba(255, 253, 249, 0.96)',
+                    borderColor: '#ece1d2',
                     borderWidth: 1,
-                    titleColor: '#e8f0f8',
-                    bodyColor: '#8ba4b8',
+                    titleColor: '#3a3229',
+                    bodyColor: '#857767',
                     padding: 12
                 }
             },
             scales: {
                 x: {
-                    ticks: { color: '#5a7a8e', maxTicksLimit: 12, font: { size: 10 } },
-                    grid: { color: 'rgba(42, 74, 94, 0.3)' }
+                    ticks: { color: '#b0a390', maxTicksLimit: 12, font: { size: 10 } },
+                    grid: { color: 'rgba(184, 165, 138, 0.25)' }
                 },
                 y: {
-                    ticks: { color: '#5a7a8e', font: { size: 10 } },
-                    grid: { color: 'rgba(42, 74, 94, 0.3)' }
+                    ticks: { color: '#b0a390', font: { size: 10 } },
+                    grid: { color: 'rgba(184, 165, 138, 0.25)' }
                 }
             }
         }
@@ -99,37 +99,37 @@ async function loadHistory() {
     let data = [];
     let title = '';
     let chartLabel = '';
-    let chartColor = '#00e5ff';
-    let chartBgColor = 'rgba(0, 229, 255, 0.1)';
+    let chartColor = '#c8892f';
+    let chartBgColor = 'rgba(200, 137, 47, 0.1)';
     
     switch (dataType) {
         case 'temperature':
             data = await apiGet(`/api/temperature?hours=${hours}`);
             title = t('chart.temp_history');
             chartLabel = t('chart.temp');
-            chartColor = '#00e5ff';
-            chartBgColor = 'rgba(0, 229, 255, 0.1)';
+            chartColor = '#c8892f';
+            chartBgColor = 'rgba(200, 137, 47, 0.1)';
             break;
         case 'humidity':
             data = await apiGet(`/api/temperature?hours=${hours}`);
             title = t('chart.humidity_history');
             chartLabel = t('chart.humidity');
-            chartColor = '#00b4d8';
-            chartBgColor = 'rgba(0, 180, 216, 0.1)';
+            chartColor = '#6f9b8e';
+            chartBgColor = 'rgba(111, 155, 142, 0.1)';
             break;
         case 'door_window':
             data = await apiGet(`/api/door_window/history?hours=${hours}`);
             title = t('chart.door_history');
             chartLabel = t('chart.door_status');
-            chartColor = '#00e676';
-            chartBgColor = 'rgba(0, 230, 118, 0.1)';
+            chartColor = '#6b8f5e';
+            chartBgColor = 'rgba(107, 143, 94, 0.1)';
             break;
         case 'light':
             data = await apiGet(`/api/light/history?hours=${hours}`);
             title = t('chart.light_history');
             chartLabel = t('chart.light_brightness');
-            chartColor = '#ffea00';
-            chartBgColor = 'rgba(255, 234, 0, 0.1)';
+            chartColor = '#d99a2b';
+            chartBgColor = 'rgba(200, 137, 47, 0.1)';
             break;
     }
     

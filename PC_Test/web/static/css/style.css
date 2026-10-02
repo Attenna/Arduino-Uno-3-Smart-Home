@@ -6,22 +6,23 @@
 }
 
 :root {
-    --bg-primary: #0f1923;
-    --bg-secondary: #162231;
-    --bg-card: #1a2d3d;
-    --bg-card-hover: #1e3548;
-    --border-color: #2a4a5e;
-    --text-primary: #e8f0f8;
-    --text-secondary: #8ba4b8;
-    --text-muted: #5a7a8e;
-    --accent-blue: #00b4d8;
-    --accent-cyan: #00e5ff;
-    --accent-green: #00e676;
-    --accent-orange: #ff9100;
-    --accent-red: #ff1744;
-    --accent-yellow: #ffea00;
-    --accent-purple: #7c4dff;
-    --shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+    /* 暖奶油浅色主题：奶油底 + 白卡片 + 琥珀主色 + 鼠尾草绿状态 */
+    --bg-primary: #f7f2ea;
+    --bg-secondary: #fffdf9;
+    --bg-card: #ffffff;
+    --bg-card-hover: #fdf8f0;
+    --border-color: #ece1d2;
+    --text-primary: #3a3229;
+    --text-secondary: #857767;
+    --text-muted: #b0a390;
+    --accent-blue: #6f9b8e;
+    --accent-cyan: #c8892f;
+    --accent-green: #6b8f5e;
+    --accent-orange: #c8722f;
+    --accent-red: #c0554a;
+    --accent-yellow: #d99a2b;
+    --accent-purple: #9a7aa0;
+    --shadow: 0 6px 22px rgba(160, 130, 95, 0.10);
     --radius: 16px;
     --radius-sm: 10px;
     --transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
@@ -30,6 +31,7 @@
 body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
     background: var(--bg-primary);
+    background-image: radial-gradient(1200px 600px at 50% -10%, #fffdf8 0%, rgba(255, 253, 248, 0) 70%);
     color: var(--text-primary);
     min-height: 100vh;
     line-height: 1.5;
@@ -81,12 +83,12 @@ body {
 
 .nav-link:hover {
     color: var(--text-primary);
-    background: rgba(0, 180, 216, 0.1);
+    background: rgba(111, 155, 142, 0.1);
 }
 
 .nav-link.active {
     color: var(--accent-cyan);
-    background: rgba(0, 229, 255, 0.1);
+    background: rgba(200, 137, 47, 0.1);
 }
 
 .nav-status {
@@ -155,6 +157,48 @@ body {
 .face-live-hint.hidden {
     display: none;
 }
+/* 摄像头图标 + 实时状态徽标（覆盖在实时画面左上角，首帧到达才点亮） */
+.cam-badge {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    z-index: 3;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-muted);
+    background: rgba(11, 16, 32, 0.72);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    transition: var(--transition);
+}
+.cam-badge svg {
+    width: 15px;
+    height: 15px;
+}
+.cam-badge-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    transition: var(--transition);
+}
+.cam-badge.live {
+    color: var(--accent-green);
+    border-color: rgba(107, 143, 94, 0.35);
+}
+.cam-badge.live .cam-badge-dot {
+    background: var(--accent-green);
+    box-shadow: 0 0 8px var(--accent-green);
+    animation: camPulse 1.6s ease-in-out infinite;
+}
+@keyframes camPulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: .35; transform: scale(.75); }
+}
 /* ==================== 语音助手页 ==================== */
 .voice-grid {
     display: grid;
@@ -185,9 +229,9 @@ body {
     border-radius: var(--radius);
     cursor: pointer;
     transition: var(--transition);
-    box-shadow: 0 0 20px rgba(0, 229, 255, 0.25);
+    box-shadow: 0 0 20px rgba(200, 137, 47, 0.25);
 }
-.voice-wake-btn:hover { transform: translateY(-2px); box-shadow: 0 0 28px rgba(0, 229, 255, 0.45); }
+.voice-wake-btn:hover { transform: translateY(-2px); box-shadow: 0 0 28px rgba(200, 137, 47, 0.45); }
 .voice-wake-btn:active { transform: scale(0.98); }
 .voice-wake-btn:disabled { opacity: 0.55; cursor: not-allowed; transform: none; }
 .voice-wake-btn svg { width: 26px; height: 26px; }
@@ -244,12 +288,12 @@ body {
     transition: all 0.3s ease;
 }
 .face-result-status.granted {
-    background: rgba(0, 230, 118, 0.08);
-    border-color: rgba(0, 230, 118, 0.3);
+    background: rgba(107, 143, 94, 0.08);
+    border-color: rgba(107, 143, 94, 0.3);
 }
 .face-result-status.denied {
-    background: rgba(255, 23, 68, 0.08);
-    border-color: rgba(255, 23, 68, 0.3);
+    background: rgba(192, 85, 74, 0.08);
+    border-color: rgba(192, 85, 74, 0.3);
 }
 .face-result-icon {
     width: 48px;
@@ -301,7 +345,7 @@ body {
     font-family: 'Courier New', monospace;
     font-size: 13px;
     color: var(--accent-cyan);
-    background: rgba(0, 229, 255, 0.08);
+    background: rgba(200, 137, 47, 0.08);
     padding: 4px 10px;
     border-radius: 6px;
 }
@@ -315,19 +359,19 @@ body {
     font-size: 14px;
     font-weight: 700;
     border: 2px solid var(--accent-cyan);
-    background: rgba(0, 229, 255, 0.15);
+    background: rgba(200, 137, 47, 0.15);
     color: var(--accent-cyan);
     cursor: pointer;
     transition: var(--transition);
     margin-left: 12px;
-    box-shadow: 0 0 12px rgba(0, 229, 255, 0.2);
+    box-shadow: 0 0 12px rgba(200, 137, 47, 0.2);
     letter-spacing: 0.5px;
 }
 
 .lang-switch:hover {
     background: var(--accent-cyan);
     color: var(--bg-primary);
-    box-shadow: 0 0 20px rgba(0, 229, 255, 0.5);
+    box-shadow: 0 0 20px rgba(200, 137, 47, 0.5);
     transform: scale(1.05);
 }
 
@@ -360,19 +404,19 @@ body {
 }
 
 .notification.success {
-    background: rgba(0, 230, 118, 0.15);
+    background: rgba(107, 143, 94, 0.15);
     border: 1px solid var(--accent-green);
     color: var(--accent-green);
 }
 
 .notification.error {
-    background: rgba(255, 23, 68, 0.15);
+    background: rgba(192, 85, 74, 0.15);
     border: 1px solid var(--accent-red);
     color: var(--accent-red);
 }
 
 .notification.info {
-    background: rgba(0, 180, 216, 0.15);
+    background: rgba(111, 155, 142, 0.15);
     border: 1px solid var(--accent-blue);
     color: var(--accent-blue);
 }
@@ -398,7 +442,7 @@ body {
 }
 
 .card:hover {
-    border-color: rgba(0, 229, 255, 0.3);
+    border-color: rgba(200, 137, 47, 0.3);
     box-shadow: var(--shadow);
 }
 
@@ -407,7 +451,7 @@ body {
     align-items: center;
     gap: 10px;
     padding: 16px 20px;
-    border-bottom: 1px solid rgba(42, 74, 94, 0.5);
+    border-bottom: 1px solid rgba(184, 165, 138, 0.26);
 }
 
 .card-icon {
@@ -429,21 +473,21 @@ body {
     border-radius: 20px;
     font-size: 11px;
     font-weight: 600;
-    background: rgba(0, 230, 118, 0.15);
+    background: rgba(107, 143, 94, 0.15);
     color: var(--accent-green);
-    border: 1px solid rgba(0, 230, 118, 0.3);
+    border: 1px solid rgba(107, 143, 94, 0.3);
 }
 
 .card-badge.warning {
-    background: rgba(255, 145, 0, 0.15);
+    background: rgba(200, 114, 47, 0.15);
     color: var(--accent-orange);
-    border-color: rgba(255, 145, 0, 0.3);
+    border-color: rgba(200, 114, 47, 0.3);
 }
 
 .card-badge.danger {
-    background: rgba(255, 23, 68, 0.15);
+    background: rgba(192, 85, 74, 0.15);
     color: var(--accent-red);
-    border-color: rgba(255, 23, 68, 0.3);
+    border-color: rgba(192, 85, 74, 0.3);
 }
 
 .card-subtitle {
@@ -457,7 +501,7 @@ body {
 
 .card-footer {
     padding: 10px 20px;
-    border-top: 1px solid rgba(42, 74, 94, 0.5);
+    border-top: 1px solid rgba(184, 165, 138, 0.26);
     color: var(--text-muted);
     font-size: 12px;
 }
@@ -474,8 +518,8 @@ body {
 
 /* 告警态：命令下发值与 B 板回读不一致 */
 .mismatch-indicator.danger {
-    background: rgba(255, 23, 68, 0.12);
-    border-color: rgba(255, 23, 68, 0.4);
+    background: rgba(192, 85, 74, 0.12);
+    border-color: rgba(192, 85, 74, 0.4);
     color: var(--accent-red);
     font-weight: 600;
 }
@@ -535,7 +579,7 @@ body {
     font-weight: 700;
     color: var(--accent-cyan);
     font-family: 'Courier New', monospace;
-    text-shadow: 0 0 30px rgba(0, 229, 255, 0.3);
+    text-shadow: 0 0 30px rgba(200, 137, 47, 0.3);
 }
 
 .temp-unit {
@@ -565,7 +609,7 @@ body {
     display: flex;
     justify-content: space-around;
     padding-top: 12px;
-    border-top: 1px solid rgba(42, 74, 94, 0.5);
+    border-top: 1px solid rgba(184, 165, 138, 0.26);
 }
 
 .range-item {
@@ -588,53 +632,87 @@ body {
 /* ==================== 风扇卡片 ==================== */
 .fan-visual {
     display: flex;
+    flex-direction: column;
     justify-content: center;
     align-items: center;
+    gap: 10px;
     height: 100px;
     margin-bottom: 16px;
 }
 
-.fan-blades {
-    width: 70px;
-    height: 70px;
-    position: relative;
+/* --fan-level：0~1，转速越高扇叶越亮、光晕越强 */
+.fan-shell {
+    --fan-level: 0;
+    width: 72px;
+    height: 72px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    color: var(--text-muted);
+    background: rgba(184, 165, 138, 0.14);
+    transition: color .35s ease, background .35s ease;
 }
 
-.fan-blades.spinning {
-    animation: spin 1s linear infinite;
+.fan-shell.on {
+    color: var(--accent-cyan);
+    background: rgba(111, 155, 142, calc(.08 + .14 * var(--fan-level)));
 }
 
-.fan-blades.spinning-slow {
-    animation: spin 3s linear infinite;
+.fan-icon {
+    width: 54px;
+    height: 54px;
+    transition: filter .35s ease;
 }
 
-.fan-blades.spinning-medium {
-    animation: spin 1.5s linear infinite;
+.fan-shell.on .fan-icon {
+    filter: drop-shadow(0 0 calc(2px + 7px * var(--fan-level)) rgba(111, 155, 142, 0.55));
 }
 
-.fan-blades.spinning-fast {
-    animation: spin 0.5s linear infinite;
+.fan-blade {
+    fill: currentColor;
+    opacity: calc(.3 + .6 * var(--fan-level));
+    transition: opacity .35s ease;
 }
+
+.fan-hub {
+    fill: currentColor;
+}
+
+.fan-rotor {
+    transform-box: view-box;
+    transform-origin: 24px 24px;
+}
+
+.fan-shell.spinning-slow .fan-rotor { animation: spin 3s linear infinite; }
+.fan-shell.spinning-medium .fan-rotor { animation: spin 1.5s linear infinite; }
+.fan-shell.spinning-fast .fan-rotor { animation: spin 0.5s linear infinite; }
 
 @keyframes spin {
     from { transform: rotate(0deg); }
     to { transform: rotate(360deg); }
 }
 
-.blade {
-    position: absolute;
-    width: 8px;
-    height: 28px;
-    background: linear-gradient(to top, var(--accent-cyan), transparent);
-    border-radius: 4px;
-    left: 50%;
-    top: 50%;
-    transform-origin: center top;
+/* 档位小标签（风扇/灯光共用） */
+.level-chip {
+    font-size: 12px;
+    font-weight: 600;
+    padding: 2px 10px;
+    border-radius: 20px;
+    color: var(--text-secondary);
+    background: rgba(184, 165, 138, 0.26);
+    transition: var(--transition);
 }
 
-.blade:nth-child(1) { transform: translateX(-50%) rotate(0deg); }
-.blade:nth-child(2) { transform: translateX(-50%) rotate(120deg); }
-.blade:nth-child(3) { transform: translateX(-50%) rotate(240deg); }
+.level-chip.on {
+    color: var(--accent-yellow);
+    background: rgba(200, 137, 47, 0.12);
+}
+
+.fan-visual .level-chip.on {
+    color: var(--accent-cyan);
+    background: rgba(111, 155, 142, 0.12);
+}
 
 /* 风扇硬件回读小字（B 板真值） */
 .fan-readback {
@@ -664,7 +742,7 @@ body {
     align-items: center;
     justify-content: center;
     border-radius: 12px;
-    background: rgba(0, 180, 216, 0.08);
+    background: rgba(111, 155, 142, 0.08);
     transition: var(--transition);
 }
 
@@ -675,7 +753,7 @@ body {
 }
 
 .dw-icon.open {
-    background: rgba(0, 230, 118, 0.1);
+    background: rgba(107, 143, 94, 0.1);
 }
 
 .dw-icon.open svg {
@@ -697,34 +775,84 @@ body {
 
 .dw-status.closed {
     color: var(--accent-red);
-    background: rgba(255, 23, 68, 0.1);
+    background: rgba(192, 85, 74, 0.1);
 }
 
 .dw-status.open {
     color: var(--accent-green);
-    background: rgba(0, 230, 118, 0.1);
+    background: rgba(107, 143, 94, 0.1);
 }
 
 /* ==================== 灯光卡片 ==================== */
 .light-preview {
     display: flex;
+    flex-direction: column;
     justify-content: center;
     align-items: center;
-    height: 80px;
+    gap: 10px;
+    height: 96px;
     margin-bottom: 12px;
 }
 
-.bulb {
-    width: 50px;
-    height: 50px;
+/* --light-level：0~1，亮度越高灯泡越亮、光晕越大、色温越偏亮黄 */
+.bulb-shell {
+    --light-level: 0;
+    position: relative;
+    width: 68px;
+    height: 68px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     border-radius: 50%;
-    background: rgba(42, 74, 94, 0.5);
-    transition: var(--transition);
+    color: var(--text-muted);
+    transition: color .35s ease;
 }
 
-.bulb.on {
-    background: var(--accent-yellow);
-    box-shadow: 0 0 30px rgba(255, 234, 0, 0.4), 0 0 60px rgba(255, 234, 0, 0.2);
+.bulb-shell.on {
+    color: hsl(48, 100%, calc(52% + 16% * var(--light-level)));
+}
+
+.bulb-icon {
+    position: relative;
+    z-index: 2;
+    width: 46px;
+    height: 46px;
+    transition: filter .35s ease;
+}
+
+.bulb-shell.on .bulb-icon {
+    filter: drop-shadow(0 0 calc(2px + 6px * var(--light-level)) rgba(236, 180, 56, 0.7));
+}
+
+.bulb-body {
+    fill: rgba(247, 190, 88, calc(.08 + .5 * var(--light-level)));
+    transition: fill .35s ease;
+}
+
+.bulb-filament {
+    stroke: #fff3d0;
+    opacity: calc(.3 + .7 * var(--light-level));
+    transition: opacity .35s ease;
+}
+
+/* 光晕：半径与不透明度都随亮度增长 */
+.bulb-glow {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    background: radial-gradient(circle,
+        rgba(255, 206, 72, 0.85) 0%,
+        rgba(232, 172, 62, 0.32) 45%,
+        transparent 70%);
+    opacity: 0;
+    transform: scale(.55);
+    transition: opacity .35s ease, transform .35s ease;
+    pointer-events: none;
+}
+
+.bulb-shell.on .bulb-glow {
+    opacity: calc(.15 + .85 * var(--light-level));
+    transform: scale(calc(.65 + .95 * var(--light-level)));
 }
 
 .light-indicator {
@@ -767,7 +895,7 @@ body {
     width: 100%;
     height: 6px;
     border-radius: 3px;
-    background: rgba(42, 74, 94, 0.8);
+    background: rgba(184, 165, 138, 0.45);
     outline: none;
     transition: var(--transition);
 }
@@ -780,16 +908,13 @@ body {
     border-radius: 50%;
     background: var(--accent-cyan);
     cursor: pointer;
-    box-shadow: 0 0 10px rgba(0, 229, 255, 0.4);
+    box-shadow: 0 0 10px rgba(200, 137, 47, 0.4);
     transition: var(--transition);
 }
 
 .slider::-webkit-slider-thumb:hover {
     transform: scale(1.2);
 }
-
-.slider-fan::-webkit-slider-thumb { background: var(--accent-blue); box-shadow: 0 0 10px rgba(0, 180, 216, 0.4); }
-.slider-light::-webkit-slider-thumb { background: var(--accent-yellow); box-shadow: 0 0 10px rgba(255, 234, 0, 0.4); }
 
 .slider-value {
     font-size: 13px;
@@ -833,12 +958,12 @@ body {
 }
 
 .btn-danger {
-    border-color: rgba(255, 23, 68, 0.3);
+    border-color: rgba(192, 85, 74, 0.3);
     color: var(--accent-red);
 }
 
 .btn-danger:hover {
-    background: rgba(255, 23, 68, 0.15);
+    background: rgba(192, 85, 74, 0.15);
     border-color: var(--accent-red);
 }
 
@@ -858,9 +983,33 @@ body {
     gap: 6px;
 }
 
+/* 固定档位选择器（灯光等离散档位设备，无连续滑块） */
+.level-selector {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+}
+
+.level-btn {
+    width: 100%;
+}
+
+.level-btn.active {
+    color: var(--accent-yellow);
+    background: rgba(200, 137, 47, 0.14);
+    border-color: rgba(200, 137, 47, 0.45);
+    box-shadow: 0 0 12px rgba(200, 137, 47, 0.18);
+}
+
+.level-btn.active:hover {
+    color: var(--accent-yellow);
+    background: rgba(200, 137, 47, 0.2);
+    border-color: rgba(200, 137, 47, 0.6);
+}
+
 /* ==================== 空调卡片（美的红外） ==================== */
 .ac-opt.active {
-    background: rgba(0, 229, 255, 0.15);
+    background: rgba(200, 137, 47, 0.15);
     border-color: var(--accent-cyan);
     color: var(--accent-cyan);
 }
@@ -945,14 +1094,15 @@ body {
     height: 22px;
 }
 
-.light-on-icon { background: rgba(255, 234, 0, 0.1); color: var(--accent-yellow); }
-.light-off-icon { background: rgba(42, 74, 94, 0.5); }
-.ac-on-icon { background: rgba(124, 77, 255, 0.1); color: var(--accent-purple); }
-.ac-off-icon { background: rgba(42, 74, 94, 0.5); }
-.fan-on-icon { background: rgba(0, 180, 216, 0.1); color: var(--accent-blue); }
-.fan-off-icon { background: rgba(42, 74, 94, 0.5); }
-.door-open-icon { background: rgba(0, 230, 118, 0.1); color: var(--accent-green); }
-.door-close-icon { background: rgba(42, 74, 94, 0.5); }
+.light-on-icon { background: rgba(200, 137, 47, 0.1); color: var(--accent-yellow); }
+.light-off-icon { background: rgba(184, 165, 138, 0.26); }
+.ac-on-icon { background: rgba(154, 122, 160, 0.1); color: var(--accent-purple); }
+.ac-off-icon { background: rgba(184, 165, 138, 0.26); }
+.fan-on-icon { background: rgba(111, 155, 142, 0.1); color: var(--accent-blue); }
+.fan-off-icon { background: rgba(184, 165, 138, 0.26); }
+.door-open-icon { background: rgba(107, 143, 94, 0.1); color: var(--accent-green); }
+.door-close-icon { background: rgba(184, 165, 138, 0.26); }
+.camera-icon { background: rgba(107, 143, 94, 0.1); color: var(--accent-green); }
 
 /* ==================== 图表 ==================== */
 .chart-container {
@@ -1058,12 +1208,12 @@ body {
 
 .data-table td {
     padding: 10px 16px;
-    border-bottom: 1px solid rgba(42, 74, 94, 0.3);
+    border-bottom: 1px solid rgba(184, 165, 138, 0.16);
     color: var(--text-primary);
 }
 
 .data-table tbody tr:hover {
-    background: rgba(0, 180, 216, 0.05);
+    background: rgba(111, 155, 142, 0.05);
 }
 
 .status-tag {
@@ -1075,12 +1225,12 @@ body {
 }
 
 .status-tag.granted {
-    background: rgba(0, 230, 118, 0.15);
+    background: rgba(107, 143, 94, 0.15);
     color: var(--accent-green);
 }
 
 .status-tag.denied {
-    background: rgba(255, 23, 68, 0.15);
+    background: rgba(192, 85, 74, 0.15);
     color: var(--accent-red);
 }
 
@@ -1110,8 +1260,8 @@ body {
 }
 
 @keyframes scanPulse {
-    0%, 100% { box-shadow: 0 0 0 rgba(0, 229, 255, 0); }
-    50% { box-shadow: 0 0 30px rgba(0, 229, 255, 0.2); }
+    0%, 100% { box-shadow: 0 0 0 rgba(200, 137, 47, 0); }
+    50% { box-shadow: 0 0 30px rgba(200, 137, 47, 0.2); }
 }
 
 .scan-icon {
@@ -1231,9 +1381,9 @@ body {
     padding: 1px 8px;
     border-radius: 4px;
     font-size: 11px;
-    background: rgba(0, 229, 255, 0.15);
+    background: rgba(200, 137, 47, 0.15);
     color: var(--accent-cyan);
-    border: 1px solid rgba(0, 229, 255, 0.3);
+    border: 1px solid rgba(200, 137, 47, 0.3);
     vertical-align: middle;
     margin-left: 4px;
 }
@@ -1316,19 +1466,19 @@ body {
     border-radius: 20px;
     font-size: 11px;
     font-weight: 600;
-    background: rgba(42, 74, 94, 0.5);
+    background: rgba(184, 165, 138, 0.26);
     color: var(--text-muted);
     border: 1px solid transparent;
 }
 .ha-status-badge.connected {
-    background: rgba(0, 230, 118, 0.15);
+    background: rgba(107, 143, 94, 0.15);
     color: var(--accent-green);
-    border-color: rgba(0, 230, 118, 0.3);
+    border-color: rgba(107, 143, 94, 0.3);
 }
 .ha-status-badge.error {
-    background: rgba(255, 23, 68, 0.15);
+    background: rgba(192, 85, 74, 0.15);
     color: var(--accent-red);
-    border-color: rgba(255, 23, 68, 0.3);
+    border-color: rgba(192, 85, 74, 0.3);
 }
 
 .form-row {
@@ -1469,7 +1619,7 @@ body {
     border-radius: 8px;
     font-size: 13px;
     color: var(--text-muted);
-    background: rgba(42, 74, 94, 0.3);
+    background: rgba(184, 165, 138, 0.16);
     position: absolute;
     bottom: 8px;
     left: 50%;
@@ -1481,14 +1631,14 @@ body {
     height: 18px;
 }
 .face-status-indicator.granted {
-    background: rgba(0, 230, 118, 0.2);
+    background: rgba(107, 143, 94, 0.2);
     color: var(--accent-green);
-    border: 1px solid rgba(0, 230, 118, 0.3);
+    border: 1px solid rgba(107, 143, 94, 0.3);
 }
 .face-status-indicator.denied {
-    background: rgba(255, 23, 68, 0.2);
+    background: rgba(192, 85, 74, 0.2);
     color: var(--accent-red);
-    border: 1px solid rgba(255, 23, 68, 0.3);
+    border: 1px solid rgba(192, 85, 74, 0.3);
 }
 
 /* ==================== 连接状态指示器 ==================== */
@@ -1506,7 +1656,7 @@ body {
 }
 .connection-indicator.offline {
     color: var(--accent-red);
-    background: rgba(255, 23, 68, 0.1);
+    background: rgba(192, 85, 74, 0.1);
     animation: pulse 1.5s ease-in-out infinite;
 }
 @keyframes pulse {

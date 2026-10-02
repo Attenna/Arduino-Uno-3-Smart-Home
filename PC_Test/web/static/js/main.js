@@ -118,10 +118,10 @@ function updateConnectionStatus(online) {
     if (!indicator) return;
 
     if (online) {
-        indicator.innerHTML = '<span style="color:#00e676;">&#9679;</span> ' + t('system.online');
+        indicator.innerHTML = '<span style="color:#6b8f5e;">&#9679;</span> ' + t('system.online');
         indicator.className = 'connection-indicator online';
     } else {
-        indicator.innerHTML = '<span style="color:#ff1744;">&#9679;</span> ' + t('system.offline');
+        indicator.innerHTML = '<span style="color:#c0554a;">&#9679;</span> ' + t('system.offline');
         indicator.className = 'connection-indicator offline';
     }
 }
@@ -192,12 +192,15 @@ document.addEventListener('DOMContentLoaded', () => {
 // 会把 DB 里的旧值当成用户指令发出去 → 表现为「没人碰它，风扇自己启动了」。
 // 判据用 input 事件：程序化赋值 .value 不会触发 input，只有真实操作才会，可靠且无需
 // 额外监听。三个滑块（风扇/灯光/空调）都是执行器，一律照此收口。
-function bindActuatorSlider(slider, label, formatLabel, onCommit) {
+// onPreview 只做视觉预览（拖动时更新图标发光/转速），不下发任何指令，
+// 因此不破坏「只有真实操作才发命令」的收口。
+function bindActuatorSlider(slider, label, formatLabel, onCommit, onPreview) {
     if (!slider) return;
     let userTouched = false;
     slider.addEventListener('input', () => {
         userTouched = true;                 // 真实操作过（程序化赋值不会触发 input）
         if (label) label.textContent = formatLabel(slider.value);
+        if (onPreview) onPreview(slider.value);
     });
     slider.addEventListener('change', () => {
         if (!userTouched) return;           // 浏览器/程序化补发的 change：不是用户操作
@@ -207,17 +210,8 @@ function bindActuatorSlider(slider, label, formatLabel, onCommit) {
 }
 
 function initControlSliders() {
-    bindActuatorSlider(document.getElementById('fanSpeed'),
-                       document.getElementById('fanSpeedValue'),
-                       v => v + '%',
-                       v => setFan(parseInt(v)));
-    bindActuatorSlider(document.getElementById('brightnessSlider'),
-                       document.getElementById('brightnessValue'),
-                       v => v + '%',
-                       v => {
-                           const n = parseInt(v);
-                           setLight(n > 0 ? 'on' : 'off', n);
-                       });
+    // 风扇只有固定档位（关闭/低速/中速/高速），没有连续转速滑块
+    // 灯光只有固定档位（关闭/夜灯/半亮/全亮），没有连续亮度滑块
     bindActuatorSlider(document.getElementById('acTempSlider'),
                        document.getElementById('acTempLabel'),
                        v => Number(v).toFixed(1) + '\u00b0C',
@@ -284,13 +278,8 @@ function updateDashboard(data) {
     const humEl = document.getElementById('humidityValue');
     if (humEl) humEl.textContent = data.humidity ? data.humidity.toFixed(0) : '--';
 
-    // 风扇（fanSpeed 是滑块 input，fanSpeedValue 是数值标签，扇叶按转速分档旋转）
-    const fanSpeed = Number(data.fan_speed) || 0;
-    lastKnownFanSpeed = fanSpeed;
-    const fanSlider = document.getElementById('fanSpeed');
-    if (fanSlider && document.activeElement !== fanSlider) fanSlider.value = fanSpeed;
-    const fanLabel = document.getElementById('fanSpeedValue');
-    if (fanLabel) fanLabel.textContent = fanSpeed + '%';
+    // 风扇：图标按转速分档旋转，扇叶亮度/光晕随转速增强
+    applyFanVisual(Number(data.fan_speed) || 0);
     // 风扇硬件回读（B 板真值）：仅在有回读时显示小号文字
     const fanRbRow = document.getElementById('fanReadback');
     const fanRbVal = document.getElementById('fanReadbackValue');
@@ -302,30 +291,10 @@ function updateDashboard(data) {
             fanRbVal.textContent = data.rb_fan_speed + '%';
         }
     }
-    const blades = document.getElementById('fanBlades');
-    if (blades) {
-        blades.classList.remove('spinning', 'spinning-slow', 'spinning-medium', 'spinning-fast');
-        if (fanSpeed > 0) {
-            blades.classList.add(
-                fanSpeed <= 40 ? 'spinning-slow' : fanSpeed <= 75 ? 'spinning-medium' : 'spinning-fast');
-        }
-    }
-
     // 灯光（灯泡高亮 + 指示点 + 亮度滑块回写，拖动时不抢焦点）
     const lightOn = data.light_status === 'on';
-    const brightness = Number(data.light_brightness) || (lightOn ? 100 : 0);
-    lastKnownLight = { status: lightOn ? 'on' : 'off', brightness };
-    const bulb = document.getElementById('bulb');
-    if (bulb) {
-        bulb.classList.toggle('on', lightOn);
-        bulb.style.opacity = lightOn ? String(0.35 + 0.65 * brightness / 100) : '';
-    }
-    const lightIndicator = document.getElementById('lightIndicator');
-    if (lightIndicator) lightIndicator.classList.toggle('on', lightOn);
-    const brightSlider = document.getElementById('brightnessSlider');
-    if (brightSlider && document.activeElement !== brightSlider) brightSlider.value = brightness;
-    const brightLabel = document.getElementById('brightnessValue');
-    if (brightLabel) brightLabel.textContent = brightness + '%';
+    applyLightVisual(data.light_status,
+                     Number(data.light_brightness) || (lightOn ? 100 : 0));
 
     // 门窗
     const doorEl = document.getElementById('doorStatus');
@@ -538,11 +507,7 @@ const postLightDebounced = debounce(async (status, brightness) => {
     lightInflight = target;
     // 乐观更新：立即刷新本地显示，指令在飞期间界面不卡顿；
     // 失败时 loadStatus() 会用服务端真值回滚界面
-    lastKnownLight = { status, brightness };
-    const bSlider = document.getElementById('brightnessSlider');
-    if (bSlider && document.activeElement !== bSlider) bSlider.value = brightness;
-    const bLabel = document.getElementById('brightnessValue');
-    if (bLabel) bLabel.textContent = brightness + '%';
+    applyLightVisual(status, brightness);
     try {
         const result = await apiPost('/api/light', { status, brightness });
         if (result) {
@@ -556,6 +521,54 @@ const postLightDebounced = debounce(async (status, brightness) => {
 
 function setLight(status, brightness) {
     postLightDebounced(status, Number(brightness) || 0);
+}
+
+// 灯光可视化：亮度 0~100 → 灯泡发光强度 / 色温 / 光晕 / 档位文案。
+// 服务端回显与乐观更新共用同一入口，保证「点一下图标立刻变亮」。
+function applyLightVisual(status, brightness) {
+    const on = status === 'on';
+    brightness = Math.max(0, Math.min(100, Number(brightness) || 0));
+    lastKnownLight = { status: on ? 'on' : 'off', brightness };
+
+    const bulb = document.getElementById('bulb');
+    if (bulb) {
+        bulb.classList.toggle('on', on);
+        bulb.style.setProperty('--light-level', String(on ? brightness / 100 : 0));
+    }
+    const chip = document.getElementById('lightLevelLabel');
+    if (chip) {
+        chip.classList.toggle('on', on);
+        chip.textContent = t(lightLevelKey(on, brightness));
+    }
+    const lightIndicator = document.getElementById('lightIndicator');
+    if (lightIndicator) lightIndicator.classList.toggle('on', on);
+
+    applyLightLevelButtons(on, brightness);
+}
+
+// 高亮当前档位按钮；服务端回读的值若不是预设档位，则高亮最接近的一档
+function applyLightLevelButtons(on, brightness) {
+    const wrap = document.getElementById('lightLevelButtons');
+    if (!wrap) return;
+    const target = on && brightness > 0 ? brightness : 0;
+    const btns = wrap.querySelectorAll('.level-btn');
+    let nearest = null;
+    let nearestDiff = Infinity;
+    btns.forEach(btn => {
+        const diff = Math.abs((Number(btn.dataset.level) || 0) - target);
+        if (diff < nearestDiff) {
+            nearestDiff = diff;
+            nearest = btn;
+        }
+    });
+    btns.forEach(btn => btn.classList.toggle('active', btn === nearest));
+}
+
+function lightLevelKey(on, brightness) {
+    if (!on || brightness <= 0) return 'light.off';
+    if (brightness <= 30) return 'light.night';
+    if (brightness <= 70) return 'light.half';
+    return 'light.full';
 }
 
 // 风扇卡片按钮：关闭/低速/中速/高速（与灯光相同的防抖收口原因）
@@ -573,11 +586,7 @@ const postFanDebounced = debounce(async (speed) => {
     fanInflight = speed;
     // 乐观更新：立即刷新本地显示，指令在飞期间界面不卡顿；
     // 失败时 loadStatus() 用服务端回滚
-    lastKnownFanSpeed = speed;
-    const fSlider = document.getElementById('fanSpeed');
-    if (fSlider && document.activeElement !== fSlider) fSlider.value = speed;
-    const fLabel = document.getElementById('fanSpeedValue');
-    if (fLabel) fLabel.textContent = speed + '%';
+    applyFanVisual(speed);
     try {
         const result = await apiPost('/api/fan', { speed });
         if (result) {
@@ -591,6 +600,55 @@ const postFanDebounced = debounce(async (speed) => {
 
 function setFan(speed) {
     postFanDebounced(Number(speed) || 0);
+}
+
+// 风扇可视化：转速 0~100 → 旋转档位 / 扇叶亮度 / 光晕 / 档位文案。
+// 与灯光同一套「乐观更新 + 回显共用」模式。
+function applyFanVisual(speed) {
+    speed = Math.max(0, Math.min(100, Number(speed) || 0));
+    lastKnownFanSpeed = speed;
+
+    const shell = document.getElementById('fanShell');
+    if (shell) {
+        shell.classList.remove('spinning-slow', 'spinning-medium', 'spinning-fast');
+        shell.classList.toggle('on', speed > 0);
+        shell.style.setProperty('--fan-level', String(speed / 100));
+        if (speed > 0) {
+            shell.classList.add(
+                speed <= 40 ? 'spinning-slow' : speed <= 75 ? 'spinning-medium' : 'spinning-fast');
+        }
+    }
+    const chip = document.getElementById('fanLevelLabel');
+    if (chip) {
+        chip.classList.toggle('on', speed > 0);
+        chip.textContent = t(fanLevelKey(speed));
+    }
+    applyFanLevelButtons(speed);
+}
+
+// 高亮当前风扇档位按钮；服务端回读的值若不是预设档位，则高亮最接近的一档
+function applyFanLevelButtons(speed) {
+    const wrap = document.getElementById('fanLevelButtons');
+    if (!wrap) return;
+    const target = Math.max(0, Math.min(100, Number(speed) || 0));
+    const btns = wrap.querySelectorAll('.level-btn');
+    let nearest = null;
+    let nearestDiff = Infinity;
+    btns.forEach(btn => {
+        const diff = Math.abs((Number(btn.dataset.level) || 0) - target);
+        if (diff < nearestDiff) {
+            nearestDiff = diff;
+            nearest = btn;
+        }
+    });
+    btns.forEach(btn => btn.classList.toggle('active', btn === nearest));
+}
+
+function fanLevelKey(speed) {
+    if (speed <= 0) return 'fan.off';
+    if (speed <= 40) return 'fan.low';
+    if (speed <= 75) return 'fan.medium';
+    return 'fan.high';
 }
 
 // 离开页面时取消未发出的执行器指令（风扇/灯光）。防抖窗口内的调用若在切页后
@@ -699,16 +757,16 @@ async function loadTemperatureChart() {
                 {
                     label: t('chart.temp'),
                     data: temps,
-                    borderColor: '#00e5ff',
-                    backgroundColor: 'rgba(0, 229, 255, 0.1)',
+                    borderColor: '#c8892f',
+                    backgroundColor: 'rgba(200, 137, 47, 0.1)',
                     tension: 0.4,
                     fill: true
                 },
                 {
                     label: t('chart.humidity'),
                     data: hums,
-                    borderColor: '#7c4dff',
-                    backgroundColor: 'rgba(124, 77, 255, 0.1)',
+                    borderColor: '#9a7aa0',
+                    backgroundColor: 'rgba(154, 122, 160, 0.1)',
                     tension: 0.4,
                     fill: true,
                     yAxisID: 'y1'
@@ -721,24 +779,24 @@ async function loadTemperatureChart() {
             interaction: { intersect: false, mode: 'index' },
             plugins: {
                 legend: {
-                    labels: { color: '#b0b0b0' }
+                    labels: { color: '#857767' }
                 }
             },
             scales: {
                 x: {
-                    ticks: { color: '#b0b0b0' },
-                    grid: { color: 'rgba(255,255,255,0.05)' }
+                    ticks: { color: '#857767' },
+                    grid: { color: 'rgba(184, 165, 138, 0.22)' }
                 },
                 y: {
-                    ticks: { color: '#b0b0b0' },
-                    grid: { color: 'rgba(255,255,255,0.05)' },
-                    title: { display: true, text: '\u00b0C', color: '#b0b0b0' }
+                    ticks: { color: '#857767' },
+                    grid: { color: 'rgba(184, 165, 138, 0.22)' },
+                    title: { display: true, text: '\u00b0C', color: '#857767' }
                 },
                 y1: {
                     position: 'right',
-                    ticks: { color: '#b0b0b0' },
+                    ticks: { color: '#857767' },
                     grid: { display: false },
-                    title: { display: true, text: '%', color: '#b0b0b0' }
+                    title: { display: true, text: '%', color: '#857767' }
                 }
             }
         }
