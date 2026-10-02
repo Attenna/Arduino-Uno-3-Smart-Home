@@ -253,6 +253,7 @@ py -3.13 pi-staging/test_extension_seams.py     # 数据总线 + HTTP 出站
 py -3.13 pi-staging/test_device_gate.py         # 命令收口器
 py -3.13 pi-staging/test_llm_provider.py        # 云端 LLM 供应商、Key 来源与读超时
 py -3.13 pi-staging/test_serial_ports_env.py    # 串口定位：SMART_HOME_PORT_A/B 覆盖 yaml
+py -3.13 pi-staging/test_voice_audio_loopback.py # 语音环回：TTS 出声 → ASR 认字 → 唤醒复位
 py -3.13 pi-staging/test_reset_reconcile.py     # 复位对账
 py -3.13 pi-staging/test_camera_hotplug.py      # 摄像头枚举 / 重开 / 占位帧 / health
 ```

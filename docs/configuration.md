@@ -124,7 +124,7 @@
 | `tts.model_dir` | `models/sherpa/tts` | TTS 模型目录 |
 | `tts.speaker_id` | `0` | 说话人 ID（0 = 中文女声） |
 | `tts.speed` | `1.0` | 语速倍数 |
-| `tts.num_threads` | `2` | TTS 推理线程 |
+| `tts.num_threads` | `2` | TTS 推理线程。**4 核香橙派实测 2 已是最优**：RTF≈2.1（合成 2.76s 出 1.29s 音频），调到 4 反而 RTF 2.96；桌面 PC 则 RTF<1 |
 
 ### 3.4 `wake` — 唤醒与追问
 
