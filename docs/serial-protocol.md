@@ -10,7 +10,7 @@
 > | 板 | 固件版本 | 说明 |
 > |----|---------|------|
 > | Module A | `V2.1` | 移除超声波 / 土壤湿度，新增矩阵键盘 |
-> | Module B | `V2.6` | 移除 TM1637 数码管；红外支持 NEC + 美的空调长码；风扇引脚每 loop 自愈；响应回显请求 `id` |
+> | Module B | `V2.7` | 移除 TM1637 数码管；红外支持 NEC + 美的空调长码；风扇引脚每 loop 自愈；响应回显请求 `id`；看门狗 `WDTO_2S`（固件挂死 2s 自动复位） |
 >
 > 下文中，被裁剪的字段/命令均以 **「（已裁剪）」** 标注。
 
@@ -197,7 +197,7 @@ Module A 原则上"只报告"，下行仅支持少量**无业务含义**的控�
 ### 4.1 就绪
 
 ```json
-{"module":"output","type":"ready","board":"MODULE_B","role":"OUTPUT_NODE","version":"V2.6"}
+{"module":"output","type":"ready","board":"MODULE_B","role":"OUTPUT_NODE","version":"V2.7"}
 ```
 
 ### 4.2 命令响应
