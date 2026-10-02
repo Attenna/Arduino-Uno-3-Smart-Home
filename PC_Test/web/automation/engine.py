@@ -63,6 +63,7 @@ class AutomationEngine:
         self._event_seq = 0
         # 每条规则的运行期状态
         self._prev_trigger: dict[str, bool] = {}     # 上次触发条件真假（边沿）
+        self._armed: set[str] = set()                # 该规则已建立过触发基线
         self._hold_since: dict[str, float] = {}      # 「持续 N 秒」起算时刻
         self._hold_fired: dict[str, bool] = {}       # 本轮持续是否已触发过
         self._last_fire: dict[str, float] = {}       # 上次开火时间（冷却）
@@ -192,11 +193,15 @@ class AutomationEngine:
             self._write_rules()
             # 清理已删除规则的运行期状态
             new_ids = {r["id"] for r in clean}
+            # 页面保存是用户显式动作：规则立即生效，不做「首轮只登记」的启动基线
+            # （只有引擎启动时的首轮才需要基线，见 _evaluate_sensor_rule）
+            self._armed |= new_ids
             for store in (self._prev_trigger, self._hold_since, self._hold_fired,
                           self._last_fire, self._last_event_id,
                           self._last_interval, self._last_time_key):
                 for dead in old_ids - new_ids:
                     store.pop(dead, None)
+            self._armed -= (old_ids - new_ids)
         logger.info("[自动化] 规则已保存，共 %d 条", len(clean))
         return clean
 
@@ -505,16 +510,29 @@ class AutomationEngine:
     def _evaluate_sensor_rule(self, rule: dict) -> None:
         with self._lock:
             trig = rule["trigger"]
+            rid = rule["id"]
             ctx = self._context()
             now_true = self._compare(ctx.get(trig["sensor"]), trig["op"], trig["value"])
-            was_true = self._prev_trigger.get(rule["id"], False)
-            self._prev_trigger[rule["id"]] = now_true
+            # 进程启动后的首轮求值：只把当前真值登记为基线，**绝不触发**。
+            # DB 里的执行器状态是「上次命令下发值」，B 板一旦复位（开串口拉 DTR 就
+            # 会复位 Uno）就与硬件脱节；若不建基线，首轮会把陈旧的 door_status='open'
+            # 判成「假→真」新边沿，凭空触发一次规则（实测每次容器重建都会误触发
+            # 「检测到人后开门 → 全屋自动」）。首轮取不到该传感器值时先不登记，
+            # 等下一轮有数据再建基线，避免把「暂无数据」误当成 False。
+            if rid not in self._armed:
+                if ctx.get(trig["sensor"]) is None:
+                    return
+                self._armed.add(rid)
+                self._prev_trigger[rid] = now_true
+                return
+            was_true = self._prev_trigger.get(rid, False)
+            self._prev_trigger[rid] = now_true
             label = CONDITION_SOURCES.get(trig["sensor"], {}).get("label", trig["sensor"])
             reason = f"{label} {trig['op']} {trig['value']}"
 
             if not now_true:
-                self._hold_since.pop(rule["id"], None)
-                self._hold_fired.pop(rule["id"], None)
+                self._hold_since.pop(rid, None)
+                self._hold_fired.pop(rid, None)
                 # 下降沿：只有写了「否则」动作的规则才回切（雨停恢复 45° 这类）
                 if was_true and rule.get("else_actions"):
                     self._fire(rule, reason=f"{reason} 已恢复", force_hold=False)
@@ -526,12 +544,12 @@ class AutomationEngine:
                     self._fire(rule, reason=reason)
                 return
             # 「持续 N 秒」：连续保持满 N 秒触发一次，中断（条件转假）则重新计时
-            start = self._hold_since.get(rule["id"])
+            start = self._hold_since.get(rid)
             if start is None:
-                self._hold_since[rule["id"]] = time.time()
+                self._hold_since[rid] = time.time()
                 return
-            if time.time() - start >= hold_sec and not self._hold_fired.get(rule["id"]):
-                self._hold_fired[rule["id"]] = True
+            if time.time() - start >= hold_sec and not self._hold_fired.get(rid):
+                self._hold_fired[rid] = True
                 self._fire(rule, reason=f"{reason} 持续 {hold_sec:g} 秒")
 
     def _evaluate_event_rule(self, rule: dict, seq: int, event: dict) -> None:
