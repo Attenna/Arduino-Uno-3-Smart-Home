@@ -6,24 +6,24 @@
 }
 
 :root {
-    /* 暖奶油浅色主题：奶油底 + 白卡片 + 琥珀主色 + 鼠尾草绿状态 */
-    --bg-primary: #f7f2ea;
-    --bg-secondary: #fffdf9;
-    --bg-card: #ffffff;
-    --bg-card-hover: #fdf8f0;
-    --border-color: #ece1d2;
-    --text-primary: #3a3229;
-    --text-secondary: #857767;
+    /* 暖居主题：奶油米白底 + 暖白卡片 + 浅燕麦分区 + 焦糖棕主色 + 深鼠尾草绿正常态 */
+    --bg-primary: #f4efe5;
+    --bg-secondary: #fffcf6;
+    --bg-card: #fffcf6;
+    --bg-card-hover: #fbf5ea;
+    --border-color: #ebe3d5;
+    --text-primary: #39362f;
+    --text-secondary: #7d7264;
     --text-muted: #b0a390;
-    --accent-blue: #6f9b8e;
-    --accent-cyan: #c8892f;
-    --accent-green: #6b8f5e;
-    --accent-orange: #c8722f;
-    --accent-red: #c0554a;
-    --accent-yellow: #d99a2b;
+    --accent-blue: #476044;
+    --accent-cyan: #986131;
+    --accent-green: #4f6b48;
+    --accent-orange: #b06a2c;
+    --accent-red: #b5544a;
+    --accent-yellow: #986131;
     --accent-purple: #9a7aa0;
-    --shadow: 0 6px 22px rgba(160, 130, 95, 0.10);
-    --radius: 16px;
+    --shadow: 0 4px 16px rgba(160, 130, 95, 0.08);
+    --radius: 18px;
     --radius-sm: 10px;
     --transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
@@ -31,7 +31,7 @@
 body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
     background: var(--bg-primary);
-    background-image: radial-gradient(1200px 600px at 50% -10%, #fffdf8 0%, rgba(255, 253, 248, 0) 70%);
+    background-image: radial-gradient(1200px 600px at 50% -10%, #fffdf8 0%, rgba(255, 252, 246, 0) 70%);
     color: var(--text-primary);
     min-height: 100vh;
     line-height: 1.5;
@@ -42,8 +42,8 @@ body {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 0 24px;
-    height: 64px;
+    padding: 0 28px;
+    height: 72px;
     background: var(--bg-secondary);
     border-bottom: 1px solid var(--border-color);
     position: sticky;
@@ -83,12 +83,12 @@ body {
 
 .nav-link:hover {
     color: var(--text-primary);
-    background: rgba(111, 155, 142, 0.1);
+    background: rgba(71, 96, 68, 0.1);
 }
 
 .nav-link.active {
     color: var(--accent-cyan);
-    background: rgba(200, 137, 47, 0.1);
+    background: rgba(152, 97, 49, 0.1);
 }
 
 .nav-status {
@@ -188,7 +188,7 @@ body {
 }
 .cam-badge.live {
     color: var(--accent-green);
-    border-color: rgba(107, 143, 94, 0.35);
+    border-color: rgba(79, 107, 72, 0.35);
 }
 .cam-badge.live .cam-badge-dot {
     background: var(--accent-green);
@@ -229,9 +229,9 @@ body {
     border-radius: var(--radius);
     cursor: pointer;
     transition: var(--transition);
-    box-shadow: 0 0 20px rgba(200, 137, 47, 0.25);
+    box-shadow: 0 0 20px rgba(152, 97, 49, 0.25);
 }
-.voice-wake-btn:hover { transform: translateY(-2px); box-shadow: 0 0 28px rgba(200, 137, 47, 0.45); }
+.voice-wake-btn:hover { transform: translateY(-2px); box-shadow: 0 0 28px rgba(152, 97, 49, 0.45); }
 .voice-wake-btn:active { transform: scale(0.98); }
 .voice-wake-btn:disabled { opacity: 0.55; cursor: not-allowed; transform: none; }
 .voice-wake-btn svg { width: 26px; height: 26px; }
@@ -288,12 +288,12 @@ body {
     transition: all 0.3s ease;
 }
 .face-result-status.granted {
-    background: rgba(107, 143, 94, 0.08);
-    border-color: rgba(107, 143, 94, 0.3);
+    background: rgba(79, 107, 72, 0.08);
+    border-color: rgba(79, 107, 72, 0.3);
 }
 .face-result-status.denied {
-    background: rgba(192, 85, 74, 0.08);
-    border-color: rgba(192, 85, 74, 0.3);
+    background: rgba(181, 84, 74, 0.08);
+    border-color: rgba(181, 84, 74, 0.3);
 }
 .face-result-icon {
     width: 48px;
@@ -345,7 +345,7 @@ body {
     font-family: 'Courier New', monospace;
     font-size: 13px;
     color: var(--accent-cyan);
-    background: rgba(200, 137, 47, 0.08);
+    background: rgba(152, 97, 49, 0.08);
     padding: 4px 10px;
     border-radius: 6px;
 }
@@ -359,19 +359,19 @@ body {
     font-size: 14px;
     font-weight: 700;
     border: 2px solid var(--accent-cyan);
-    background: rgba(200, 137, 47, 0.15);
+    background: rgba(152, 97, 49, 0.15);
     color: var(--accent-cyan);
     cursor: pointer;
     transition: var(--transition);
     margin-left: 12px;
-    box-shadow: 0 0 12px rgba(200, 137, 47, 0.2);
+    box-shadow: 0 0 12px rgba(152, 97, 49, 0.2);
     letter-spacing: 0.5px;
 }
 
 .lang-switch:hover {
     background: var(--accent-cyan);
     color: var(--bg-primary);
-    box-shadow: 0 0 20px rgba(200, 137, 47, 0.5);
+    box-shadow: 0 0 20px rgba(152, 97, 49, 0.5);
     transform: scale(1.05);
 }
 
@@ -404,19 +404,19 @@ body {
 }
 
 .notification.success {
-    background: rgba(107, 143, 94, 0.15);
+    background: rgba(79, 107, 72, 0.15);
     border: 1px solid var(--accent-green);
     color: var(--accent-green);
 }
 
 .notification.error {
-    background: rgba(192, 85, 74, 0.15);
+    background: rgba(181, 84, 74, 0.15);
     border: 1px solid var(--accent-red);
     color: var(--accent-red);
 }
 
 .notification.info {
-    background: rgba(111, 155, 142, 0.15);
+    background: rgba(71, 96, 68, 0.15);
     border: 1px solid var(--accent-blue);
     color: var(--accent-blue);
 }
@@ -429,7 +429,7 @@ body {
 .main-content {
     max-width: 1400px;
     margin: 0 auto;
-    padding: 24px;
+    padding: 28px;
 }
 
 /* ==================== 卡片通用 ==================== */
@@ -442,7 +442,7 @@ body {
 }
 
 .card:hover {
-    border-color: rgba(200, 137, 47, 0.3);
+    border-color: rgba(152, 97, 49, 0.3);
     box-shadow: var(--shadow);
 }
 
@@ -473,21 +473,21 @@ body {
     border-radius: 20px;
     font-size: 11px;
     font-weight: 600;
-    background: rgba(107, 143, 94, 0.15);
+    background: rgba(79, 107, 72, 0.15);
     color: var(--accent-green);
-    border: 1px solid rgba(107, 143, 94, 0.3);
+    border: 1px solid rgba(79, 107, 72, 0.3);
 }
 
 .card-badge.warning {
-    background: rgba(200, 114, 47, 0.15);
+    background: rgba(176, 106, 44, 0.15);
     color: var(--accent-orange);
-    border-color: rgba(200, 114, 47, 0.3);
+    border-color: rgba(176, 106, 44, 0.3);
 }
 
 .card-badge.danger {
-    background: rgba(192, 85, 74, 0.15);
+    background: rgba(181, 84, 74, 0.15);
     color: var(--accent-red);
-    border-color: rgba(192, 85, 74, 0.3);
+    border-color: rgba(181, 84, 74, 0.3);
 }
 
 .card-subtitle {
@@ -518,8 +518,8 @@ body {
 
 /* 告警态：命令下发值与 B 板回读不一致 */
 .mismatch-indicator.danger {
-    background: rgba(192, 85, 74, 0.12);
-    border-color: rgba(192, 85, 74, 0.4);
+    background: rgba(181, 84, 74, 0.12);
+    border-color: rgba(181, 84, 74, 0.4);
     color: var(--accent-red);
     font-weight: 600;
 }
@@ -579,7 +579,7 @@ body {
     font-weight: 700;
     color: var(--accent-cyan);
     font-family: 'Courier New', monospace;
-    text-shadow: 0 0 30px rgba(200, 137, 47, 0.3);
+    text-shadow: 0 0 30px rgba(152, 97, 49, 0.3);
 }
 
 .temp-unit {
@@ -656,7 +656,7 @@ body {
 
 .fan-shell.on {
     color: var(--accent-cyan);
-    background: rgba(111, 155, 142, calc(.08 + .14 * var(--fan-level)));
+    background: rgba(71, 96, 68, calc(.08 + .14 * var(--fan-level)));
 }
 
 .fan-icon {
@@ -666,7 +666,7 @@ body {
 }
 
 .fan-shell.on .fan-icon {
-    filter: drop-shadow(0 0 calc(2px + 7px * var(--fan-level)) rgba(111, 155, 142, 0.55));
+    filter: drop-shadow(0 0 calc(2px + 7px * var(--fan-level)) rgba(71, 96, 68, 0.55));
 }
 
 .fan-blade {
@@ -706,12 +706,12 @@ body {
 
 .level-chip.on {
     color: var(--accent-yellow);
-    background: rgba(200, 137, 47, 0.12);
+    background: rgba(152, 97, 49, 0.12);
 }
 
 .fan-visual .level-chip.on {
     color: var(--accent-cyan);
-    background: rgba(111, 155, 142, 0.12);
+    background: rgba(71, 96, 68, 0.12);
 }
 
 /* 风扇硬件回读小字（B 板真值） */
@@ -742,7 +742,7 @@ body {
     align-items: center;
     justify-content: center;
     border-radius: 12px;
-    background: rgba(111, 155, 142, 0.08);
+    background: rgba(71, 96, 68, 0.08);
     transition: var(--transition);
 }
 
@@ -753,7 +753,7 @@ body {
 }
 
 .dw-icon.open {
-    background: rgba(107, 143, 94, 0.1);
+    background: rgba(79, 107, 72, 0.1);
 }
 
 .dw-icon.open svg {
@@ -775,12 +775,12 @@ body {
 
 .dw-status.closed {
     color: var(--accent-red);
-    background: rgba(192, 85, 74, 0.1);
+    background: rgba(181, 84, 74, 0.1);
 }
 
 .dw-status.open {
     color: var(--accent-green);
-    background: rgba(107, 143, 94, 0.1);
+    background: rgba(79, 107, 72, 0.1);
 }
 
 /* ==================== 灯光卡片 ==================== */
@@ -908,7 +908,7 @@ body {
     border-radius: 50%;
     background: var(--accent-cyan);
     cursor: pointer;
-    box-shadow: 0 0 10px rgba(200, 137, 47, 0.4);
+    box-shadow: 0 0 10px rgba(152, 97, 49, 0.4);
     transition: var(--transition);
 }
 
@@ -958,12 +958,12 @@ body {
 }
 
 .btn-danger {
-    border-color: rgba(192, 85, 74, 0.3);
+    border-color: rgba(181, 84, 74, 0.3);
     color: var(--accent-red);
 }
 
 .btn-danger:hover {
-    background: rgba(192, 85, 74, 0.15);
+    background: rgba(181, 84, 74, 0.15);
     border-color: var(--accent-red);
 }
 
@@ -996,20 +996,20 @@ body {
 
 .level-btn.active {
     color: var(--accent-yellow);
-    background: rgba(200, 137, 47, 0.14);
-    border-color: rgba(200, 137, 47, 0.45);
-    box-shadow: 0 0 12px rgba(200, 137, 47, 0.18);
+    background: rgba(152, 97, 49, 0.14);
+    border-color: rgba(152, 97, 49, 0.45);
+    box-shadow: 0 0 12px rgba(152, 97, 49, 0.18);
 }
 
 .level-btn.active:hover {
     color: var(--accent-yellow);
-    background: rgba(200, 137, 47, 0.2);
-    border-color: rgba(200, 137, 47, 0.6);
+    background: rgba(152, 97, 49, 0.2);
+    border-color: rgba(152, 97, 49, 0.6);
 }
 
 /* ==================== 空调卡片（美的红外） ==================== */
 .ac-opt.active {
-    background: rgba(200, 137, 47, 0.15);
+    background: rgba(152, 97, 49, 0.15);
     border-color: var(--accent-cyan);
     color: var(--accent-cyan);
 }
@@ -1094,15 +1094,15 @@ body {
     height: 22px;
 }
 
-.light-on-icon { background: rgba(200, 137, 47, 0.1); color: var(--accent-yellow); }
+.light-on-icon { background: rgba(152, 97, 49, 0.1); color: var(--accent-yellow); }
 .light-off-icon { background: rgba(184, 165, 138, 0.26); }
 .ac-on-icon { background: rgba(154, 122, 160, 0.1); color: var(--accent-purple); }
 .ac-off-icon { background: rgba(184, 165, 138, 0.26); }
-.fan-on-icon { background: rgba(111, 155, 142, 0.1); color: var(--accent-blue); }
+.fan-on-icon { background: rgba(71, 96, 68, 0.1); color: var(--accent-blue); }
 .fan-off-icon { background: rgba(184, 165, 138, 0.26); }
-.door-open-icon { background: rgba(107, 143, 94, 0.1); color: var(--accent-green); }
+.door-open-icon { background: rgba(79, 107, 72, 0.1); color: var(--accent-green); }
 .door-close-icon { background: rgba(184, 165, 138, 0.26); }
-.camera-icon { background: rgba(107, 143, 94, 0.1); color: var(--accent-green); }
+.camera-icon { background: rgba(79, 107, 72, 0.1); color: var(--accent-green); }
 
 /* ==================== 图表 ==================== */
 .chart-container {
@@ -1213,7 +1213,7 @@ body {
 }
 
 .data-table tbody tr:hover {
-    background: rgba(111, 155, 142, 0.05);
+    background: rgba(71, 96, 68, 0.05);
 }
 
 .status-tag {
@@ -1225,12 +1225,12 @@ body {
 }
 
 .status-tag.granted {
-    background: rgba(107, 143, 94, 0.15);
+    background: rgba(79, 107, 72, 0.15);
     color: var(--accent-green);
 }
 
 .status-tag.denied {
-    background: rgba(192, 85, 74, 0.15);
+    background: rgba(181, 84, 74, 0.15);
     color: var(--accent-red);
 }
 
@@ -1260,8 +1260,8 @@ body {
 }
 
 @keyframes scanPulse {
-    0%, 100% { box-shadow: 0 0 0 rgba(200, 137, 47, 0); }
-    50% { box-shadow: 0 0 30px rgba(200, 137, 47, 0.2); }
+    0%, 100% { box-shadow: 0 0 0 rgba(152, 97, 49, 0); }
+    50% { box-shadow: 0 0 30px rgba(152, 97, 49, 0.2); }
 }
 
 .scan-icon {
@@ -1381,9 +1381,9 @@ body {
     padding: 1px 8px;
     border-radius: 4px;
     font-size: 11px;
-    background: rgba(200, 137, 47, 0.15);
+    background: rgba(152, 97, 49, 0.15);
     color: var(--accent-cyan);
-    border: 1px solid rgba(200, 137, 47, 0.3);
+    border: 1px solid rgba(152, 97, 49, 0.3);
     vertical-align: middle;
     margin-left: 4px;
 }
@@ -1471,14 +1471,14 @@ body {
     border: 1px solid transparent;
 }
 .ha-status-badge.connected {
-    background: rgba(107, 143, 94, 0.15);
+    background: rgba(79, 107, 72, 0.15);
     color: var(--accent-green);
-    border-color: rgba(107, 143, 94, 0.3);
+    border-color: rgba(79, 107, 72, 0.3);
 }
 .ha-status-badge.error {
-    background: rgba(192, 85, 74, 0.15);
+    background: rgba(181, 84, 74, 0.15);
     color: var(--accent-red);
-    border-color: rgba(192, 85, 74, 0.3);
+    border-color: rgba(181, 84, 74, 0.3);
 }
 
 .form-row {
@@ -1631,14 +1631,14 @@ body {
     height: 18px;
 }
 .face-status-indicator.granted {
-    background: rgba(107, 143, 94, 0.2);
+    background: rgba(79, 107, 72, 0.2);
     color: var(--accent-green);
-    border: 1px solid rgba(107, 143, 94, 0.3);
+    border: 1px solid rgba(79, 107, 72, 0.3);
 }
 .face-status-indicator.denied {
-    background: rgba(192, 85, 74, 0.2);
+    background: rgba(181, 84, 74, 0.2);
     color: var(--accent-red);
-    border: 1px solid rgba(192, 85, 74, 0.3);
+    border: 1px solid rgba(181, 84, 74, 0.3);
 }
 
 /* ==================== 连接状态指示器 ==================== */
@@ -1656,7 +1656,7 @@ body {
 }
 .connection-indicator.offline {
     color: var(--accent-red);
-    background: rgba(192, 85, 74, 0.1);
+    background: rgba(181, 84, 74, 0.1);
     animation: pulse 1.5s ease-in-out infinite;
 }
 @keyframes pulse {

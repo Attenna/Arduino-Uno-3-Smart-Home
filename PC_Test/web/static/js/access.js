@@ -127,23 +127,23 @@ function updateFaceResultDisplay(event) {
     if (isGranted) {
         statusEl.className = 'face-result-status granted';
         iconEl.innerHTML = `
-            <svg viewBox="0 0 24 24" fill="none" stroke="#6b8f5e" stroke-width="2.5">
+            <svg viewBox="0 0 24 24" fill="none" stroke="#4f6b48" stroke-width="2.5">
                 <path d="M20 6L9 17l-5-5"/>
             </svg>`;
         nameEl.textContent = event.person_name || t('access.unknown');
         metaEl.textContent = lang === 'zh' ? '验证通过' : 'Access Granted';
-        metaEl.style.color = '#6b8f5e';
+        metaEl.style.color = '#4f6b48';
     } else {
         statusEl.className = 'face-result-status denied';
         iconEl.innerHTML = `
-            <svg viewBox="0 0 24 24" fill="none" stroke="#c0554a" stroke-width="2.5">
+            <svg viewBox="0 0 24 24" fill="none" stroke="#b5544a" stroke-width="2.5">
                 <circle cx="12" cy="12" r="10"/>
                 <line x1="15" y1="9" x2="9" y2="15"/>
                 <line x1="9" y1="9" x2="15" y2="15"/>
             </svg>`;
         nameEl.textContent = event.person_name || t('access.unknown');
         metaEl.textContent = lang === 'zh' ? '访问被拒绝' : 'Access Denied';
-        metaEl.style.color = '#c0554a';
+        metaEl.style.color = '#b5544a';
     }
 
     // 详细信息
@@ -246,7 +246,7 @@ async function loadPersons() {
 
     persons.forEach((p, i) => {
         const initial = p.name.charAt(0);
-        const colors = ['#c8892f', '#6b8f5e', '#9a7aa0', '#c8722f', '#c0554a'];
+        const colors = ['#986131', '#4f6b48', '#9a7aa0', '#b06a2c', '#b5544a'];
         const color = colors[i % colors.length];
         const faceIdDisplay = p.face_id || t('access.unset');
         html += `

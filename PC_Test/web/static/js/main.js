@@ -118,10 +118,10 @@ function updateConnectionStatus(online) {
     if (!indicator) return;
 
     if (online) {
-        indicator.innerHTML = '<span style="color:#6b8f5e;">&#9679;</span> ' + t('system.online');
+        indicator.innerHTML = '<span style="color:#4f6b48;">&#9679;</span> ' + t('system.online');
         indicator.className = 'connection-indicator online';
     } else {
-        indicator.innerHTML = '<span style="color:#c0554a;">&#9679;</span> ' + t('system.offline');
+        indicator.innerHTML = '<span style="color:#b5544a;">&#9679;</span> ' + t('system.offline');
         indicator.className = 'connection-indicator offline';
     }
 }
@@ -757,8 +757,8 @@ async function loadTemperatureChart() {
                 {
                     label: t('chart.temp'),
                     data: temps,
-                    borderColor: '#c8892f',
-                    backgroundColor: 'rgba(200, 137, 47, 0.1)',
+                    borderColor: '#986131',
+                    backgroundColor: 'rgba(152, 97, 49, 0.1)',
                     tension: 0.4,
                     fill: true
                 },
@@ -779,24 +779,24 @@ async function loadTemperatureChart() {
             interaction: { intersect: false, mode: 'index' },
             plugins: {
                 legend: {
-                    labels: { color: '#857767' }
+                    labels: { color: '#7d7264' }
                 }
             },
             scales: {
                 x: {
-                    ticks: { color: '#857767' },
+                    ticks: { color: '#7d7264' },
                     grid: { color: 'rgba(184, 165, 138, 0.22)' }
                 },
                 y: {
-                    ticks: { color: '#857767' },
+                    ticks: { color: '#7d7264' },
                     grid: { color: 'rgba(184, 165, 138, 0.22)' },
-                    title: { display: true, text: '\u00b0C', color: '#857767' }
+                    title: { display: true, text: '\u00b0C', color: '#7d7264' }
                 },
                 y1: {
                     position: 'right',
-                    ticks: { color: '#857767' },
+                    ticks: { color: '#7d7264' },
                     grid: { display: false },
-                    title: { display: true, text: '%', color: '#857767' }
+                    title: { display: true, text: '%', color: '#7d7264' }
                 }
             }
         }

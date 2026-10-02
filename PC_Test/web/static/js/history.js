@@ -48,13 +48,13 @@ function initHistoryChart() {
             datasets: [{
                 label: '温度',
                 data: [],
-                borderColor: '#c8892f',
-                backgroundColor: 'rgba(200, 137, 47, 0.1)',
+                borderColor: '#986131',
+                backgroundColor: 'rgba(152, 97, 49, 0.1)',
                 borderWidth: 2,
                 fill: true,
                 tension: 0.4,
                 pointRadius: 2,
-                pointBackgroundColor: '#c8892f'
+                pointBackgroundColor: '#986131'
             }]
         },
         options: {
@@ -63,17 +63,17 @@ function initHistoryChart() {
             plugins: {
                 legend: {
                     labels: {
-                        color: '#857767',
+                        color: '#7d7264',
                         font: { size: 12 },
                         usePointStyle: true
                     }
                 },
                 tooltip: {
-                    backgroundColor: 'rgba(255, 253, 249, 0.96)',
-                    borderColor: '#ece1d2',
+                    backgroundColor: 'rgba(255, 252, 246, 0.96)',
+                    borderColor: '#ebe3d5',
                     borderWidth: 1,
-                    titleColor: '#3a3229',
-                    bodyColor: '#857767',
+                    titleColor: '#39362f',
+                    bodyColor: '#7d7264',
                     padding: 12
                 }
             },
@@ -99,37 +99,37 @@ async function loadHistory() {
     let data = [];
     let title = '';
     let chartLabel = '';
-    let chartColor = '#c8892f';
-    let chartBgColor = 'rgba(200, 137, 47, 0.1)';
+    let chartColor = '#986131';
+    let chartBgColor = 'rgba(152, 97, 49, 0.1)';
     
     switch (dataType) {
         case 'temperature':
             data = await apiGet(`/api/temperature?hours=${hours}`);
             title = t('chart.temp_history');
             chartLabel = t('chart.temp');
-            chartColor = '#c8892f';
-            chartBgColor = 'rgba(200, 137, 47, 0.1)';
+            chartColor = '#986131';
+            chartBgColor = 'rgba(152, 97, 49, 0.1)';
             break;
         case 'humidity':
             data = await apiGet(`/api/temperature?hours=${hours}`);
             title = t('chart.humidity_history');
             chartLabel = t('chart.humidity');
-            chartColor = '#6f9b8e';
-            chartBgColor = 'rgba(111, 155, 142, 0.1)';
+            chartColor = '#476044';
+            chartBgColor = 'rgba(71, 96, 68, 0.1)';
             break;
         case 'door_window':
             data = await apiGet(`/api/door_window/history?hours=${hours}`);
             title = t('chart.door_history');
             chartLabel = t('chart.door_status');
-            chartColor = '#6b8f5e';
-            chartBgColor = 'rgba(107, 143, 94, 0.1)';
+            chartColor = '#4f6b48';
+            chartBgColor = 'rgba(79, 107, 72, 0.1)';
             break;
         case 'light':
             data = await apiGet(`/api/light/history?hours=${hours}`);
             title = t('chart.light_history');
             chartLabel = t('chart.light_brightness');
-            chartColor = '#d99a2b';
-            chartBgColor = 'rgba(200, 137, 47, 0.1)';
+            chartColor = '#c8892f';
+            chartBgColor = 'rgba(152, 97, 49, 0.1)';
             break;
     }
     
