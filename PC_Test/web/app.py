@@ -9,7 +9,7 @@ from flask import Flask, jsonify
 
 from .api import access, automation, camera, devices, face, ha, pages, status, voice
 from .config import ensure_dirs, load_config
-from .extensions import init_bridge, shutdown_bridge
+from .extensions import init_bridge, shutdown_bridge, start_watchers
 
 logger = logging.getLogger(__name__)
 
@@ -52,5 +52,8 @@ def create_app(config: dict | None = None, start_hardware: bool = True):
 
     if start_hardware:
         init_bridge(cfg)
+        # 识别哨兵跟硬件桥同一条启停路径：测试里 create_app(start_hardware=False)
+        # 不该起线程，而 --no-serial 的真服务必须照样能刷脸开门（PIR 门控会自动退化）
+        start_watchers(cfg)
     atexit.register(shutdown_bridge)
     return app

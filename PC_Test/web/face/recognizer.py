@@ -195,6 +195,52 @@ def cosine_similarity(left: np.ndarray, right: np.ndarray) -> float:
     return float(np.dot(left, right) / (left_norm * right_norm))
 
 
+FACE_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".pgm"}
+
+
+def collect_face_images(person_dir: str | Path) -> list[Path]:
+    return sorted(
+        path
+        for path in Path(person_dir).rglob("*")
+        if path.is_file() and path.suffix.lower() in FACE_IMAGE_SUFFIXES
+    )
+
+
+def build_identity(
+    person_dir: str | Path,
+    extractor,
+    max_images: int | None = None,
+) -> dict[str, Any] | None:
+    """算出一个人的均值原型；目录里没有可读图片时返回 None。
+
+    max_images 只取文件名排序后的最后 N 张（运行时录入的文件名带时间戳，
+    即「最新的 N 张」）：注册照越攒越多会让每次热加载的提特征成本线性上涨。
+    """
+    image_paths = collect_face_images(person_dir)
+    if max_images:
+        image_paths = image_paths[-max_images:]
+    embeddings = []
+    used_images = []
+    for image_path in image_paths:
+        image = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
+        if image is None:
+            print(f"[skip] Cannot read authorized face image: {image_path}")
+            continue
+        embeddings.append(extractor.extract(image))
+        used_images.append(str(image_path))
+
+    if not embeddings:
+        return None
+
+    stacked = np.vstack(embeddings).astype(np.float32)
+    return {
+        "name": Path(person_dir).name,
+        "image_count": len(used_images),
+        "images": used_images,
+        "prototype": normalize_embedding(stacked.mean(axis=0)),
+    }
+
+
 def build_embedding_database(
     authorized_dir: str | Path,
     model_path: str | Path | None = None,
@@ -213,38 +259,9 @@ def build_embedding_database(
 
     identities: list[dict[str, Any]] = []
     for person_dir in sorted(p for p in authorized_path.iterdir() if p.is_dir()):
-        image_paths = sorted(
-            path
-            for path in person_dir.rglob("*")
-            if path.suffix.lower() in {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".pgm"}
-        )
-        if not image_paths:
-            continue
-
-        embeddings = []
-        used_images = []
-        for image_path in image_paths:
-            image = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
-            if image is None:
-                print(f"[skip] Cannot read authorized face image: {image_path}")
-                continue
-            embeddings.append(extractor.extract(image))
-            used_images.append(str(image_path))
-
-        if not embeddings:
-            continue
-
-        stacked = np.vstack(embeddings).astype(np.float32)
-        prototype = normalize_embedding(stacked.mean(axis=0))
-
-        identities.append(
-            {
-                "name": person_dir.name,
-                "image_count": len(used_images),
-                "images": used_images,
-                "prototype": prototype.astype(np.float32),
-            }
-        )
+        identity = build_identity(person_dir, extractor)
+        if identity is not None:
+            identities.append(identity)
 
     if not identities:
         raise ValueError(f"No valid authorized face images found under: {authorized_path}")

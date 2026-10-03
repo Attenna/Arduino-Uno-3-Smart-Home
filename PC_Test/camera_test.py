@@ -13,18 +13,19 @@ import time
 
 import cv2
 
-from camera_stream import find_camera, FaceDetector
+from camera_stream import CameraSource, FaceDetector
 
 
 def main():
     parser = argparse.ArgumentParser(description="摄像头快速自检")
-    parser.add_argument("--cam", help="摄像头索引(如 0)或名称(如 'Web Cam')")
+    parser.add_argument("--cam", help="摄像头索引(如 0)、设备节点(如 /dev/video1)或名称(如 'Web Cam')")
     parser.add_argument("--frames", type=int, default=5, help="读取帧数(默认5)")
     args = parser.parse_args()
 
-    cap, desc = find_camera(args.cam)
-    if cap is None:
-        print("错误：找不到任何可用摄像头")
+    src = CameraSource(args.cam)
+    desc = src.open()
+    if desc is None:
+        print(f"错误：{src.status()['error']}")
         return 1
 
     print(f"[摄像头] 已打开：{desc}")
@@ -33,7 +34,7 @@ def main():
 
     ok = 0
     for i in range(args.frames):
-        ret, frame = cap.read()
+        ret, frame = src.read()
         if not ret:
             print(f"  第{i + 1}帧读取失败")
             time.sleep(0.2)
@@ -44,7 +45,7 @@ def main():
         ok += 1
         time.sleep(0.2)
 
-    cap.release()
+    src.close()
     print(f"\n结果：成功读取 {ok}/{args.frames} 帧")
     return 0 if ok > 0 else 1
 

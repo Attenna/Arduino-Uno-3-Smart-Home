@@ -1,6 +1,7 @@
-# run_web.py —— Web 仪表盘 + YOLOv8-face/ArcFace 人脸识别
-# 联动栈中本容器不碰串口（--no-serial），硬件控制/人脸开门经 voice 容器
-# 的 POST /tool 转发（SMART_HOME_HW_RELAY 环境变量）。
+# run_web.py —— Web 仪表盘 + YOLOv8-face/ArcFace 人脸识别 + 唯一硬件网关
+# 本容器独占 Arduino 串口：run_web.py 拉起 mcp_home_server.py（MCP stdio 子进程）。
+# 语音助手不再碰串口，改经本容器的 /api/hardware/tools|/api/hardware/tool 调用硬件。
+# 无串口的桌面体验可用 --no-serial 覆盖 CMD（见 docker-compose.desktop.yml）。
 FROM python:3.12-slim
 
 # libgl1/libglib2.0-0：ultralytics 自带 opencv-python（非 headless）的运行库
@@ -34,4 +35,5 @@ HEALTHCHECK --interval=20s --timeout=8s --start-period=90s --retries=5 \
     CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:5000/api/health',timeout=5).status==200 else 1)"
 
 ENTRYPOINT ["tini", "--"]
-CMD ["python", "-u", "run_web.py", "--no-serial", "--host", "0.0.0.0", "--port", "5000"]
+# 默认连串口（compose 已透传 A/B 板 + /dev）；无硬件桌面用 override 换 --no-serial
+CMD ["python", "-u", "run_web.py", "--host", "0.0.0.0", "--port", "5000"]

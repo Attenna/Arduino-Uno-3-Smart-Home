@@ -1,34 +1,42 @@
 # ============================================================================
 # 智能家居联动栈 —— Docker Compose（目标：香橙派等 Linux aarch64 设备）
 #
-#   Web 仪表盘/人脸 :5000   摄像头流 :8080   语音助手 :8101   本地LLM :8000
+#   Web 仪表盘/人脸/硬件网关 :5000   摄像头流 :8080   语音助手 :8101   本地LLM(可选) :8000
 #
-# 架构与 start_all.py 一致：voice 容器独占 Arduino 串口；web 以 --no-serial
-# 运行，硬件调用/人脸自动开门经 compose 内网 http://voice:8101/tool 静默转发。
+# 架构（本轮重构后的"反转"）：
+#   web 是唯一硬件网关——独占 Arduino 串口（run_web.py 拉起 mcp_home_server.py
+#   stdio 子进程），对外只暴露 /api/hardware/tools（工具清单）与
+#   /api/hardware/tool（执行）。voice 容器不再碰串口，退化为纯 HTTP 客户端：启动时
+#   拉取工具清单喂给大模型，运行时把工具调用转发给 web。硬件状态、历史、
+#   「全屋切手动」等事件全部由 web 单点记账，语音与面板天然等效、无双写。
+#
+#   LLM 默认走云端（硅基流动 SiliconFlow 的 OpenAI 兼容端点，本地推理太慢）。本地 llama.cpp
+#   (qwen 容器) 作为离线 fallback，默认不启动，用 override 文件启用（见下）。
 #
 # 快速开始（在 PC_Test/ 目录）：
-#   cp docker/.env.example .env       # 按实际串口/摄像头设备号修改
-#   docker compose up -d --build      # 首次构建较慢（aarch64 上 llama.cpp 要编译）
+#   cp docker/.env.example .env       # 填 LLM_API_KEY，按实际改串口/摄像头号
+#   docker compose up -d --build      # 默认云端 LLM
 #   docker compose logs -f web voice
+#
+# 离线（无云端 Key，本地跑 3B 模型）：
+#   docker compose -f docker-compose.yml -f docker-compose.local-llm.yml up -d --build
 #
 # 设备透传说明：
 #   Arduino  Uno 克隆版(CH340) 通常是 /dev/ttyUSB0、/dev/ttyUSB1
 #            正版 Uno(RTL)      通常是 /dev/ttyACM0、/dev/ttyACM1
 #   USB 摄像头通常是 /dev/video0（ls -l /dev/video* / ls /dev/tty{USB,ACM}* 查看）
-#   麦克风走 ALSA：透传整个 /dev/snd
-#
-# 云端 LLM（免本地 3B 模型）：docker compose -f docker-compose.yml \
-#                              -f docker-compose.dashscope.yml up -d --build
+#   麦克风走 ALSA：透传整个 /dev/snd（在 voice 容器）
 # ============================================================================
 name: smart-home
 
 services:
-  # ── ① 本地 LLM（OpenAI 兼容；语音助手通过 http://qwen:8000/v1 访问）────────
+  # ── ① 本地 LLM（OpenAI 兼容；离线 fallback，默认编排不启动）───────────────
   qwen:
     build:
       context: .
       dockerfile: docker/Dockerfile.qwen
     image: smarthome-qwen:latest
+    profiles: ["local-llm"]        # 默认不带 profile 启动；见 docker-compose.local-llm.yml
     volumes:
       # 模型不进镜像（2GB+），宿主机 PC_Test/models/qwen 直接挂载
       - ./models:/app/models
@@ -38,70 +46,74 @@ services:
       - "${QWEN_PORT:-8000}:8000"
     restart: unless-stopped
 
-  # ── ② 语音助手（独占串口；麦克风/扬声器走 ALSA）──────────────────────────
-  voice:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.voice
-    image: smarthome-voice:latest
-    depends_on:
-      qwen:
-        condition: service_healthy
-    devices:
-      # Arduino A/B 板（设备不存在时 compose 会报错：在 .env 改成真实设备名，
-      # 或临时把不用的两行删掉）
-      - "${SERIAL_PORT_A:-/dev/ttyUSB0}:${SERIAL_PORT_A:-/dev/ttyUSB0}"
-      - "${SERIAL_PORT_B:-/dev/ttyUSB1}:${SERIAL_PORT_B:-/dev/ttyUSB1}"
-      # ALSA 声卡（麦克风 + 扬声器），整目录透传
-      - /dev/snd:/dev/snd
-    # 设备热插拔：Docker 的 devices: 在容器创建时把设备号固化，物理拔插后重新枚举
-    # 会换 ttyACM 序号/设备号，容器里的旧节点永久失效（Errno 6，用户态救不回来）。
-    # 下面两条让容器直接跟随宿主机 /dev：cgroup 放行所有 USB ACM(166)，再靠 /dev
-    # 整目录看到重新枚举后的新节点，这样串口层自愈才能真正把 B 板拉回来。
-    device_cgroup_rules:
-      - "c 166:* rmw"
-    volumes:
-      - /dev:/dev
-      - ./models:/app/models
-      # 改配置无需重建镜像（只读挂载；文件须存在于宿主机）
-      - ./voice_config.yaml:/app/voice_config.yaml:ro
-    environment:
-      - TZ=${TZ:-Asia/Shanghai}
-      # compose 内网服务发现
-      - SMART_HOME_LLM_BASE_URL=http://qwen:8000/v1
-      - SMART_HOME_PORT_A=${SERIAL_PORT_A:-/dev/ttyUSB0}
-      - SMART_HOME_PORT_B=${SERIAL_PORT_B:-/dev/ttyUSB1}
-      # 多麦克风时用 docker compose exec voice python voice_assistant.py --list-mic
-      # 查到索引后填到 .env 的 MIC_INDEX
-      - SMART_HOME_MIC_INDEX=${MIC_INDEX:-}
-      # 语音动作回传仪表盘（状态/历史/全屋模式切手动，与面板等效）
-      - SMART_HOME_WEB_URL=http://web:5000
-    ports:
-      - "${VOICE_PORT:-8101}:8101"
-    restart: unless-stopped
-
-  # ── ③ Web 仪表盘 + YOLOv8-face/ArcFace 人脸识别（不碰串口）───────────────
+  # ── ② Web 仪表盘 + 人脸识别 + 唯一硬件网关（独占 A/B 串口）────────────────
   web:
     build:
       context: .
       dockerfile: docker/Dockerfile.web
     image: smarthome-web:latest
-    depends_on:
-      voice:
-        condition: service_healthy
+    devices:
+      # Arduino A/B 板（设备不存在时 compose 会报错：在 .env 改成真实设备名，
+      # 或临时把不用的两行删掉）
+      - "${SERIAL_PORT_A:-/dev/ttyUSB0}:${SERIAL_PORT_A:-/dev/ttyUSB0}"
+      - "${SERIAL_PORT_B:-/dev/ttyUSB1}:${SERIAL_PORT_B:-/dev/ttyUSB1}"
+    # 设备热插拔：devices: 在容器创建时把设备号固化，物理拔插后重新枚举会换
+    # ttyACM 序号/设备号，容器里的旧节点永久失效（Errno 6）。下面两条让容器直接
+    # 跟随宿主机 /dev：cgroup 放行所有 USB ACM(166)，再靠 /dev 整目录看到新节点，
+    # 串口层自愈才能真正把 B 板拉回来。
+    device_cgroup_rules:
+      - "c 166:* rmw"
     volumes:
+      - /dev:/dev
       - ./models:/app/models
       # SQLite、人脸注册照片、embeddings.pkl 持久化
       - ./data:/app/data
       - ./web_config.yaml:/app/web_config.yaml:ro
     environment:
       - TZ=${TZ:-Asia/Shanghai}
-      # 硬件控制/人脸开门 → voice 容器 POST /tool（静默，不经语音播报）
-      - SMART_HOME_HW_RELAY=http://voice:8101
+      # 串口探测（web 内 MCP 子进程读这两条自动定位 A/B 板）
+      - SMART_HOME_PORT_A=${SERIAL_PORT_A:-/dev/ttyUSB0}
+      - SMART_HOME_PORT_B=${SERIAL_PORT_B:-/dev/ttyUSB1}
       # 摄像头实时画面 → camera 容器的 MJPEG（人脸识别页面走 /api/camera/stream 同源代理）
       - SMART_HOME_CAMERA_URL=http://camera:8080/video_feed
+      # 语音助手 HTTP 口（自动化里"唤醒/播报"动作、面板对话实况同源代理转发到这里）
+      - SMART_HOME_VOICE_URL=http://voice:8101
     ports:
       - "${WEB_PORT:-5000}:5000"
+    restart: unless-stopped
+
+  # ── ③ 语音助手（Sherpa KWS/ASR/TTS；纯 HTTP 客户端，不碰串口）─────────────
+  voice:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.voice
+    image: smarthome-voice:latest
+    depends_on:
+      # 需要 web 网关在线以拉取工具清单/转发调用（拉不到时 voice 内部会退避重试）
+      web:
+        condition: service_healthy
+    devices:
+      # ALSA 声卡（麦克风 + 扬声器），整目录透传；不再透传串口
+      - /dev/snd:/dev/snd
+    volumes:
+      - ./models:/app/models
+      # 改配置无需重建镜像（只读挂载；文件须存在于宿主机）
+      - ./voice_config.yaml:/app/voice_config.yaml:ro
+    environment:
+      - TZ=${TZ:-Asia/Shanghai}
+      # 唯一硬件网关（web 容器）：工具清单 + 大模型工具调用转发
+      - SMART_HOME_WEB_URL=http://web:5000
+      # 默认云端 LLM（硅基流动 OpenAI 兼容端点）；离线改用 local-llm override
+      # Key 只从 .env 的 LLM_API_KEY 进容器，密钥文件已被 .dockerignore 排除
+      - SMART_HOME_LLM_MODE=${LLM_MODE:-siliconflow}
+      - SMART_HOME_LLM_BASE_URL=${LLM_BASE_URL:-https://api.siliconflow.cn/v1}
+      - SMART_HOME_LLM_API_KEY=${LLM_API_KEY:-}
+      - SMART_HOME_LLM_MODEL=${LLM_MODEL:-Qwen/Qwen3.5-4B}
+      # 多麦克风时用 docker compose exec voice python voice_assistant.py --list-mic
+      # 查到索引后填到 .env 的 MIC_INDEX
+      - SMART_HOME_MIC_INDEX=${MIC_INDEX:-}
+    ports:
+      - "${VOICE_PORT:-8101}:8101"
     restart: unless-stopped
 
   # ── ④ USB 摄像头 MJPEG 视频流（http://宿主:8080）─────────────────────────
@@ -110,10 +122,18 @@ services:
       context: .
       dockerfile: docker/Dockerfile.camera
     image: smarthome-camera:latest
-    devices:
-      - "${CAMERA_DEVICE:-/dev/video0}:${CAMERA_DEVICE:-/dev/video0}"
+    # 设备热插拔：与 web 的串口同理。devices: 在容器创建时把设备号固化，摄像头
+    # 拔插后重新枚举会换 /dev/videoN 序号与设备号，容器里的旧节点救不回来。
+    # 下面两条让容器跟随宿主机 /dev：cgroup 放行所有 V4L2(字符设备主号 81)，
+    # 再由 camera_stream.py 重新枚举并自动重开。
+    device_cgroup_rules:
+      - "c 81:* rmw"
+    volumes:
+      - /dev:/dev
     environment:
       - TZ=${TZ:-Asia/Shanghai}
+      # 探测到的节点，仅作优先候选；不在位时自动试其它 /dev/video*
+      - CAMERA_DEVICE=${CAMERA_DEVICE:-}
     ports:
       - "${CAMERA_PORT:-8080}:8080"
     restart: unless-stopped

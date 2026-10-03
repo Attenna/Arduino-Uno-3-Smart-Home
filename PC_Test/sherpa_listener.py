@@ -100,7 +100,10 @@ class SherpaListener:
         kw = self.kws.get_result(self.kws_stream)  # Python 绑定直接返回关键词内部名
         if kw:
             events.append(("wake", kw.replace("_", " ")))  # Hey_Bota → "Hey Bota"
-            self.kws.reset(self.kws_stream)
+            # KeywordSpotter 只有 reset_stream（1.13 起），没有 OnlineRecognizer 那样的
+            # reset：写错会在第一次命中唤醒词时抛 AttributeError，被音频回调吞掉，
+            # 表现为「说破嘴也不唤醒」。
+            self.kws.reset_stream(self.kws_stream)
 
         # ASR（端点检测自动切句）
         self.asr_stream.accept_waveform(_SAMPLE_RATE, pcm_float32)

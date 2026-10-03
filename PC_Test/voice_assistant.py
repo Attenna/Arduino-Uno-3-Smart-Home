@@ -5,14 +5,20 @@
         KWS（zipformer 关键词检测）→ 命中「Hey Bota」→ 切 COMMAND + 提示音
         流式 Paraformer ASR + 端点检测 → 整句指令
         FOLLOWUP：回答后 8s 追问窗口，无需再唤醒
-    用户指令 → Qwen2.5 LLM 流式 + 工具调用（本地 qwen_server.py 或阿里云百炼）
+    用户指令 → LLM 流式 + 工具调用（默认硅基流动云端 API，可切阿里云百炼或本地 qwen_server.py）
         delta.content → 按句切分喂 TTS（边生成边播）
-        delta.tool_calls → 经 MCP 调 mcp_home_server 控制硬件（JSON 串口指令不变）
+        delta.tool_calls → 经 web 硬件网关 HTTP 调用（本进程不碰串口/MCP）
     回复文本 → sherpa-onnx VITS 本地流式播放
 
+控制边界：
+    串口由 web 服务（run_web.py）拉起的 mcp_home_server 独占。本进程所有硬件
+    动作都走网关 HTTP API：GET /api/hardware/tools 取工具 schema，
+    POST /api/hardware/tool 执行。web 既是执行者也是记账者，仪表盘状态/历史/
+    「手动优先」事件与语音天然一致，无需任何二段式回传。
+
 启动：
-    py -3.13 voice_assistant.py                              # 用 voice_config.yaml
-    py -3.13 voice_assistant.py --port-a COM7 --port-b COM6
+    py -3.13 voice_assistant.py                     # 用 voice_config.yaml
+    py -3.13 voice_assistant.py --gateway http://127.0.0.1:5000
     py -3.13 voice_assistant.py --self-check
     py -3.13 voice_assistant.py --test-llm "开红灯"
     py -3.13 voice_assistant.py --kws-repl
@@ -20,11 +26,15 @@
 """
 import argparse
 import asyncio
+import copy
 import json
 import os
+import queue
 import re
 import sys
+import threading
 import time
+import urllib.error
 import urllib.request
 from typing import Optional
 
@@ -35,93 +45,134 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 PC_TEST_DIR = os.path.dirname(os.path.abspath(__file__))
 
+SILICONFLOW_BASE = "https://api.siliconflow.cn/v1"
+DASHSCOPE_BASE = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
-# ==================== 语音动作回传 web（与面板等效）====================
-# 语音进程独占串口、直连 MCP，web 仪表盘看不到这些调用，状态/历史/全屋模式会
-# 落后于真实硬件。动作成功后把结果回传 web（只记账、不重复下发硬件），使语音
-# 与面板效果一致。容器内用 SMART_HOME_WEB_URL=http://web:5000。
-WEB_URL = os.environ.get("SMART_HOME_WEB_URL", "http://127.0.0.1:5000").rstrip("/")
+# mode → 云端 OpenAI 兼容端点；不在表里的 mode 视为本地服务（base_url 由配置给）
+CLOUD_LLM_BASES = {"siliconflow": SILICONFLOW_BASE, "dashscope": DASHSCOPE_BASE}
 
-
-def _pct255(value, default=0):
-    """MCP 工具用 0~255 表示亮度/转速，面板用百分比。"""
-    try:
-        return max(0, min(100, round(int(value) * 100 / 255)))
-    except (TypeError, ValueError):
-        return default
+# 云端 LLM 单次「两段数据之间」的最大间隔（秒），llm.timeout_s 可覆盖
+LLM_TIMEOUT_S = 30.0
 
 
-def voice_action_payload(name, args):
-    """把 MCP 工具调用翻译成面板等效的记账请求；无关工具返回 None。"""
-    args = args or {}
-    action = str(args.get("action", "")).lower()
+# ==================== 硬件网关客户端（web :5000）====================
 
-    if name == "door":
-        if action not in ("open", "close"):
-            return None
-        return {"device": "door", "status": "open" if action == "open" else "closed"}
+class HardwareGateway:
+    """web 硬件网关的 HTTP 客户端：不碰串口/MCP，一切硬件动作经 HTTP 下发。
 
-    if name == "window":
-        if action not in ("open", "close", "normal"):
-            return None
-        status = {"open": "open", "close": "closed", "normal": "normal"}[action]
-        return {"device": "window", "status": status}
+    base_url 解析优先级：--gateway > 环境变量 SMART_HOME_WEB_URL >
+    voice_config.yaml gateway.url > http://127.0.0.1:5000。
+    """
 
-    if name == "light":
-        if action == "off":
-            return {"device": "light", "status": "off", "brightness": 0}
-        if action in ("on", "white", "red", "green", "blue",
-                      "yellow", "purple", "cyan", "rgb"):
-            # 彩色指令面板不跟踪颜色，只记为「开」+亮度
-            brightness = _pct255(args.get("value"), 100) or 100
-            return {"device": "light", "status": "on", "brightness": brightness}
-        return None
+    def __init__(self, base_url: str):
+        self.base_url = base_url.rstrip("/")
 
-    if name == "fan":
-        if action == "off":
-            return {"device": "fan", "speed": 0}
-        if action == "on":
-            return {"device": "fan", "speed": 100}
-        if action == "set_speed":
-            return {"device": "fan", "speed": _pct255(args.get("value"), 50)}
-        return None
-
-    if name == "ac":
-        # 空调没有 action：只回传本次真正给出的字段，web 侧按 DB 当前值补齐
-        keys = ("power", "mode", "temperature", "fan",
-                "swing_ud", "swing_lr")
-        state = {k: args[k] for k in keys if args.get(k) is not None}
-        return {"device": "ac", "state": state} if state else None
-
-    return None
-
-
-def report_voice_action(name, args, timeout=3.0):
-    """把语音动作回传 web；失败只提示，不影响语音主流程。"""
-    payload = voice_action_payload(name, args)
-    if payload is None:
-        return
-    payload["source"] = "voice"
-    try:
+    def _post(self, path: str, payload: dict, timeout: float) -> tuple[bool, str]:
         req = urllib.request.Request(
-            f"{WEB_URL}/api/devices/manual_report",
+            f"{self.base_url}{path}",
             data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-            headers={"Content-Type": "application/json"}, method="POST")
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            resp.read()
-        print(f"[回传] 已同步到仪表盘: {payload}", flush=True)
-    except Exception as e:                               # noqa: BLE001
-        print(f"[回传] 仪表盘同步失败（不影响硬件动作）: {e}", flush=True)
+            headers={"Content-Type": "application/json",
+                     "X-Trigger-Source": "voice"},
+            method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                body = json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            try:
+                body = json.loads(e.read().decode("utf-8"))
+            except Exception:
+                return False, f"error: 网关 HTTP {e.code}"
+            return False, f"error: {body.get('error') or body.get('result') or f'网关 HTTP {e.code}'}"
+        except Exception as e:
+            return False, f"error: 硬件网关不可达（{self.base_url}）: {e}"
+        ok = bool(body.get("ok"))
+        text = str(body.get("result") or body.get("error") or "ok")
+        return ok, text
+
+    def fetch_tools(self) -> list:
+        """拉取全部硬件工具的 OpenAI function schema；网关未就绪时抛异常。"""
+        req = urllib.request.Request(f"{self.base_url}/api/hardware/tools")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        return [{
+            "type": "function",
+            "function": {
+                "name": t["name"],
+                "description": t.get("description") or "",
+                "parameters": t.get("parameters")
+                or {"type": "object", "properties": {}},
+            },
+        } for t in data.get("tools", [])]
+
+    def call(self, name: str, arguments: dict,
+             timeout: float = 20.0) -> tuple[bool, str]:
+        return self._post("/api/hardware/tool",
+                          {"name": name, "arguments": arguments,
+                           "source": "voice", "timeout": timeout},
+                          timeout + 5)
+
+    def health(self) -> tuple[bool, dict]:
+        """web /api/status 摘要（在线状态 + 串口健康度），自检/状态页用。"""
+        try:
+            with urllib.request.urlopen(f"{self.base_url}/api/status",
+                                        timeout=5) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            hb = data.get("hardware_bridge") or {}
+            return True, {"online": bool(hb.get("online")),
+                          "last_error": hb.get("last_error")}
+        except Exception as e:
+            return False, {"error": str(e)}
+
+
+# ==================== 事件总线（SSE 对话实况）====================
+
+class EventBus:
+    """线程安全的发布/订阅：音频回调线程与 asyncio 主循环都往这里发事件，
+    每个 SSE 连接一个队列；另留环形历史，新连接先补发再实时跟进。"""
+
+    HISTORY_MAX = 200
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._subs: list[queue.Queue] = []
+        self._history: list[dict] = []
+
+    def publish(self, etype: str, **fields) -> None:
+        event = {"type": etype, "ts": time.time()}
+        event.update(fields)
+        with self._lock:
+            self._history.append(event)
+            if len(self._history) > self.HISTORY_MAX:
+                del self._history[:len(self._history) - self.HISTORY_MAX]
+            subs = list(self._subs)
+        for q in subs:
+            try:
+                q.put_nowait(event)   # 满则丢：实况流宁缺毋滥，不拖慢音频回调
+            except queue.Full:
+                pass
+
+    def subscribe(self) -> tuple[queue.Queue, list]:
+        q: queue.Queue = queue.Queue(maxsize=256)
+        with self._lock:
+            self._subs.append(q)
+            history = list(self._history)
+        return q, history
+
+    def unsubscribe(self, q: queue.Queue) -> None:
+        with self._lock:
+            if q in self._subs:
+                self._subs.remove(q)
 
 
 # ==================== 配置加载 ====================
 
 DEFAULT_CONFIG = {
-    "serial": {"port_a": "auto", "port_b": "auto"},
-    "llm": {"mode": "local",
-            "base_url": "http://127.0.0.1:8000/v1",
+    "gateway": {"url": "http://127.0.0.1:5000"},
+    "llm": {"mode": "siliconflow",
+            "base_url": SILICONFLOW_BASE,
             "api_key": None,
-            "model": "qwen2.5-3b-instruct-q4_k_m",
+            "model": "Qwen/Qwen3.5-4B",
+            "timeout_s": LLM_TIMEOUT_S,
             "system_prompt": "你是智能家居语音助手。",
             "local": {"gguf_path": "models/qwen/qwen2.5-3b-instruct-q4_k_m.gguf",
                       "n_ctx": 8192, "n_threads": 0, "n_gpu_layers": 0, "port": 8000}},
@@ -143,11 +194,31 @@ DEFAULT_CONFIG = {
              "ack_mode": "chirp",       # chirp=滴声(最快) / voice=说"在的" / both / none
              "chirp_freq": 880, "chirp_ms": 120},
     "mic": {"device_index": None},
+    # 上下文轮数（多轮对话记忆，按 user/assistant 轮计；0=每句独立）
+    "history_rounds": 4,
     # 手动触发对话开始（等价于 KWS 唤醒）：
     #   keyboard=终端按回车；http=POST/GET http://<host>:<port>/trigger
     #   香橙派物理按钮可接 GPIO 守护进程 curl 一下，或手机/浏览器开主页点按钮
     "trigger": {"keyboard": True, "http": True, "host": "0.0.0.0", "port": 8101},
 }
+
+
+def _merge(base: dict, over: dict) -> None:
+    for k, v in over.items():
+        if isinstance(v, dict) and isinstance(base.get(k), dict):
+            _merge(base[k], v)
+        else:
+            base[k] = v
+
+
+def load_config(path: Optional[str]) -> dict:
+    import copy
+    cfg = copy.deepcopy(DEFAULT_CONFIG)
+    if path and os.path.exists(path):
+        with open(path, "r", encoding="utf-8") as f:
+            user = yaml.safe_load(f) or {}
+        _merge(cfg, user)
+    return cfg
 
 
 # ==================== 手动触发通道（键盘回车 / HTTP / 外部程序）====================
@@ -156,7 +227,6 @@ class TriggerBus:
     """跨线程唤醒信号：任意来源 fire()，音频回调每帧 consume() 一次。"""
 
     def __init__(self):
-        import threading
         self._evt = threading.Event()
         self._source = ""
 
@@ -174,26 +244,27 @@ class TriggerBus:
 class TriggerHTTPServer:
     """标准库 HTTP 触发服务（零额外依赖）。
 
-    GET  /            状态页（含「开始对话」按钮 + 文本输入框，手机可直接开）
-    GET  /state       当前状态 JSON
+    GET  /            聊天式实时控制台（唤醒按钮 + 文本输入 + 对话实况）
+    GET  /state       当前状态 JSON（状态机 + 网关/LLM 摘要）
     GET/POST /trigger 触发一次语音监听（curl/物理按钮/网页均可）
     POST /say         直接下发文本指令（JSON: {"text": "..."}，绕过麦克风直接对话）
     GET  /say?text=.. 同上，GET 形式（方便纯 curl/无 body 的 IoT 设备）
-    POST /tool        直接调用 MCP 硬件工具（JSON: {"name":"door","arguments":{...}}）
-                       不经 LLM/TTS，静默执行——供 Web 人脸识别等外部系统联动硬件。
+    GET  /events      SSE 对话实况流（state/partial/user/assistant/tool/system）
     """
 
     def __init__(self, host: str, port: int, bus: TriggerBus, get_state, submit_text,
-                 call_tool=None, on_wake=None):
+                 on_wake=None, event_bus: Optional[EventBus] = None,
+                 info=None):
         import http.server
-        import threading
-        from urllib.parse import urlparse, parse_qs
 
         bus_ref, state_ref, say_ref = bus, get_state, submit_text
-        tool_ref = call_tool  # 同步回调：(name, arguments) -> (ok: bool, text: str)
         wake_ref = on_wake    # 同步回调：(source) -> None；缺省退回 bus.fire()
+        events_ref = event_bus
+        info_ref = info       # 无参回调：返回控制台展示的附加摘要 dict
 
         class _Handler(http.server.BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
             def log_message(self, *a):
                 pass  # 静默，不污染对话日志
 
@@ -221,45 +292,39 @@ class TriggerHTTPServer:
                 say_ref(text, who)
                 self._json(200, {"ok": True, "text": text, "state": state_ref()})
 
-            def _tool(self):
-                if tool_ref is None:
-                    self._json(503, {"ok": False, "error": "MCP 工具通道不可用"})
+            def _events(self):
+                if events_ref is None:
+                    self._json(503, {"ok": False, "error": "事件总线不可用"})
                     return
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+                self.send_header("Cache-Control", "no-cache")
+                self.send_header("X-Accel-Buffering", "no")
+                self.send_header("Connection", "keep-alive")
+                self.end_headers()
+                q, history = events_ref.subscribe()
                 try:
-                    length = int(self.headers.get("Content-Length") or 0)
-                    raw = self.rfile.read(length) if length else b"{}"
-                    data = json.loads(raw.decode("utf-8") or "{}")
-                except Exception:
-                    self._json(400, {"ok": False, "error": "JSON 解析失败"})
-                    return
-                name = data.get("name") if isinstance(data, dict) else None
-                arguments = data.get("arguments") if isinstance(data, dict) else None
-                if not isinstance(name, str) or not name:
-                    self._json(400, {"ok": False, "error": "name 不能为空"})
-                    return
-                if arguments is None:
-                    arguments = {}
-                if not isinstance(arguments, dict):
-                    self._json(400, {"ok": False, "error": "arguments 必须是对象"})
-                    return
-                try:
-                    t0 = time.time()
-                    ok, text = tool_ref(name, arguments)
-                    dt_ms = (time.time() - t0) * 1000
-                    # 周期状态轮询（get_sensor_status 成功)每 2s 一次，不打访问日志；
-                    # 真实控制动作、以及任何失败，记录来源 IP + 耗时便于审计/定位洪泛
-                    if name != "get_sensor_status" or not ok:
-                        print(f"[HTTP] /tool {name} from {self.client_address[0]} "
-                              f"-> {'ok' if ok else 'fail'} {dt_ms:.0f}ms", flush=True)
-                except Exception as e:
-                    print(f"[HTTP] /tool {name} from {self.client_address[0]} "
-                          f"-> 异常 {type(e).__name__}: {e}", flush=True)
-                    self._json(500, {"ok": False, "error": f"工具调用异常: {e}"})
-                    return
-                self._json(200 if ok else 502, {"ok": ok, "name": name, "result": text})
+                    self._send_event({"type": "hello", "state": state_ref(),
+                                      "history": history,
+                                      "info": (info_ref() if info_ref else {})})
+                    while True:
+                        try:
+                            self._send_event(q.get(timeout=15))
+                        except queue.Empty:
+                            self.wfile.write(b": ping\n\n")   # 心跳，防代理/超时掐断
+                            self.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError, OSError):
+                    pass
+                finally:
+                    events_ref.unsubscribe(q)
+
+            def _send_event(self, event: dict):
+                data = json.dumps(event, ensure_ascii=False)
+                self.wfile.write(f"data: {data}\n\n".encode("utf-8"))
+                self.wfile.flush()
 
             def do_POST(self):
-                path = urlparse(self.path).path
+                path = urllib_parse(self.path)
                 if path == "/trigger":
                     self._fire()
                 elif path == "/say":
@@ -272,12 +337,11 @@ class TriggerHTTPServer:
                         text = ""
                     who = self.headers.get("X-Trigger-Source", "http")
                     self._say(text, who)
-                elif path == "/tool":
-                    self._tool()
                 else:
                     self._json(404, {"ok": False})
 
             def do_GET(self):
+                from urllib.parse import urlparse, parse_qs
                 u = urlparse(self.path)
                 path, q = u.path, parse_qs(u.query)
                 if path == "/trigger":
@@ -287,8 +351,10 @@ class TriggerHTTPServer:
                     self._say((q.get("text") or [""])[0], who)
                 elif path == "/state":
                     self._json(200, {"state": state_ref()})
+                elif path == "/events":
+                    self._events()
                 elif path == "/":
-                    body = _TRIGGER_PAGE.encode("utf-8")
+                    body = _CONSOLE_PAGE.encode("utf-8")
                     self.send_response(200)
                     self.send_header("Content-Type", "text/html; charset=utf-8")
                     self.send_header("Content-Length", str(len(body)))
@@ -296,6 +362,10 @@ class TriggerHTTPServer:
                     self.wfile.write(body)
                 else:
                     self._json(404, {"ok": False})
+
+        def urllib_parse(path: str) -> str:
+            from urllib.parse import urlparse
+            return urlparse(path).path
 
         self.httpd = http.server.ThreadingHTTPServer((host, port), _Handler)
         self.httpd.daemon_threads = True
@@ -312,87 +382,226 @@ class TriggerHTTPServer:
             pass
 
 
-_TRIGGER_PAGE = """<!doctype html><html lang="zh"><head><meta charset="utf-8">
+# ---- 聊天式实时控制台（:8101/）----
+_CONSOLE_PAGE = """<!doctype html><html lang="zh"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Hey Bota · 控制台</title>
-<style>body{font-family:system-ui;margin:0;background:#0f1117;color:#e6e6e6;
-display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh}
-#s{font-size:20px;margin-bottom:24px;opacity:.8}
-button{width:200px;height:200px;border-radius:50%;border:0;font-size:24px;
-background:linear-gradient(145deg,#3b82f6,#1d4ed8);color:#fff;box-shadow:0 12px 40px #1d4ed866;margin-bottom:30px}
-button:active{transform:scale(.96)}
-.row{display:flex;gap:10px;width:min(90vw,460px)}
-input{flex:1;font-size:18px;padding:14px 16px;border-radius:12px;border:1px solid #333b4d;
-background:#171a23;color:#e6e6e6;outline:none}
-input:focus{border-color:#3b82f6}
-#send{width:auto;height:auto;border-radius:12px;padding:0 24px;font-size:17px;margin:0}
-</style></head>
-<body><div id="s">状态：--</div>
-<button onclick="go()">开 始<br>语音对话</button>
-<div class="row"><input id="t" placeholder="或直接输入文字指令，回车发送"
+<title>Hey Bota · 语音控制台</title>
+<style>
+:root{--bg:#0e1116;--panel:#161b23;--line:#232b38;--txt:#e8ebf0;--dim:#8b95a7;
+--blue:#3b82f6;--green:#22c55e;--amber:#f59e0b;--red:#ef4444}
+*{box-sizing:border-box}
+body{margin:0;height:100vh;display:flex;flex-direction:column;background:var(--bg);
+color:var(--txt);font-family:system-ui,"PingFang SC","Microsoft YaHei",sans-serif}
+header{display:flex;align-items:center;gap:10px;padding:12px 18px;
+border-bottom:1px solid var(--line);background:var(--panel)}
+header .logo{font-weight:700;font-size:17px}
+.pill{font-size:12px;padding:3px 10px;border-radius:99px;border:1px solid var(--line);
+color:var(--dim);white-space:nowrap}
+.pill b{color:var(--txt);font-weight:600}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--dim);display:inline-block;
+margin-right:6px;vertical-align:1px}
+main{flex:1;overflow-y:auto;padding:18px;display:flex;flex-direction:column;gap:10px}
+.msg{max-width:min(720px,88%);padding:9px 13px;border-radius:14px;line-height:1.55;
+font-size:15px;white-space:pre-wrap;word-break:break-word;animation:in .18s ease}
+@keyframes in{from{opacity:0;transform:translateY(5px)}to{opacity:1}}
+.user{align-self:flex-end;background:var(--blue);color:#fff;border-bottom-right-radius:4px}
+.bot{align-self:flex-start;background:var(--panel);border:1px solid var(--line);
+border-bottom-left-radius:4px}
+.sys{align-self:center;color:var(--dim);font-size:12.5px}
+.tool{align-self:flex-start;font-size:12.5px;color:var(--dim);background:none;
+border-left:2px solid var(--line);border-radius:0;padding:2px 10px;max-width:92%;
+font-family:ui-monospace,Consolas,monospace;white-space:pre-wrap}
+.tool.ok{border-color:var(--green)} .tool.err{border-color:var(--red)}
+.partial{align-self:flex-start;color:var(--dim);font-style:italic;font-size:14px;
+padding:0 4px;min-height:0}
+footer{display:flex;gap:10px;padding:14px 18px;border-top:1px solid var(--line);
+background:var(--panel)}
+#mic{flex:0 0 auto;width:46px;height:46px;border-radius:50%;border:0;cursor:pointer;
+background:linear-gradient(145deg,var(--blue),#1d4ed8);color:#fff;font-size:19px}
+#mic:active{transform:scale(.94)} #mic.hot{animation:pulse 1.2s infinite}
+@keyframes pulse{0%,100%{box-shadow:0 0 0 0 #3b82f655}50%{box-shadow:0 0 0 12px #3b82f600}}
+#txt{flex:1;font-size:15px;padding:11px 14px;border-radius:12px;
+border:1px solid var(--line);background:var(--bg);color:var(--txt);outline:none}
+#txt:focus{border-color:var(--blue)}
+#send{flex:0 0 auto;padding:0 22px;border-radius:12px;border:1px solid var(--line);
+background:var(--panel);color:var(--txt);font-size:15px;cursor:pointer}
+</style></head><body>
+<header><span class="logo">Hey Bota</span>
+<span class="pill"><span class="dot" id="dot"></span><b id="st">连接中…</b></span>
+<span class="pill">网关 <b id="gw">--</b></span>
+<span class="pill">LLM <b id="llm">--</b></span>
+</header>
+<main id="log"><div class="partial" id="partial"></div></main>
+<footer><button id="mic" title="唤醒并开始聆听" onclick="wake()">🎤</button>
+<input id="txt" placeholder="或直接输入文字指令，回车发送"
  onkeydown="if(event.key==='Enter')say()">
-<button id="send" onclick="say()">发送</button></div>
+<button id="send" onclick="say()">发送</button></footer>
 <script>
-async function refresh(){try{const r=await fetch('/state');
-const j=await r.json();document.getElementById('s').textContent='状态：'+j.state}catch(e){}}
-async function go(){await fetch('/trigger');setTimeout(refresh,200);setTimeout(refresh,1200)}
-async function say(){const t=document.getElementById('t');const v=t.value.trim();if(!v)return;
-await fetch('/say',{method:'POST',headers:{'Content-Type':'application/json'},
-body:JSON.stringify({text:v})});t.value='';setTimeout(refresh,200)}
-refresh();setInterval(refresh,1500);
-</script></body></html>"""
-
-
-def _start_keyboard_console(assistant: "VoiceAssistant") -> None:
-    """终端键盘双通道（stdin 为 EOF/管道时静默禁用，避免空转误触发）：
-
-        直接打字后回车 → 文本指令，绕过麦克风直接和大模型对话；
-        只按回车（空行）→ 开启语音监听（等价喊唤醒词）。
-    """
-    import threading
-
-    def loop():
-        try:
-            while True:
-                line = sys.stdin.readline()
-                if line == "":
-                    return  # EOF：后台运行/输入被重定向，键盘通道自动失效
-                text = line.strip()
-                if text:
-                    assistant.submit_text(text, source="键盘")
-                else:
-                    assistant.trigger.fire("键盘回车")
-        except Exception:
-            return
-
-    threading.Thread(target=loop, daemon=True, name="keyboard-console").start()
+const ST={IDLE:['待唤醒','var(--dim)'],COMMAND:['聆听指令','var(--blue)'],
+THINKING:['思考中','var(--amber)'],FOLLOWUP:['可追问','var(--green)']};
+const log=document.getElementById('log'),partial=document.getElementById('partial');
+let curBot=null;
+function setState(s){const m=ST[s]||[s||'离线','var(--red)'];
+ document.getElementById('st').textContent=m[0];
+ document.getElementById('dot').style.background=m[1];
+ document.getElementById('mic').className=(s==='COMMAND'?'hot':'');}
+function add(cls,text){const d=document.createElement('div');d.className=cls;
+ d.textContent=text;log.insertBefore(d,partial);log.scrollTop=log.scrollHeight;
+ return d;}
+function setPartial(t){partial.textContent=t;t?partial.style.display='':partial.style.display='none';}
+function handle(e){
+ if(e.type==='hello'){setState(e.state);
+   if(e.info){document.getElementById('gw').textContent=e.info.gateway||'--';
+              document.getElementById('llm').textContent=e.info.llm||'--';}
+   for(const h of (e.history||[]))render(h);return;}
+ if(e.type==='state'){setState(e.state);return;}
+ render(e);}
+function render(e){switch(e.type){
+ case 'partial':setPartial(e.text);break;
+ case 'user':setPartial('');curBot=null;add('user',e.text);break;
+ case 'delta':if(!curBot){setPartial('');curBot=add('bot','');}
+   curBot.textContent+=e.text;log.scrollTop=log.scrollHeight;break;
+ case 'turn_end':curBot=null;break;
+ case 'tool':add('tool '+(e.ok?'ok':'err'),
+   (e.ok?'✓ ':'✗ ')+e.name+' '+JSON.stringify(e.arguments||{})+
+   (e.result?'\\n   → '+e.result:''));break;
+ case 'system':add('sys',e.text);break;}}</script>
+<script>
+async function wake(){try{await fetch('/trigger')}catch(e){}}
+async function say(){const el=document.getElementById('txt');const v=el.value.trim();
+ if(!v)return;el.value='';
+ try{await fetch('/say',{method:'POST',headers:{'Content-Type':'application/json'},
+ body:JSON.stringify({text:v})});}catch(e){add('sys','发送失败：'+e);}}
+let es;function connect(){es=new EventSource('/events');
+ es.onmessage=m=>{try{handle(JSON.parse(m.data))}catch(e){}};
+ es.onerror=()=>{setState('');document.getElementById('st').textContent='重连中…';};}
+connect();</script></body></html>"""
 
 
 # ==================== 通用 OpenAI 兼容 LLM 客户端（流式 + 工具调用）====================
 
-DASHSCOPE_BASE = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 _QUANT_TAIL = re.compile(
     r"-(q2_k|q3_k_[sml]|q4_0|q4_k_[ms]|q5_0|q5_k_[ms]|q6_k|q8_0|fp16|f16)$")
 
 
 def resolve_llm(cfg: dict) -> tuple[str, str]:
-    """按 mode 解析出 (base_url, model)；dashscope 模式自动纠正端点与模型名。"""
+    """按 mode 解析出 (base_url, model)；云端模式自动纠正端点与模型名。
+
+    mode 在 CLOUD_LLM_BASES 里（siliconflow / dashscope）即云端 OpenAI 兼容端点：
+    base_url 还指着 127.0.0.1（本地服务的残留）就换回该模式的官方端点，模型名去掉
+    GGUF 量化后缀（"qwen2.5-3b-instruct-q4_k_m" → "qwen2.5-3b-instruct"）。
+    硅基流动的模型名带组织前缀（"Qwen/Qwen3.5-4B"），不含量化后缀，原样透传。
+    """
     mode = cfg["llm"]["mode"]
     base = cfg["llm"]["base_url"].rstrip("/")
     model = cfg["llm"]["model"]
-    if mode == "dashscope":
-        if "127.0.0.1" in base or "localhost" in base:
-            base = DASHSCOPE_BASE       # mode 已切云端但 base_url 忘改：自动纠正
-        model = _QUANT_TAIL.sub("", model)  # "qwen2.5-3b-instruct-q4_k_m" → "qwen2.5-3b-instruct"
+    cloud_base = CLOUD_LLM_BASES.get(mode)
+    if cloud_base:
+        if not base or "127.0.0.1" in base or "localhost" in base:
+            base = cloud_base.rstrip("/")   # mode 已切云端但 base_url 忘改：自动纠正
+        model = _QUANT_TAIL.sub("", model)
     return base, model
+
+
+# 云端模式的默认附加请求体参数（直接合并进每次 /chat/completions 请求）。
+# Qwen3.5 是「思考型」模型：默认先把 reasoning_content 流完才吐正文，实测语音场景首字
+# 20~60s，等于不可用；硅基流动认顶层 enable_thinking=false（实测首字 ~1s），
+# 而 chat_template_kwargs 这类 vLLM 写法它不认，别照搬。
+CLOUD_LLM_EXTRA_BODY = {
+    "siliconflow": {"enable_thinking": False},
+}
+
+
+def resolve_extra_body(cfg: dict) -> dict:
+    """该 mode 要合并进请求体的额外参数：模式默认值 + config llm.extra_body 覆盖。"""
+    body = copy.deepcopy(CLOUD_LLM_EXTRA_BODY.get(cfg["llm"]["mode"], {}))
+    custom = cfg["llm"].get("extra_body")
+    if custom:
+        _merge(body, custom)
+    return body
+
+
+# 远程 LLM API Key 文件候选（按顺序取第一个存在且含非注释行的）。llm_key.txt 为通用名
+# （跟 mode 无关，推荐）；siliconflow_key.txt / dashscope_key.txt 为按服务商分的名字。
+# 三者都已 gitignore + dockerignore，绝不入库/入镜像。
+LLM_KEY_FILE_CANDIDATES = ("llm_key.txt", "siliconflow_key.txt", "dashscope_key.txt")
+
+# 远程 Key 的环境变量候选：通用名优先，再按服务商分。
+LLM_KEY_ENV_VARS = ("LLM_API_KEY", "SILICONFLOW_API_KEY", "DASHSCOPE_API_KEY")
+
+
+def _read_key_file(cfg: dict) -> Optional[str]:
+    """从密钥文件读第一行非注释内容作为远程 LLM API Key。
+
+    优先读 cfg["llm"]["api_key_file"]（相对 PC_Test 或绝对路径），再回落到
+    llm_key.txt / siliconflow_key.txt / dashscope_key.txt。找不到返回 None。
+    """
+    cands: list[str] = []
+    custom = (cfg.get("llm") or {}).get("api_key_file")
+    if custom:
+        cands.append(custom if os.path.isabs(custom)
+                     else os.path.join(PC_TEST_DIR, custom))
+    cands += [os.path.join(PC_TEST_DIR, f) for f in LLM_KEY_FILE_CANDIDATES]
+    for path in cands:
+        try:
+            if os.path.isfile(path):
+                with open(path, encoding="utf-8") as f:
+                    for line in f:
+                        s = line.strip()
+                        if s and not s.startswith("#"):
+                            return s
+        except OSError:
+            continue
+    return None
+
+
+def resolve_api_key(cfg: dict) -> Optional[str]:
+    """远程 LLM API Key 的单一取用点，优先级从高到低：
+
+      1. config ``llm.api_key``（``main`` 已把 --api-key / SMART_HOME_LLM_API_KEY 并入此处）
+      2. 环境变量 LLM_API_KEY / SILICONFLOW_API_KEY / DASHSCOPE_API_KEY
+      3. 密钥文件 llm_key.txt / siliconflow_key.txt / dashscope_key.txt
+         （或 llm.api_key_file 指定）
+
+    这样「把 Key 放进文件」在直接 ``python voice_assistant.py``、start_voice、
+    --test-llm / --self-check 与 Docker 里都一致生效，而不再只依赖 PowerShell 启动器。
+    """
+    key = cfg["llm"].get("api_key")
+    if key and key != "none":
+        return key
+    for var in LLM_KEY_ENV_VARS:
+        env = os.environ.get(var)
+        if env:
+            return env
+    return _read_key_file(cfg)
+
+
+RETRY_BACKOFF_S = 0.8
+
+
+def _should_retry(err: Exception, attempt: int,
+                  content_parts: list, tc_acc: dict) -> bool:
+    """这次失败值不值得立刻再发一次。
+
+    只重试「一个字节都还没吐」的 5xx/429/超时/连接失败：半句内容已经喂给 TTS 播出去了，
+    重来会让用户听见两句拼在一起。401/400 这类是配置错误，重试没有意义。
+    """
+    if attempt != 1 or content_parts or tc_acc:
+        return False
+    s = str(err)
+    return ("超时" in s or "连接失败" in s
+            or any(f"HTTP {code}" in s for code in (408, 425, 429, 500, 502, 503, 504)))
 
 
 async def stream_chat(base_url: str, api_key: Optional[str], model: str,
                       messages: list, tools: Optional[list] = None,
-                      on_content=None) -> tuple[str, list]:
+                      on_content=None, extra_body: Optional[dict] = None,
+                      timeout_s: float = LLM_TIMEOUT_S) -> tuple[str, list]:
     """流式调用 OpenAI 兼容 /chat/completions。
 
     on_content(token) 在每个内容 token 到达时回调（喂 TTS 用）。
+    extra_body 里的键直接合并进请求体（如 enable_thinking / max_tokens）。
+    timeout_s 是「两段数据之间」的最大间隔，超时会抛 RuntimeError。
     返回 (完整content, tool_calls列表)。
     """
     import httpx
@@ -403,43 +612,72 @@ async def stream_chat(base_url: str, api_key: Optional[str], model: str,
     payload = {"model": model, "messages": messages, "stream": True}
     if tools:
         payload["tools"] = tools
+    if extra_body:
+        payload.update(extra_body)
     content_parts, tc_acc = [], {}
-    async with httpx.AsyncClient(timeout=None) as client:
-        async with client.stream("POST", url, json=payload, headers=headers) as resp:
-            if resp.status_code != 200:
-                body = (await resp.aread()).decode("utf-8", "replace")[:300]
-                raise RuntimeError(f"LLM HTTP {resp.status_code}: {body}")
-            async for line in resp.aiter_lines():
-                if not line or not line.startswith("data: "):
-                    continue
-                data = line[6:]
-                if data.strip() == "[DONE]":
-                    break
-                try:
-                    chunk = json.loads(data)
-                except json.JSONDecodeError:
-                    continue
-                choices = chunk.get("choices", [])
-                if not choices:
-                    continue
-                delta = choices[0].get("delta", {}) or {}
-                c = delta.get("content")
-                if c:
-                    content_parts.append(c)
-                    if on_content:
-                        on_content(c)
-                tcs = delta.get("tool_calls")
-                if tcs:
-                    for tc in tcs:
-                        idx = tc.get("index", 0)
-                        slot = tc_acc.setdefault(idx, {"id": "", "name": "", "arguments": ""})
-                        if tc.get("id"):
-                            slot["id"] = tc["id"]
-                        fn = tc.get("function", {}) or {}
-                        if fn.get("name"):
-                            slot["name"] = fn["name"]
-                        if fn.get("arguments"):
-                            slot["arguments"] += fn["arguments"]
+    # 必须给读超时：云端偶尔接下连接却一个字节都不发，timeout=None 会让这一轮永远
+    # 卡在 THINKING，麦克风/键盘通道跟着一起死（实测硅基流动会 503 或长时间静默）。
+    timeout = httpx.Timeout(connect=8.0, read=timeout_s, write=15.0, pool=8.0)
+    # 免费档常被挤到 503/静默，实测同一请求紧接着重试就能通。只重试「一个字节都还没
+    # 吐」的情况——半句已经喂给 TTS 播出去了，重来会让用户听见两句拼接。
+    for attempt in (1, 2):
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                async with client.stream("POST", url, json=payload, headers=headers) as resp:
+                    if resp.status_code != 200:
+                        body = (await resp.aread()).decode("utf-8", "replace")[:300]
+                        raise RuntimeError(f"LLM HTTP {resp.status_code}: {body}")
+                    async for line in resp.aiter_lines():
+                        if not line or not line.startswith("data: "):
+                            continue
+                        data = line[6:]
+                        if data.strip() == "[DONE]":
+                            break
+                        try:
+                            chunk = json.loads(data)
+                        except json.JSONDecodeError:
+                            continue
+                        choices = chunk.get("choices", [])
+                        if not choices:
+                            continue
+                        delta = choices[0].get("delta", {}) or {}
+                        c = delta.get("content")
+                        if c:
+                            content_parts.append(c)
+                            if on_content:
+                                on_content(c)
+                        tcs = delta.get("tool_calls")
+                        if tcs:
+                            for tc in tcs:
+                                idx = tc.get("index", 0)
+                                slot = tc_acc.setdefault(idx, {"id": "", "name": "", "arguments": ""})
+                                if tc.get("id"):
+                                    slot["id"] = tc["id"]
+                                fn = tc.get("function", {}) or {}
+                                if fn.get("name"):
+                                    slot["name"] = fn["name"]
+                                if fn.get("arguments"):
+                                    slot["arguments"] += fn["arguments"]
+            break
+        except httpx.TimeoutException as e:
+            err = RuntimeError(
+                f"LLM 超时：{timeout_s:.0f}s 内没有响应数据（{base_url}）；"
+                "服务商抖动稍后重说即可，长期如此可调大 llm.timeout_s")
+            if not _should_retry(err, attempt, content_parts, tc_acc):
+                raise err from e
+            print(f"[LLM] {err} —— 立即重试一次", flush=True)
+            await asyncio.sleep(RETRY_BACKOFF_S)
+        except (httpx.TransportError, OSError) as e:
+            err = RuntimeError(f"LLM 连接失败：{type(e).__name__}: {e}")
+            if not _should_retry(err, attempt, content_parts, tc_acc):
+                raise err from e
+            print(f"[LLM] {err} —— 立即重试一次", flush=True)
+            await asyncio.sleep(RETRY_BACKOFF_S)
+        except RuntimeError as e:
+            if not _should_retry(e, attempt, content_parts, tc_acc):
+                raise
+            print(f"[LLM] {e} —— 立即重试一次", flush=True)
+            await asyncio.sleep(RETRY_BACKOFF_S)
     tool_calls = [{
         "id": v["id"] or f"call_{i}",
         "type": "function",
@@ -448,35 +686,19 @@ async def stream_chat(base_url: str, api_key: Optional[str], model: str,
     return "".join(content_parts), tool_calls
 
 
-def load_config(path: Optional[str]) -> dict:
-    cfg = {k: dict(v) if isinstance(v, dict) else v for k, v in DEFAULT_CONFIG.items()}
-    if path and os.path.exists(path):
-        with open(path, "r", encoding="utf-8") as f:
-            user = yaml.safe_load(f) or {}
-        _merge(cfg, user)
-    return cfg
-
-
-def _merge(base: dict, over: dict) -> None:
-    for k, v in over.items():
-        if isinstance(v, dict) and isinstance(base.get(k), dict):
-            _merge(base[k], v)
-        else:
-            base[k] = v
-
-
 # ==================== 语音助手主体 ====================
 
 class VoiceAssistant:
     def __init__(self, cfg: dict):
         self.cfg = cfg
-        self.port_a = cfg["serial"]["port_a"]
-        self.port_b = cfg["serial"]["port_b"]
+        self.gateway = HardwareGateway(cfg["gateway"]["url"])
         self.llm_mode = cfg["llm"]["mode"]
         self.llm_base_url, self.llm_model = resolve_llm(cfg)
-        key = cfg["llm"].get("api_key")
-        self.llm_api_key = key if key and key != "none" else os.environ.get("DASHSCOPE_API_KEY")
+        self.llm_api_key = resolve_api_key(cfg)
+        self.llm_extra_body = resolve_extra_body(cfg)
+        self.llm_timeout_s = float(cfg["llm"].get("timeout_s") or LLM_TIMEOUT_S)
         self.system_prompt = cfg["llm"]["system_prompt"]
+        self.history_rounds = int(cfg.get("history_rounds", 4))
         from tts_player import TtsPlayer  # 惰性导入（依赖 sounddevice）
         self.tts = TtsPlayer(cfg=cfg["sherpa"]["tts"])
         self.wake_words = cfg["wake"]["words"]
@@ -486,17 +708,25 @@ class VoiceAssistant:
         self.ack_mode = cfg["wake"].get("ack_mode", "chirp")
         self.chirp_freq = int(cfg["wake"].get("chirp_freq", 880))
         self.chirp_ms = int(cfg["wake"].get("chirp_ms", 120))
-        self._last_state = None         # 状态变化时才打印，避免刷屏
+        self._last_state = None         # 状态变化时才打印/广播，避免刷屏
         self.mic_device = cfg["mic"]["device_index"]
 
         self.trigger = TriggerBus()     # 手动触发（键盘/HTTP/外部程序）
         self.trigger_http = None
+        self.events = EventBus()        # SSE 对话实况
 
         self.listener = None            # sherpa_listener.SherpaListener
         self.stream = None
         self.state = "IDLE"
         self.command_state_start = 0.0
-        self.command_queue: "queue.Queue[str]" = __import__("queue").Queue()
+        self.command_queue: "queue.Queue[str]" = queue.Queue()
+
+        self.llm_tools: list = []       # 网关工具 schema（run() 启动时拉取）
+        self.history: list = []         # 多轮上下文（仅 user/assistant 文本）
+
+    # ── 事件广播 ──
+    def publish(self, etype: str, **fields) -> None:
+        self.events.publish(etype, **fields)
 
     # ── Sherpa-ONNX + 麦克风 ──
     def load_listener(self):
@@ -511,7 +741,7 @@ class VoiceAssistant:
     def _start_mic(self):
         if os.environ.get("SMART_HOME_DISABLE_MIC") == "1":
             # 无麦克风的部署（纯硬件网关 / 容器测试）：跳过音频采集，
-            # MCP 硬件工具与 HTTP /tool、/say 仍正常工作。
+            # HTTP /say 文本对话与硬件网关调用仍正常工作。
             print("[语音] SMART_HOME_DISABLE_MIC=1，已跳过麦克风初始化", flush=True)
             return
         import sounddevice as sd
@@ -534,27 +764,33 @@ class VoiceAssistant:
             self._on_wake(who, time.time(), manual=True)
             # 没有音频回调来兜底超时，自己起个定时器把状态收回 IDLE，
             # 否则面板会一直显示「聆听指令中」
-            import threading
             threading.Timer(self.command_timeout, self._idle_if_command).start()
 
     def _idle_if_command(self):
         """无麦克风部署下 COMMAND 状态的超时回收（音频回调不在时使用）。"""
         if self.state == "COMMAND":
-            self.state = "IDLE"
-            self._emit_state("IDLE")
+            self._set_state("IDLE", note="未收到指令，回到待唤醒状态")
+
+    def _set_state(self, new_state: str, note: str = ""):
+        self.state = new_state
+        self._emit_state(new_state)
+        if note:
+            self.publish("system", text=note)
 
     def _emit_state(self, new_state):
-        """状态变化时打印醒目状态行。"""
-        if new_state != self._last_state:
-            self._last_state = new_state
-            if new_state == "IDLE":
-                print("\n  [⏸ 待唤醒] 说「Hey Bota」唤醒我（也可直接打字）", flush=True)
-            elif new_state == "COMMAND":
-                print(f"\n  [🎤 请说指令] （{self.command_timeout:.0f}s 内有效）", flush=True)
-            elif new_state == "THINKING":
-                print("\n  [🤖 思考中] 正在调用大模型...", flush=True)
-            elif new_state == "FOLLOWUP":
-                print(f"\n  [💬 追问中] {self.followup_timeout:.0f}s 内可直接说下一句", flush=True)
+        """状态变化时打印醒目状态行并广播给 SSE 控制台。"""
+        if new_state == self._last_state:
+            return
+        self._last_state = new_state
+        self.publish("state", state=new_state)
+        if new_state == "IDLE":
+            print("\n  [⏸ 待唤醒] 说「Hey Bota」唤醒我（也可直接打字）", flush=True)
+        elif new_state == "COMMAND":
+            print(f"\n  [🎤 请说指令] （{self.command_timeout:.0f}s 内有效）", flush=True)
+        elif new_state == "THINKING":
+            print("\n  [🤖 思考中] 正在调用大模型...", flush=True)
+        elif new_state == "FOLLOWUP":
+            print(f"\n  [💬 追问中] {self.followup_timeout:.0f}s 内可直接说下一句", flush=True)
 
     def _ack(self):
         """唤醒反馈：chirp 滴声零延迟 / voice 说「在的」/ both / none。"""
@@ -568,6 +804,7 @@ class VoiceAssistant:
         if manual and self.tts.is_busy():
             self.tts.stop()
             print("\n  [✋ 打断] 已停止当前播报", flush=True)
+            self.publish("system", text="已打断当前播报")
         self.state = "COMMAND"
         self.command_state_start = now
         if manual and self.listener:
@@ -575,6 +812,7 @@ class VoiceAssistant:
         self._ack()
         tag = "手动触发" if manual else "KWS 命中"
         print(f"\n  [⭐ 唤醒成功！] {tag}「{keyword}」→ 已切换到指令模式", flush=True)
+        self.publish("system", text=f"唤醒成功（{tag}）")
         self._emit_state("COMMAND")
 
     def submit_text(self, text: str, source: str = "键盘") -> None:
@@ -584,12 +822,11 @@ class VoiceAssistant:
             return
         if self.tts.is_busy():
             self.tts.stop()
-        if self.state == "THINKING":
-            print(f"\n  [📥 {source}指令已排队] {text}", flush=True)
-        else:
-            print(f"\n  [📥 {source}文本指令] {text}", flush=True)
+        print(f"\n  [📥 {source}文本指令] {text}", flush=True)
+        self.publish("user", text=text, source=source)
         self.state = "THINKING"
         self._last_state = "THINKING"  # 抑制随后重复的思考状态行
+        self.publish("state", state="THINKING")
         if self.listener:
             self.listener.reset_asr()
         self.command_queue.put(text)
@@ -601,8 +838,8 @@ class VoiceAssistant:
             if cmd:
                 self.command_queue.put(cmd)
                 print(f"  [✅ 指令已收到] {cmd}  → 交给大模型处理", flush=True)
-                self.state = "THINKING"
-                self._emit_state("THINKING")
+                self.publish("user", text=cmd, source="语音")
+                self._set_state("THINKING")
             else:
                 # 只有唤醒词、没说指令：留在 COMMAND 等下一句
                 print("  [💬] 只听到唤醒词，继续听指令...", flush=True)
@@ -610,8 +847,8 @@ class VoiceAssistant:
             # 追问模式：无需唤醒词，直接当指令
             self.command_queue.put(text)
             print(f"  [✅ 追问] {text}  → 交给大模型处理", flush=True)
-            self.state = "THINKING"
-            self._emit_state("THINKING")
+            self.publish("user", text=text, source="语音·追问")
+            self._set_state("THINKING")
 
     @staticmethod
     def _norm_wake(t: str) -> str:
@@ -657,43 +894,69 @@ class VoiceAssistant:
                     if not tts_busy:
                         self._on_wake(text, now)
                 elif kind == "partial":
-                    shown = text if len(text) <= 30 else text[-30:]
-                    print(f"  [听到] {shown}", end="\r", flush=True)
+                    self._emit_partial(text)
                 elif kind == "final":
                     self._on_final(text)
             # 超时检查（由音频帧驱动）
             if self.state == "COMMAND" and now - self.command_state_start > self.command_timeout:
-                self.state = "IDLE"
-                print("\n  [⏰ 超时] 未收到指令，回到待唤醒状态", flush=True)
-                self._emit_state("IDLE")
+                self._set_state("IDLE", note="未收到指令，回到待唤醒状态")
             elif self.state == "FOLLOWUP" and now - self.command_state_start > self.followup_timeout:
-                self.state = "IDLE"
-                self._emit_state("IDLE")
+                self._set_state("IDLE")
         except Exception as e:
             print(f"\n[音频] 回调异常: {e}", flush=True)
 
-    # ── Qwen 流式 + 工具调用 ──
+    _partial_shown = ""
+
+    def _emit_partial(self, text: str):
+        """ASR 部分识别：终端行内刷新 + SSE 广播（内容没变不重发）。"""
+        if text == self._partial_shown:
+            return
+        self._partial_shown = text
+        shown = text if len(text) <= 30 else text[-30:]
+        print(f"  [听到] {shown}", end="\r", flush=True)
+        self.publish("partial", text=shown)
+
+    # ── LLM 流式 + 工具调用（经 web 硬件网关执行）──
     async def stream_llm(self, messages, tools):
-        """流式调用 LLM，token 边生成边喂 TTS；返回 (content, tool_calls)。"""
+        """流式调用 LLM，token 边生成边喂 TTS/广播；返回 (content, tool_calls)。"""
+        def on_token(tok):
+            self.tts.feed_token(tok)
+            self.publish("delta", text=tok)
+
         try:
             content, tool_calls = await stream_chat(
                 self.llm_base_url, self.llm_api_key, self.llm_model,
-                messages, tools, on_content=self.tts.feed_token)
+                messages, tools, on_content=on_token, extra_body=self.llm_extra_body,
+                timeout_s=self.llm_timeout_s)
             return content, tool_calls
         except Exception as e:
             print(f"[LLM] 调用失败: {e}", flush=True)
+            self.publish("system", text=f"大模型调用失败: {e}")
             self.tts.speak("大模型出错了")
             return "", []
 
-    async def handle_command(self, user_text, session, llm_tools):
+    def _context_messages(self, user_text: str) -> list:
+        """system + 最近 history_rounds 轮 + 本句用户输入。"""
+        messages = [{"role": "system", "content": self.system_prompt}]
+        tail = self.history[-2 * max(0, self.history_rounds):] \
+            if self.history_rounds > 0 else []
+        messages.extend(tail)
+        messages.append({"role": "user", "content": user_text})
+        return messages
+
+    def _remember(self, user_text: str, answer: str) -> None:
+        self.history.append({"role": "user", "content": user_text})
+        self.history.append({"role": "assistant", "content": answer})
+        cap = 2 * max(1, self.history_rounds)
+        if len(self.history) > cap:
+            del self.history[:-cap]
+
+    async def handle_command(self, user_text):
         print(f"[你] {user_text}", flush=True)
-        messages = [
-            {"role": "system", "content": self.system_prompt},
-            {"role": "user", "content": user_text},
-        ]
+        messages = self._context_messages(user_text)
         final_content = ""
         for rnd in range(3):
-            content, tool_calls = await self.stream_llm(messages, llm_tools)
+            content, tool_calls = await self.stream_llm(messages, self.llm_tools)
             if content:
                 final_content = content
                 print(f"[助手] {content}", flush=True)   # 输出大模型的文字回答
@@ -714,158 +977,147 @@ class VoiceAssistant:
                                      "content": f"error: 参数解析失败 {e}"})
                     continue
                 print(f"[工具] 调用 {name}({args})", flush=True)
-                try:
-                    res = await session.call_tool(name, args)
-                    result_text = ""
-                    for c in (res.content or []):
-                        txt = getattr(c, "text", None)
-                        if txt is None and isinstance(c, dict):
-                            txt = c.get("text")
-                        if txt:
-                            result_text += txt
-                    if not result_text:
-                        result_text = "(工具无文本输出)"
-                except Exception as e:
-                    result_text = f"error: 工具执行异常 {e}"
+                ok, result_text = await asyncio.to_thread(
+                    self.gateway.call, name, args)
+                if not ok and not result_text.startswith("error"):
+                    result_text = f"error: {result_text}"
                 print(f"[工具] {name} -> {result_text}", flush=True)
-                if not result_text.lower().startswith("error"):
-                    # 与面板等效：把动作结果同步给仪表盘（状态/历史/切手动）。
-                    # 只对语音自己发起的调用回传；web 经 /tool 转发的不回传，
-                    # 否则面板的自动调节会被误判成「用户手动操作」。
-                    await asyncio.to_thread(report_voice_action, name, args)
+                self.publish("tool", name=name, arguments=args,
+                             ok=ok, result=result_text[:300])
                 messages.append({"role": "tool", "tool_call_id": tc["id"],
                                  "content": result_text})
         self.tts.flush()
-        # 若本轮有工具调用，最后再请求一次大模型生成自然语言总结回复
+        self.publish("turn_end")
+        # 若本轮只有工具调用没有解说词，最后再请求一次大模型生成自然语言总结
         if final_content == "" and any(m.get("role") == "tool" for m in messages):
-            content, _ = await self.stream_llm(messages, llm_tools)
+            content, _ = await self.stream_llm(messages, self.llm_tools)
             if content:
                 final_content = content
                 print(f"[助手] {content}", flush=True)
+            self.publish("turn_end")
+        self._remember(user_text, final_content or "（已执行）")
         if not final_content:
             print("[助手] (无文字回复)", flush=True)
         await asyncio.sleep(0.2)
 
     # ── 主循环 ──
     async def run(self):
-        from mcp import ClientSession, StdioServerParameters
-        from mcp.client.stdio import stdio_client
+        loop = asyncio.get_running_loop()
 
-        server_script = os.path.join(PC_TEST_DIR, "mcp_home_server.py")
-        args = [server_script]
-        if self.port_a and self.port_a != "auto":
-            args += ["--port-a", self.port_a]
-        if self.port_b and self.port_b != "auto":
-            args += ["--port-b", self.port_b]
-        params = StdioServerParameters(
-            command=sys.executable, args=args, cwd=PC_TEST_DIR)
+        # 工具 schema 来自 web 硬件网关；web 可能还在启动（start_all/compose 同起），
+        # 指数退避直到拿通为止——拿不通不影响文本对话，只是硬件动作会失败。
+        backoff = 2.0
+        while not self.llm_tools:
+            try:
+                self.llm_tools = await asyncio.to_thread(self.gateway.fetch_tools)
+            except Exception as e:
+                print(f"[网关] 工具列表获取失败（{self.gateway.base_url}）: {e}"
+                      f"（{backoff:.0f}s 后重试；run_web.py 需要先起来）", flush=True)
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, 30.0)
+        print(f"[网关] 已加载 {len(self.llm_tools)} 个硬件工具: "
+              f"{[t['function']['name'] for t in self.llm_tools]}", flush=True)
 
-        async with stdio_client(params) as (read, write):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                tools_result = await session.list_tools()
-                llm_tools = [{
-                    "type": "function",
-                    "function": {
-                        "name": t.name,
-                        "description": t.description or "",
-                        "parameters": t.inputSchema or {"type": "object", "properties": {}},
-                    },
-                } for t in tools_result.tools]
-                print(f"[MCP] 已加载 {len(llm_tools)} 个工具: "
-                      f"{[t['function']['name'] for t in llm_tools]}", flush=True)
+        # 输入通道（配置可关）：键盘（打字对话/空行触发）+ HTTP（/trigger、/say）
+        tcfg = self.cfg.get("trigger", {})
+        if tcfg.get("keyboard", True):
+            _start_keyboard_console(self)
+        if tcfg.get("http", True):
+            try:
+                self.trigger_http = TriggerHTTPServer(
+                    tcfg.get("host", "0.0.0.0"),
+                    int(tcfg.get("port", 8101)),
+                    self.trigger, lambda: self.state,
+                    lambda text, who: self.submit_text(text, source=who),
+                    on_wake=self._manual_wake,
+                    event_bus=self.events,
+                    info=self._console_info)
+            except Exception as e:
+                print(f"[触发] HTTP 接口启动失败（不影响语音）: {e}", flush=True)
 
-                loop = asyncio.get_running_loop()
-                allowed_tools = {t["function"]["name"] for t in llm_tools}
-
-                def _direct_call_tool(name, arguments):
-                    """供 POST /tool 使用：跨线程直调 MCP，不经 LLM/TTS。"""
-                    if name not in allowed_tools:
-                        return False, f"未知工具: {name}"
-
-                    async def _do():
-                        res = await session.call_tool(name, arguments)
-                        text = ""
-                        for c in (res.content or []):
-                            part = getattr(c, "text", None)
-                            if part is None and isinstance(c, dict):
-                                part = c.get("text")
-                            if part:
-                                text += part
-                        return text or "(工具无文本输出)"
-
-                    fut = asyncio.run_coroutine_threadsafe(_do(), loop)
-                    try:
-                        text = fut.result(timeout=15)
-                    except Exception as e:
-                        return False, f"工具执行异常: {e}"
-                    return (not text.startswith("error")), text
-
-                # 输入通道（配置可关）：键盘（打字对话/空行触发）+ HTTP（/trigger、/say）
-                tcfg = self.cfg.get("trigger", {})
-                if tcfg.get("keyboard", True):
-                    _start_keyboard_console(self)
-                if tcfg.get("http", True):
-                    try:
-                        self.trigger_http = TriggerHTTPServer(
-                            tcfg.get("host", "0.0.0.0"),
-                            int(tcfg.get("port", 8101)),
-                            self.trigger, lambda: self.state,
-                            lambda text, who: self.submit_text(text, source=who),
-                            call_tool=_direct_call_tool,
-                            on_wake=self._manual_wake)
-                    except Exception as e:
-                        print(f"[触发] HTTP 接口启动失败（不影响语音）: {e}", flush=True)
-
-                self._start_mic()
-                print("=" * 56, flush=True)
-                print("  🎤 语音助手已启动（Sherpa-ONNX 前端 + Qwen2.5-3B）", flush=True)
-                print("  麦克风: " + (f"索引 {self.mic_device}" if self.mic_device is not None else "系统默认"), flush=True)
-                print("  唤醒词(KWS): " + " / ".join(self.listener.keywords), flush=True)
-                if tcfg.get("keyboard", True):
-                    print("  ⌨️  键盘对话: 直接打字回车发送指令；空回车=开始语音监听", flush=True)
-                if self.trigger_http is not None:
-                    p = self.trigger_http.port
-                    print(f"  🌐 HTTP 接口: http://<本机IP>:{p}/ （网页）", flush=True)
-                    print(f"             语音触发 POST/GET /trigger；文本指令 POST /say  {{\"text\":\"...\"}}",
-                          flush=True)
-                    print(f"             硬件直调 POST /tool {{\"name\":\"door\",\"arguments\":{{...}}}}（静默，不经语音）",
-                          flush=True)
-                print("=" * 56, flush=True)
-                self._emit_state("IDLE")
-                try:
-                    while True:
-                        text = await loop.run_in_executor(None, self.command_queue.get)
-                        if text is None:
-                            break
-                        try:
-                            await self.handle_command(text, session, llm_tools)
-                        except Exception as e:
-                            print(f"[错误] 处理指令失败: {e}", flush=True)
-                            self.tts.speak("出错了，请重说")
-                        finally:
-                            # 处理完毕，进入追问模式（followup_timeout 内可直接说话，无需重新唤醒）
-                            self.state = "FOLLOWUP"
-                            self.command_state_start = time.time()
-                            if self.listener:
-                                self.listener.reset_asr()  # 清掉思考期间误录的半句
-                            print(f"\n  [💬 可追问] {self.followup_timeout:.0f}s 内可直接说下一句，超时回到待唤醒", flush=True)
-                except (KeyboardInterrupt, asyncio.CancelledError):
-                    pass
+        self._start_mic()
+        print("=" * 56, flush=True)
+        print("  🎤 语音助手已启动（Sherpa-ONNX 前端 + 云端 LLM）", flush=True)
+        print("  麦克风: " + (f"索引 {self.mic_device}" if self.mic_device is not None else "系统默认"), flush=True)
+        print("  唤醒词(KWS): " + " / ".join(self.listener.keywords), flush=True)
+        print(f"  LLM: {self.llm_mode} · {self.llm_model} @ {self.llm_base_url}", flush=True)
+        print(f"  硬件网关: {self.gateway.base_url}（{len(self.llm_tools)} 工具）", flush=True)
+        if tcfg.get("keyboard", True):
+            print("  ⌨️  键盘对话: 直接打字回车发送指令；空回车=开始语音监听", flush=True)
+        if self.trigger_http is not None:
+            p = self.trigger_http.port
+            print(f"  🌐 控制台: http://<本机IP>:{p}/ （聊天实况）", flush=True)
+            print(f"         语音触发 POST/GET /trigger；文本指令 POST /say；实况流 GET /events",
+                  flush=True)
+        print("=" * 56, flush=True)
+        self._emit_state("IDLE")
         try:
-            self.stream.stop()
+            while True:
+                text = await loop.run_in_executor(None, self.command_queue.get)
+                if text is None:
+                    break
+                try:
+                    await self.handle_command(text)
+                except Exception as e:
+                    print(f"[错误] 处理指令失败: {e}", flush=True)
+                    self.publish("system", text=f"处理指令失败: {e}")
+                    self.tts.speak("出错了，请重说")
+                finally:
+                    # 处理完毕，进入追问模式（followup_timeout 内可直接说话，无需重新唤醒）
+                    self.command_state_start = time.time()
+                    if self.listener:
+                        self.listener.reset_asr()  # 清掉思考期间误录的半句
+                    print(f"\n  [💬 可追问] {self.followup_timeout:.0f}s 内可直接说下一句，超时回到待唤醒", flush=True)
+                    self._set_state("FOLLOWUP")
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            pass
+        try:
+            if self.stream is not None:
+                self.stream.stop()
         except Exception:
             pass
         if self.trigger_http is not None:
             self.trigger_http.shutdown()
         self.tts.shutdown()
 
+    def _console_info(self) -> dict:
+        """控制台页的状态摘要（hello 事件携带）。"""
+        ok, info = self.gateway.health()
+        gw = "在线" if ok and info.get("online") else ("可达" if ok else "离线")
+        return {"gateway": f"{gw} @ {self.gateway.base_url}",
+                "llm": f"{self.llm_mode} · {self.llm_model}"}
+
+
+# ==================== 手动触发键盘通道 ====================
+
+def _start_keyboard_console(assistant: "VoiceAssistant") -> None:
+    """终端键盘双通道（stdin 为 EOF/管道时静默禁用，避免空转误触发）：
+
+        直接打字后回车 → 文本指令，绕过麦克风直接和大模型对话；
+        只按回车（空行）→ 开启语音监听（等价喊唤醒词）。
+    """
+    def loop():
+        try:
+            while True:
+                line = sys.stdin.readline()
+                if line == "":
+                    return  # EOF：后台运行/输入被重定向，键盘通道自动失效
+                text = line.strip()
+                if text:
+                    assistant.submit_text(text, source="键盘")
+                else:
+                    assistant.trigger.fire("键盘回车")
+        except Exception:
+            return
+
+    threading.Thread(target=loop, daemon=True, name="keyboard-console").start()
+
 
 # ==================== 自检 / REPL 子命令 ====================
 
 async def self_check(cfg: dict) -> int:
     print("=" * 60)
-    print("  语音模式自检（Sherpa-ONNX）")
+    print("  语音模式自检（Sherpa-ONNX + 硬件网关）")
     print("=" * 60)
     ok = True
 
@@ -896,42 +1148,48 @@ async def self_check(cfg: dict) -> int:
 
     # (c) 麦克风 1s 采样
     print("\n[c] 麦克风采样...", flush=True)
-    try:
-        import sounddevice as sd
-        sd.InputStream(samplerate=16000, channels=1, dtype="float32",
-                       device=cfg["mic"]["device_index"]).start()
-        time.sleep(1.0)
-        print("    OK: 麦克风可读")
-    except Exception as e:
-        print(f"    FAIL: {e}")
-        ok = False
+    if os.environ.get("SMART_HOME_DISABLE_MIC") == "1":
+        print("    SKIP: SMART_HOME_DISABLE_MIC=1（无麦克风部署）")
+    else:
+        try:
+            import sounddevice as sd
+            sd.InputStream(samplerate=16000, channels=1, dtype="float32",
+                           device=cfg["mic"]["device_index"]).start()
+            time.sleep(1.0)
+            print("    OK: 麦克风可读")
+        except Exception as e:
+            print(f"    FAIL: {e}")
+            ok = False
 
-    # (d) LLM 引擎（Qwen2.5）可达
-    print("\n[d] LLM 引擎（Qwen2.5）可达性...", flush=True)
+    # (d) LLM 引擎可达
+    print("\n[d] LLM 引擎可达性...", flush=True)
     try:
         import httpx
-        base, _model = resolve_llm(cfg)
+        base, model = resolve_llm(cfg)
         mode = cfg["llm"]["mode"]
         headers = {}
-        key = cfg["llm"].get("api_key")
-        api_key = key if key and key != "none" else os.environ.get("DASHSCOPE_API_KEY")
+        api_key = resolve_api_key(cfg)
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
         async with httpx.AsyncClient(timeout=8) as c:
             r = await c.get(f"{base}/models", headers=headers)
             ids = [m.get("id") for m in r.json().get("data", [])]
-            want = cfg["llm"]["model"]
-            if mode == "dashscope":
-                if any(i and i.startswith("qwen") for i in ids):
-                    print(f"    OK: 百炼端点可达，含 Qwen 模型（示例: {ids[:3]}）")
-                else:
-                    print(f"    FAIL: 端点返回模型 {ids[:5]}，未找到 qwen 系列")
+            if mode in CLOUD_LLM_BASES:
+                if not api_key:
+                    print(f"    FAIL: 未配置 API Key（{mode} 模式需要，"
+                          "见 llm_key.txt / LLM_API_KEY / llm.api_key）")
                     ok = False
-            else:
-                if want in ids:
-                    print(f"    OK: 本地 Qwen 服务已加载 {want}")
+                elif model in ids or any(i and i.split("/")[-1] == model.split("/")[-1]
+                                         for i in ids):
+                    print(f"    OK: {mode} 端点可达，模型 {model}")
                 else:
-                    print(f"    FAIL: 本地服务返回模型 {ids}，期望 {want}")
+                    print(f"    提示: /models 列表未含 {model}（云端列表不全属正常，"
+                          f"可直接 --test-llm 验证）")
+            else:
+                if model in ids:
+                    print(f"    OK: 本地 Qwen 服务已加载 {model}")
+                else:
+                    print(f"    FAIL: 本地服务返回模型 {ids}，期望 {model}")
                     print("    → 先启动: py -3.13 qwen_server.py（或双击 start_voice.bat）")
                     ok = False
     except Exception as e:
@@ -939,61 +1197,30 @@ async def self_check(cfg: dict) -> int:
         if cfg["llm"]["mode"] == "local":
             print("    → 本地模式先启动: py -3.13 qwen_server.py（模型未下载则先跑 download_qwen.py）")
         else:
-            print("    → 百炼模式需配置 DASHSCOPE_API_KEY 或 config llm.api_key")
+            print("    → 云端模式需把 Key 写进 PC_Test/llm_key.txt（或设 LLM_API_KEY /"
+                  " config llm.api_key）；端点不可达也可能是网络/代理问题")
         ok = False
 
-    # (e) MCP server 工具数
-    print("\n[e] MCP server 工具暴露...", flush=True)
+    # (e) web 硬件网关
+    print("\n[e] web 硬件网关（/api/hardware/tools）...", flush=True)
+    gw = HardwareGateway(cfg["gateway"]["url"])
     try:
-        from mcp import ClientSession, StdioServerParameters
-        from mcp.client.stdio import stdio_client
-        params = StdioServerParameters(
-            command=sys.executable,
-            args=[os.path.join(PC_TEST_DIR, "mcp_home_server.py"), "--no-serial"],
-            cwd=PC_TEST_DIR)
-        async with stdio_client(params) as (r, w):
-            async with ClientSession(r, w) as s:
-                await s.initialize()
-                tr = await s.list_tools()
-                names = [t.name for t in tr.tools]
-                print(f"    OK: {len(names)} 个工具: {names}")
-                if len(names) < 9:
-                    print("    警告: 期望 9 个工具")
+        tools = gw.fetch_tools()
+        names = [t["function"]["name"] for t in tools]
+        print(f"    OK: {len(names)} 个工具: {names}")
+        if len(names) < 9:
+            print("    警告: 期望 13 个工具（部分串口工具未注册？）")
     except Exception as e:
         print(f"    FAIL: {e}")
+        print("    → 语音不再直连串口；请先启动 web 服务: py -3.13 run_web.py")
         ok = False
-
-    # (f) 串口探测
-    print("\n[f] Arduino 串口探测...", flush=True)
-    try:
-        import serial
-        import serial.tools.list_ports as sp
-        ports = [(p.device, p.description) for p in sp.comports()]
-        if not ports:
-            print("    警告: 未发现任何 COM 端口")
-        for dev, desc in ports:
-            hit = ""
-            try:
-                ser = serial.Serial(dev, 115200, timeout=0.3)
-                time.sleep(0.1)
-                ser.reset_input_buffer()
-                ser.write(b'{"cmd":"system","action":"who"}\n')
-                ser.write(b"WHO\n")
-                deadline = time.time() + 0.5
-                while time.time() < deadline:
-                    ln = ser.readline().decode("utf-8", "replace")
-                    if "MODULE_A" in ln:
-                        hit = "Module_A"
-                        break
-                    if "MODULE_B" in ln:
-                        hit = "Module_B"
-                        break
-                ser.close()
-            except Exception as e:
-                hit = f"探测失败 {e}"
-            print(f"    {dev} ({desc}) -> {hit or '无响应'}")
-    except Exception as e:
-        print(f"    FAIL: {e}")
+    else:
+        alive, info = gw.health()
+        if not alive:
+            print(f"    警告: /api/status 不可达: {info.get('error')}")
+        elif not info.get("online"):
+            print(f"    警告: 硬件桥离线: {info.get('last_error') or '串口未连接'}"
+                  "（web 是否 --no-serial 在跑？）")
 
     print("\n" + "=" * 60)
     print("  自检" + ("通过 ✓" if ok else "存在失败项 ✗（见上方提示）"))
@@ -1003,7 +1230,6 @@ async def self_check(cfg: dict) -> int:
 
 def kws_repl(cfg: dict) -> int:
     """KWS + ASR 实时 REPL：说「Hey Bota」测唤醒，说话测识别（Ctrl+C 退出）。"""
-    import numpy as np
     import sounddevice as sd
     from sherpa_listener import SherpaListener, check_models
 
@@ -1037,22 +1263,29 @@ def kws_repl(cfg: dict) -> int:
 
 
 async def test_llm(cfg: dict, text: str) -> int:
-    """一次性验证 Qwen 引擎：①普通对话流式输出 ②工具调用探测。"""
+    """一次性验证 LLM 引擎：①普通对话流式输出 ②工具调用探测。"""
     base, model = resolve_llm(cfg)
-    key = cfg["llm"].get("api_key")
-    api_key = key if key and key != "none" else os.environ.get("DASHSCOPE_API_KEY")
-    print(f"[LLM] 模式={cfg['llm']['mode']}  模型={model}  端点={base}")
+    api_key = resolve_api_key(cfg)
+    extra_body = resolve_extra_body(cfg)
+    timeout_s = float(cfg["llm"].get("timeout_s") or LLM_TIMEOUT_S)
+    print(f"[LLM] 模式={cfg['llm']['mode']}  模型={model}  端点={base}"
+          f"  Key={'已配置' if api_key else '缺失'}")
+    if extra_body:
+        print(f"[LLM] 附加参数={json.dumps(extra_body, ensure_ascii=False)}")
 
     print(f"\n[测试1] 普通对话（流式输出）: {text}")
     try:
+        t0 = time.monotonic()
         content, _ = await stream_chat(base, api_key, model,
                                        [{"role": "user", "content": text}],
-                                       on_content=lambda t: print(t, end="", flush=True))
+                                       on_content=lambda t: print(t, end="", flush=True),
+                                       extra_body=extra_body, timeout_s=timeout_s)
         print()
         if not content.strip():
-            print("  FAIL: 无内容返回")
+            print("  FAIL: 无内容返回（若模型默认「思考」，正文会排在 reasoning_content 之后；"
+                  "用 llm.extra_body 关思考或换 Instruct 模型）")
             return 1
-        print("  OK: 流式回复正常")
+        print(f"  OK: 流式回复正常（{time.monotonic() - t0:.2f}s）")
     except Exception as e:
         print(f"\n  FAIL: {e}")
         return 1
@@ -1065,14 +1298,16 @@ async def test_llm(cfg: dict, text: str) -> int:
             "action": {"type": "string", "enum": ["on", "off", "red", "green", "blue"]}},
             "required": ["action"]}}}
     try:
+        t0 = time.monotonic()
         content, tool_calls = await stream_chat(
             base, api_key, model,
             [{"role": "system", "content": "你是智能家居助手，必须用工具执行硬件操作，禁止只回复文字。"},
              {"role": "user", "content": "把灯调成红色"}],
-            tools=[tool])
+            tools=[tool], extra_body=extra_body, timeout_s=timeout_s)
         if tool_calls:
             for tc in tool_calls:
-                print(f"  OK: tool_call -> {tc['function']['name']}({tc['function']['arguments']})")
+                print(f"  OK: tool_call -> {tc['function']['name']}"
+                      f"({tc['function']['arguments']})  耗时 {time.monotonic() - t0:.2f}s")
             return 0
         print(f"  警告: 未产生 tool_call，模型直接回复: {content[:80]}")
         return 1
@@ -1084,14 +1319,14 @@ async def test_llm(cfg: dict, text: str) -> int:
 # ==================== 入口 ====================
 
 def main():
-    p = argparse.ArgumentParser(description="PC 端语音交互模式（Sherpa-ONNX + Qwen2.5）")
+    p = argparse.ArgumentParser(description="PC 端语音交互模式（Sherpa-ONNX + 云端 LLM + web 硬件网关）")
     p.add_argument("--config", default=os.path.join(PC_TEST_DIR, "voice_config.yaml"),
                    help="配置文件路径（默认 voice_config.yaml）")
-    p.add_argument("--port-a", help="覆盖 Module A 串口")
-    p.add_argument("--port-b", help="覆盖 Module B 串口")
+    p.add_argument("--gateway", help="web 硬件网关地址（覆盖配置/环境变量）")
     p.add_argument("--model", help="覆盖 LLM 模型名")
-    p.add_argument("--llm-mode", choices=["local", "dashscope"], help="覆盖 LLM 引擎模式")
-    p.add_argument("--api-key", help="覆盖 LLM API Key（百炼模式）")
+    p.add_argument("--llm-mode", choices=["local", "siliconflow", "dashscope"],
+                   help="覆盖 LLM 引擎模式（默认 siliconflow=硅基流动云端）")
+    p.add_argument("--api-key", help="覆盖 LLM API Key（云端模式）")
     p.add_argument("--mic-index", type=int, help="覆盖麦克风设备索引")
     p.add_argument("--self-check", action="store_true", help="运行环境自检后退出")
     p.add_argument("--test-llm", metavar="TEXT", help="向 LLM 发一句话做连通性+工具调用验证")
@@ -1104,10 +1339,8 @@ def main():
     local = os.path.join(PC_TEST_DIR, "voice_config.local.yaml")
     if os.path.exists(local):
         _merge(cfg, load_config(local))
-    if args.port_a:
-        cfg["serial"]["port_a"] = args.port_a
-    if args.port_b:
-        cfg["serial"]["port_b"] = args.port_b
+    if args.gateway:
+        cfg["gateway"]["url"] = args.gateway
     if args.model:
         cfg["llm"]["model"] = args.model
     if args.llm_mode:
@@ -1118,20 +1351,20 @@ def main():
         cfg["mic"]["device_index"] = args.mic_index
 
     # 环境变量覆盖（优先级最高）——Docker Compose 服务发现/外设配置用：
-    #   SMART_HOME_LLM_BASE_URL / SMART_HOME_LLM_API_KEY / SMART_HOME_LLM_MODEL
-    #   SMART_HOME_MIC_INDEX / SMART_HOME_PORT_A / SMART_HOME_PORT_B
+    #   SMART_HOME_WEB_URL / SMART_HOME_LLM_BASE_URL / SMART_HOME_LLM_API_KEY
+    #   SMART_HOME_LLM_MODEL / SMART_HOME_LLM_MODE / SMART_HOME_MIC_INDEX
+    if os.environ.get("SMART_HOME_WEB_URL"):
+        cfg["gateway"]["url"] = os.environ["SMART_HOME_WEB_URL"]
     if os.environ.get("SMART_HOME_LLM_BASE_URL"):
         cfg["llm"]["base_url"] = os.environ["SMART_HOME_LLM_BASE_URL"]
     if os.environ.get("SMART_HOME_LLM_API_KEY"):
         cfg["llm"]["api_key"] = os.environ["SMART_HOME_LLM_API_KEY"]
     if os.environ.get("SMART_HOME_LLM_MODEL"):
         cfg["llm"]["model"] = os.environ["SMART_HOME_LLM_MODEL"]
+    if os.environ.get("SMART_HOME_LLM_MODE"):
+        cfg["llm"]["mode"] = os.environ["SMART_HOME_LLM_MODE"]
     if os.environ.get("SMART_HOME_MIC_INDEX"):
         cfg["mic"]["device_index"] = int(os.environ["SMART_HOME_MIC_INDEX"])
-    if os.environ.get("SMART_HOME_PORT_A"):
-        cfg["serial"]["port_a"] = os.environ["SMART_HOME_PORT_A"]
-    if os.environ.get("SMART_HOME_PORT_B"):
-        cfg["serial"]["port_b"] = os.environ["SMART_HOME_PORT_B"]
 
     if args.list_mic:
         from tts_player import list_input_devices

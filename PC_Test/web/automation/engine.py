@@ -49,10 +49,11 @@ logger = logging.getLogger(__name__)
 
 
 class AutomationEngine:
-    def __init__(self, bridge, db, rules_path: Path):
+    def __init__(self, bridge, db, rules_path: Path, cfg: dict | None = None):
         self.bridge = bridge
         self.db = db
         self.rules_path = Path(rules_path)
+        self._cfg = cfg or {}
         self.rules: list[dict] = []
 
         self._lock = threading.RLock()          # 保护规则热更新

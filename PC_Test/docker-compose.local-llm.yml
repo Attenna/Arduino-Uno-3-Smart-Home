@@ -1,0 +1,25 @@
+# ============================================================================
+# 本地 LLM 覆盖文件（离线 fallback：在香橙派上跑 3B GGUF，不依赖云端 Key）
+#
+#   docker compose -f docker-compose.yml -f docker-compose.local-llm.yml up -d --build
+#
+# 效果：qwen 容器（本地 llama.cpp）随本编排启动；voice 改连本地端点、切 local 模式。
+# 默认 docker-compose.yml 走的是云端（硅基流动），本文件把它换回本地推理。
+# ============================================================================
+services:
+  qwen:
+    # 清掉 profile 限制，使该服务在本次编排中随栈启动
+    profiles: !reset null
+
+  voice:
+    depends_on:
+      web:
+        condition: service_healthy
+      qwen:
+        condition: service_healthy
+    environment:
+      # 切本地 llama.cpp：模型名取 GGUF 文件名去后缀（qwen_server 的默认 model id）
+      - SMART_HOME_LLM_MODE=local
+      - SMART_HOME_LLM_BASE_URL=http://qwen:8000/v1
+      - SMART_HOME_LLM_API_KEY=
+      - SMART_HOME_LLM_MODEL=${LLM_MODEL:-qwen2.5-3b-instruct-q4_k_m}

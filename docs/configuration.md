@@ -7,7 +7,7 @@
 | 配置 | 形态 | 读取者 |
 |------|------|--------|
 | [PC_Test/web_config.yaml](../PC_Test/web_config.yaml) | YAML | `run_web.py` / Web 包 |
-| [PC_Test/voice_config.yaml](../PC_Test/voice_config.yaml) | YAML | `voice_assistant.py` / `mcp_home_server.py` / `qwen_server.py` |
+| [PC_Test/voice_config.yaml](../PC_Test/voice_config.yaml) | YAML | `voice_assistant.py` / `qwen_server.py`（离线兜底时） |
 | [PC_Test/docker/.env.example](../PC_Test/docker/.env.example) → `.env` | dotenv | Docker Compose |
 | 环境变量 `SMART_HOME_*` | env | 容器 / 进程 |
 | `src/Config.h`（两块板） | C++ 宏 | Arduino 固件（编译期） |
@@ -32,22 +32,21 @@
 | `host` | `0.0.0.0` | 监听地址；仅本机访问用 `127.0.0.1` |
 | `port` | `5000` | 端口 |
 
-### 2.2 `serial` — 硬件链路
+### 2.2 `serial` — 硬件链路（web 独占）
 
 | 键 | 默认 | 说明 |
 |----|------|------|
-| `enabled` | `true` | `false` = 纯看板/演示模式（设备控制返回 503） |
-| `port_a` | `auto` | Module A 串口（如 `COM7`），`auto` = 自动探测 |
-| `port_b` | `auto` | Module B 串口（如 `COM6`） |
+| `enabled` | `true` | `true` = 本进程拉起 MCP 子进程**真正打开** A/B 串口（全系统唯一硬件网关）；`false` = 纯看板/演示模式（设备控制与 `/api/hardware/tool` 返回 503） |
+| `port_a` | `auto` | Module A 串口（如 `COM7`），`auto` = 自动探测；容器里由 `SMART_HOME_PORT_A` 覆盖 |
+| `port_b` | `auto` | Module B 串口（如 `COM6`），`auto` = 自动探测；容器里由 `SMART_HOME_PORT_B` 覆盖 |
 
 ### 2.3 其他顶层键
 
 | 键 | 默认 | 说明 |
 |----|------|------|
 | `sensor_poll_interval` | `2.0` | 后台轮询 MCP `get_sensor_status` 的间隔（秒） |
-| `door.open_on_face_grant` | `true` | 人脸授权通过后自动开门 |
-| `door.relay_url` | 注释 | 串口归语音助手时的硬件转发地址（通常由 `SMART_HOME_HW_RELAY` 注入） |
-| `camera.stream_url` | `http://127.0.0.1:8080/video_feed` | 摄像头 MJPEG 上游地址 |
+| `voice.url` | `http://127.0.0.1:8101` | 语音助手 HTTP 地址：面板「语音」页与自动化「唤醒/播报」动作的代理目标（与硬件链路无关）。环境变量 `SMART_HOME_VOICE_URL` 优先，容器内为 `http://voice:8101` |
+| `camera.stream_url` | `http://127.0.0.1:8080/video_feed` | 摄像头 MJPEG 上游地址；识别哨兵的单帧地址由它推出（同服务的 `/snapshot`），环境变量 `SMART_HOME_CAMERA_URL` 优先 |
 
 ### 2.4 `face` — 人脸识别
 
@@ -63,27 +62,56 @@
 | `recognition.model_path` | `models/face/recognition.onnx` | ArcFace 模型 |
 | `recognition.similarity_threshold` | `0.5` | 身份判定相似度阈值 |
 | `recognition.image_size` | `112` | 识别输入尺寸 |
+| `recognition_interval` | `1.5` | 识别节流：两次推理的最小间隔（秒），过频返回 `mode: throttled` |
+
+### 2.5 `face.watcher` — 门口识别哨兵
+
+web 进程内的常驻线程：取 `<摄像头服务>/snapshot` 的一帧去识别，认出后交
+`access_guard` 鉴权（见 [api.md](api.md) §2.5）。没有它，录进的人脸永远不会自己开门。
+
+| 键 | 默认 | 说明 |
+|----|------|------|
+| `enabled` | `true` | 关掉 = 只保留手动自测与边缘设备推送，刷脸不再自动开门 |
+| `interval` | `2.0` | 取帧间隔（秒），下限 0.5；应大于 `recognition_interval`，否则每轮被节流 |
+| `motion_gate` | `true` | 只在 A 板 PIR 报「有人」后识别；**从未收到过 motion 时自动退化为常转**（纯看板/没接 A 板） |
+| `motion_hold` | `20` | 最后一次 motion 之后继续识别的秒数（人从椅子走到门口要时间） |
+| `cooldown` | `60` | 同一张脸放行后多久内不再重复开门（人站在门口不该连开）；被拒不进冷却 |
+| `min_face_px` | `60` | 人脸短边小于此像素只报「离得太远」，不进识别也不记日志 |
+
+> 派上只有一个可用核：`motion_gate: false` + `interval: 1` 会和语音、传感器轮询抢 CPU。
+> 哨兵的实时状态（门控开没开、最近一轮判定、通过/拒绝/陌生人计数）显示在 /access 页
+> 顶部状态栏，接口是 `GET /api/access/diagnostics`。
 
 ---
 
 ## 3. voice_config.yaml 参考
 
-### 3.1 `serial`
+### 3.1 `gateway` — web 硬件网关
 
 | 键 | 默认 | 说明 |
 |----|------|------|
-| `port_a` | `auto` | 传感器板串口 |
-| `port_b` | `auto` | 执行器板串口 |
+| `url` | `http://127.0.0.1:5000` | web 网关地址：启动时 `GET /api/hardware/tools` 取工具清单，硬件动作 `POST /api/hardware/tool`（`source=voice`）。优先级 `--gateway` > `SMART_HOME_WEB_URL` > 本键；容器内为 `http://web:5000` |
+
+> 语音助手**不再打开串口**：旧的 `serial.port_a/port_b` 段已随重构移除，A/B 口由 web 的
+> MCP 子进程独占，因此语音与 Web 可以同时运行、状态天然一致。
 
 ### 3.2 `llm` — 大模型
 
 | 键 | 默认 | 说明 |
 |----|------|------|
-| `mode` | `local` | `local`（本地离线推理）/ `dashscope`（阿里云百炼） |
-| `base_url` | `http://127.0.0.1:8000/v1` | OpenAI 兼容端点；dashscope 用 `https://dashscope.aliyuncs.com/compatible-mode/v1` |
-| `api_key` | `none` | dashscope 模式填 API Key；local 无需 |
-| `model` | `qwen2.5-3b-instruct-q4_k_m` | local = GGUF 文件名去 `.gguf`；dashscope 用在线模型名（如 `qwen2.5-3b-instruct`） |
+| `mode` | `siliconflow` | `siliconflow`（硅基流动云端，**默认**，本地推理太慢）/ `dashscope`（阿里云百炼，同为 OpenAI 兼容）/ `local`（本地 llama.cpp，离线兜底） |
+| `base_url` | `https://api.siliconflow.cn/v1` | OpenAI 兼容端点；`mode: local` 时填 `http://127.0.0.1:8000/v1`（云端 `mode` 与端点不一致时会自动纠正为该 mode 的官方端点） |
+| `api_key` | `none` | 云端模式填 API Key（推荐改用环境变量 / `llm_key.txt`）；local 无需 |
+| `model` | `Qwen/Qwen3.5-4B` | 云端用服务商的模型 id（硅基流动带组织前缀，如 `Qwen/Qwen3.5-4B`；百炼如 `qwen-plus`）；local = GGUF 文件名去 `.gguf` |
+| `api_key_file` | （未设） | 密钥文件路径，相对 `PC_Test/` 或绝对路径；不设则按 `llm_key.txt` → `siliconflow_key.txt` → `dashscope_key.txt` 依次找 |
+| `extra_body` | （未设） | 合并进每次 `/chat/completions` 请求体的额外参数（如 `max_tokens`）。`siliconflow` 已在代码里默认 `{"enable_thinking": false}`，见下 |
+| `timeout_s` | `30.0` | 两段响应数据之间的最大间隔（秒）。云端偶尔接下连接却不吐字节，超过这里就报「LLM 超时」，不会把那一轮永远卡在 THINKING |
 | `system_prompt` | （内置） | 注入给模型的系统提示词 |
+
+> **Qwen3.5 必须关思考**：它是思考型模型，默认会把 `reasoning_content` 流完才吐正文，
+> 语音场景首字延迟实测 20~60s（等同不可用）；顶层 `enable_thinking: false` 后实测
+> ~1s，工具调用结果不变。硅基流动只认顶层 `enable_thinking`，vLLM 那套
+> `chat_template_kwargs` 它不认。想改用思考模式：`llm.extra_body: {enable_thinking: true}`。
 
 `llm.local`（仅 `mode: local` 生效，由 `qwen_server.py` 读取）：
 
@@ -114,7 +142,7 @@
 | `tts.model_dir` | `models/sherpa/tts` | TTS 模型目录 |
 | `tts.speaker_id` | `0` | 说话人 ID（0 = 中文女声） |
 | `tts.speed` | `1.0` | 语速倍数 |
-| `tts.num_threads` | `2` | TTS 推理线程 |
+| `tts.num_threads` | `2` | TTS 推理线程。**4 核香橙派实测 2 已是最优**：RTF≈2.1（合成 2.76s 出 1.29s 音频），调到 4 反而 RTF 2.96；桌面 PC 则 RTF<1 |
 
 ### 3.4 `wake` — 唤醒与追问
 
@@ -133,7 +161,7 @@
 | 键 | 默认 | 说明 |
 |----|------|------|
 | `trigger.keyboard` | `true` | 终端打字回车 = 文本指令；空回车 = 开语音监听 |
-| `trigger.http` | `true` | 开启 HTTP 接口（:8101） |
+| `trigger.http` | `true` | 开启 HTTP 接口（:8101：控制台页 + `/trigger` `/say` `/state` `/events`） |
 | `trigger.host` | `0.0.0.0` | HTTP 监听地址 |
 | `trigger.port` | `8101` | HTTP 端口 |
 | `mic.device_index` | `null` | 麦克风索引，`null` = 系统默认（用 `--list-mic` 查看） |
@@ -147,21 +175,27 @@
 | 变量 | 默认 | 说明 |
 |------|------|------|
 | `TZ` | `Asia/Shanghai` | 时区 |
-| `SERIAL_PORT_A` | `/dev/ttyUSB0` | A 板串口（建议用 `/dev/serial/by-id/...` 稳定路径） |
-| `SERIAL_PORT_B` | `/dev/ttyUSB1` | B 板串口 |
-| `CAMERA_DEVICE` | `/dev/video0` | USB 摄像头设备 |
-| `MIC_INDEX` | （空） | 麦克风索引，空 = 系统默认 |
-| `QWEN_PORT` | `8000` | 本地 LLM 宿主端口 |
+| `SERIAL_PORT_A` | `/dev/ttyUSB0` | A 板串口，透传给 **web 容器**（建议用 `/dev/serial/by-id/...` 稳定路径） |
+| `SERIAL_PORT_B` | `/dev/ttyUSB1` | B 板串口，透传给 **web 容器**（voice 已不再持有串口） |
+| `CAMERA_DEVICE` | `/dev/video0` | 摄像头**优先候选**节点；容器随宿主机 `/dev` 走，不在位时自动枚举其它 `/dev/video*` |
+| `MIC_INDEX` | （空） | 麦克风索引（voice），空 = 系统默认 |
+| `QWEN_PORT` | `8000` | 本地 LLM 宿主端口（仅 `local-llm` 编排下存在） |
 | `VOICE_PORT` | `8101` | 语音宿主端口 |
 | `WEB_PORT` | `5000` | Web 宿主端口 |
 | `CAMERA_PORT` | `8080` | 摄像头宿主端口 |
-| `DASHSCOPE_API_KEY` | — | 仅云端 LLM 覆盖时需要 |
+| `LLM_MODE` | `siliconflow` | 云端引擎：`siliconflow` / `dashscope`（`local-llm` 编排里为 `local`） |
+| `LLM_BASE_URL` | `https://api.siliconflow.cn/v1` | OpenAI 兼容端点 |
+| `LLM_API_KEY` | — | **默认引擎所需**：云端 API Key（放 `.env`，不入库；容器里没有 `llm_key.txt`） |
+| `LLM_MODEL` | `Qwen/Qwen3.5-4B` | 模型 id（本地 `local-llm` 编排下默认 `qwen2.5-3b-instruct-q4_k_m`） |
 
 查设备：
 
 ```bash
 ls -l /dev/ttyUSB* /dev/ttyACM* /dev/serial/by-id/* /dev/video*
 ```
+
+> 默认编排只起 `web`（含串口）/ `voice` / `camera` 三个容器；`qwen` 在
+> `profiles: ["local-llm"]` 后面，需叠加 `docker-compose.local-llm.yml` 才会启动。
 
 ---
 
@@ -173,19 +207,20 @@ ls -l /dev/ttyUSB* /dev/ttyACM* /dev/serial/by-id/* /dev/video*
 
 | 变量 | 作用 |
 |------|------|
-| `SMART_HOME_LLM_BASE_URL` | 覆盖 LLM 端点（容器内为 `http://qwen:8000/v1`） |
-| `SMART_HOME_LLM_API_KEY` | 覆盖 LLM API Key |
-| `SMART_HOME_LLM_MODEL` | 覆盖模型名（云端为 `qwen-turbo`） |
-| `SMART_HOME_PORT_A` / `SMART_HOME_PORT_B` | 覆盖 A/B 串口 |
+| `SMART_HOME_WEB_URL` | web 硬件网关地址（容器内 `http://web:5000`）：取工具清单 + 转发大模型的硬件调用 |
+| `SMART_HOME_LLM_MODE` | LLM 引擎：`siliconflow`（默认）/ `dashscope` / `local`（离线兜底） |
+| `SMART_HOME_LLM_BASE_URL` | 覆盖 LLM 端点（默认硅基流动；`local` 编排下为 `http://qwen:8000/v1`） |
+| `SMART_HOME_LLM_API_KEY` | 覆盖 LLM API Key（云端模式） |
+| `SMART_HOME_LLM_MODEL` | 覆盖模型名（云端如 `Qwen/Qwen3.5-4B`；本地为 GGUF 文件名去 `.gguf`） |
 | `SMART_HOME_MIC_INDEX` | 覆盖麦克风索引 |
-| `SMART_HOME_WEB_URL` | 动作回传 Web 的地址（容器内 `http://web:5000`） |
-| `SMART_HOME_DISABLE_MIC` | `1` = 跳过麦克风（纯硬件网关/人脸开门模式） |
+| `SMART_HOME_DISABLE_MIC` | `1` = 跳过麦克风（无音频设备的环境；`start_all.py` 不注入，需手工设置） |
 
-### web 进程
+### web 进程（唯一硬件网关）
 
 | 变量 | 作用 |
 |------|------|
-| `SMART_HOME_HW_RELAY` | 硬件转发地址（容器内 `http://voice:8101`） |
+| `SMART_HOME_PORT_A` / `SMART_HOME_PORT_B` | A/B 串口：容器内由 compose 从 `SERIAL_PORT_A/B` 注入，**覆盖 `web_config.yaml` 的 `serial.port_a/port_b`**（给了明确端口就不再靠 WHO 探测认板子） |
+| `SMART_HOME_VOICE_URL` | 语音助手 HTTP 地址（容器内 `http://voice:8101`）：面板对话实况代理与自动化「唤醒/播报」动作的目标，**与硬件链路无关** |
 | `SMART_HOME_CAMERA_URL` | 摄像头上游地址（容器内 `http://camera:8080/video_feed`） |
 | `SMART_HOME_DB` | 自定义 SQLite 路径（可选） |
 
@@ -245,6 +280,8 @@ ls -l /dev/ttyUSB* /dev/ttyACM* /dev/serial/by-id/* /dev/video*
 | `PC_Test/data/face/face_config.json` | 运行时人脸配置，**优先级高于 yaml** | 改 yaml 不生效时删除它并重启 |
 | `PC_Test/data/ha_config.json` | 可选 HA 对接配置（默认无密钥） | 硬件管理页维护 |
 | `PC_Test/data/smart_home.db` | SQLite 数据库 | 删除即重置全部历史 |
+| `PC_Test/data/global_state.json` | 积木用的全局状态变量（含 `g:全屋模式` 等） | 与 `automation_rules.json` 同生命周期；在列表页删掉那条「📌 状态」条目即可，不必删文件 |
+| `PC_Test/data/automation_rules.pre-global-state.json` | 首次加载时旧规则迁移前的一次性备份 | 只写一次，确认规则无误后可删 |
 | `PC_Test/data/face/embeddings.pkl` | 人脸嵌入库 | 由 `scripts/enroll_faces.py` 生成 |
 
 `data/` 与 `models/` 均已在 `.gitignore` 中，不入库。
@@ -253,7 +290,10 @@ ls -l /dev/ttyUSB* /dev/ttyACM* /dev/serial/by-id/* /dev/video*
 
 ## 9. 密钥管理
 
-- **百炼 API Key** 三选一：① `PC_Test/dashscope_key.txt`（推荐，已 gitignore）；
-  ② 环境变量 `DASHSCOPE_API_KEY`；③ `llm.api_key`。
+- **云端 LLM API Key**（默认引擎硅基流动必需）优先级：① config `llm.api_key`；
+  ② 环境变量 `LLM_API_KEY` / `SILICONFLOW_API_KEY` / `DASHSCOPE_API_KEY`；
+  ③ 密钥文件 `PC_Test/llm_key.txt`（推荐，已 gitignore + dockerignore；也认
+  `siliconflow_key.txt` / `dashscope_key.txt`）。文件里第一行非 `#` 的内容即 Key，
+  只有注释 = 没配；`llm.api_key_file` 可指定别的路径（相对 `PC_Test/` 或绝对路径）。
 - 容器部署时 Key 只写入宿主机 `.env`（已 gitignore），不要提交。
 - HA 的 `secrets.yaml` 用于存放 HA 侧敏感值，避免明文进配置。

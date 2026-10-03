@@ -19,3 +19,9 @@ venv/
 _smoke_web.py
 _verify_*.py
 docs/
+
+# LLM 密钥文件绝不进镜像（容器里用 .env 的 LLM_API_KEY 注入）
+llm_key.txt
+siliconflow_key.txt
+dashscope_key.txt
+voice_config.local.yaml

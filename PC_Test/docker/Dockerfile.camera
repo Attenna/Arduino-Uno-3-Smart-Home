@@ -17,9 +17,13 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 COPY . /app
 
 EXPOSE 8080
+# 探 /health 而不是 /：/ 只要 Flask 起着就永远 200，摄像头一根帧都没有也判不出问题。
+# /health 由采集线程存活决定（200=正常，503=采集线程已死）；没插摄像头仍是 200，
+# 因为热插拔下「等待设备」是可用状态，不该让容器被判死。
 HEALTHCHECK --interval=20s --timeout=8s --start-period=20s --retries=3 \
-    CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/',timeout=5).status==200 else 1)"
+    CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/health',timeout=5).status==200 else 1)"
 
 ENTRYPOINT ["tini", "--"]
-# 容器内用数字索引 0（按名称 'Web Cam' 是 Windows 习惯，Linux 下用 /dev/video*）
-CMD ["python", "-u", "camera_stream.py", "--mode", "web", "--host", "0.0.0.0", "--port", "8080", "--cam", "0"]
+# 不写死 --cam：由 camera_stream.py 枚举 /dev/video*（CAMERA_DEVICE 只作优先候选），
+# 拔插换序号后下一轮重开就能找到
+CMD ["python", "-u", "camera_stream.py", "--mode", "web", "--host", "0.0.0.0", "--port", "8080"]

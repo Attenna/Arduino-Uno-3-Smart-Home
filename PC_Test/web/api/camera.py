@@ -3,9 +3,15 @@
 浏览器直连摄像头服务需要额外端口（Docker 里 camera 是独立容器 :8080），
 这里由后端代理，人脸识别页面只需访问 /api/camera/stream，天然同源、
 不受端口/CORS 影响。地址优先级：环境变量 SMART_HOME_CAMERA_URL >
-web_config.yaml 的 camera.stream_url。摄像头不可用时返回 503。
+web_config.yaml 的 camera.stream_url。摄像头服务连不上时返回 503。
+
+/api/camera/status 会顺带问一次 camera 服务的 /health，把「有没有插着、
+设备名、上一帧多久以前」原样透出，省得只看 enabled 时分不清是没配置、
+容器没起还是摄像头被拔了。
 """
+import json
 import os
+import urllib.parse
 import urllib.request
 
 from flask import Blueprint, Response, current_app, jsonify
@@ -14,6 +20,7 @@ bp = Blueprint("camera", __name__)
 
 STREAM_PATH = "/api/camera/stream"
 _BOUNDARY = "frame"          # 与 camera_stream.py 的 video_feed 一致
+_HEALTH_TIMEOUT = 2.0
 
 
 def _stream_url() -> str:
@@ -24,10 +31,27 @@ def _stream_url() -> str:
     return str((cfg.get("camera") or {}).get("stream_url") or "").strip()
 
 
+def _health_url(stream_url: str) -> str:
+    """同一服务的健康端点：.../video_feed -> .../health。"""
+    parts = urllib.parse.urlsplit(stream_url)
+    path = parts.path.rsplit("/", 1)[0] + "/health"
+    return urllib.parse.urlunsplit((parts.scheme, parts.netloc, path, "", ""))
+
+
+def _camera_health(stream_url: str) -> dict:
+    try:
+        with urllib.request.urlopen(_health_url(stream_url), timeout=_HEALTH_TIMEOUT) as r:
+            return json.loads(r.read().decode("utf-8", "replace"))
+    except Exception as e:                               # noqa: BLE001
+        return {"online": False, "error": f"摄像头服务无响应: {e}"}
+
+
 @bp.route("/api/camera/status")
 def camera_status():
     url = _stream_url()
-    return jsonify({"enabled": bool(url), "stream_url": url, "stream": STREAM_PATH})
+    body = {"enabled": bool(url), "stream_url": url, "stream": STREAM_PATH}
+    body["camera"] = _camera_health(url) if url else {"online": False, "error": "未配置摄像头流地址"}
+    return jsonify(body)
 
 
 @bp.route("/api/camera/stream")

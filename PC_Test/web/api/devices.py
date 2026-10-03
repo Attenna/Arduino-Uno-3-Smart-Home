@@ -22,19 +22,32 @@ bp = Blueprint("devices", __name__)
 
 
 def _note_manual(device, **state):
-    """告知全屋状态机这是一次手动操作：切到「手动」并同步去重缓存。
+    """把手动操作广播给自动化引擎（不含任何设备专属策略）。
 
     用户策略：自动/离家中从面板（或语音）手动操作任一设备，全屋转为「手动」，
     保持刚设的状态不被自动逻辑覆盖；再按触摸键或页面「自动」即恢复自动调节。
+
+    「手动优先 30 秒让位」原先硬编码在引擎的 home_mode 状态机里，现在只是一条
+    通用事件：manual_mark_x / manual_clear_x 预设收到 ``manual_control`` 后维护
+    ``g:手动优先_x`` 与 ``g:全屋模式``，设备类预设带 ``g:手动优先_x == false``
+    条件自行让位。
+
+    风扇额外同步一次 ``note_external``：引擎对风扇下发做去重（``_last_cmd``），
+    面板手动设了 60% 后水位仍是旧值，规则就会把「已经是 60%」再发一遍。
     """
     automation = getattr(extensions, "automation", None)
-    home_mode = getattr(automation, "home_mode", None) if automation else None
-    if home_mode is None:
+    if automation is None:
         return
     try:
-        home_mode.note_manual_control(device, **state)
-    except Exception:                                # noqa: BLE001
-        logger.debug("通知全屋模式失败", exc_info=True)
+        automation.on_event({"event": "manual_control", "device": device,
+                            "ts": time.time()})
+    except Exception:                                    # noqa: BLE001
+        logger.debug("广播 manual_control 事件失败", exc_info=True)
+    if device == "fan" and "speed" in state:
+        try:
+            automation.note_external("fan", int(state.get("speed") or 0))
+        except Exception:                                # noqa: BLE001
+            logger.debug("同步风扇下发水位失败", exc_info=True)
 
 
 def _record_door(new_status, who="面板"):
@@ -121,7 +134,7 @@ class _DeviceGate:
       都不会再动硬件；
     * 执行失败不推进水位，保留最新 desired，允许前端重试。
 
-    自动化引擎 / 全屋模式走 bridge 直连且自带冷却去重，不经此收口器。
+    自动化引擎走 bridge 直连且自带下发去重，不经此收口器。
     """
 
     DEVICES = ("door", "window", "light", "fan", "ac")
@@ -460,56 +473,168 @@ def control_ac():
                     "message_en": "AC updated"})
 
 
-# ==================== 语音动作回传（与面板等效）====================
+# ==================== 硬件工具网关（web 独占串口，语音/外部系统共用）====================
 
-@bp.route("/api/devices/manual_report", methods=["POST"])
-def manual_report():
-    """语音助手执行完硬件动作后回传，做与面板一致的记账。
+_SOURCES = {"voice": "语音", "web": "面板"}
 
-    语音进程独占串口、直连 MCP，web 侧看不到它的调用，因此仪表盘状态/历史/
-    全屋模式都会落后于真实硬件。语音在动作成功后把「哪个设备变成什么状态」
-    回传到这里：本接口**只记账、不下发硬件**（动作已经执行完毕），使语音与
-    面板产生等效效果——相同状态、相同历史记录、同样切到「手动」模式。
+
+@bp.route("/api/hardware/tools")
+def hardware_tools():
+    """列出全部 MCP 硬件工具的 OpenAI function schema（语音助手据此注册工具）。"""
+    bridge = extensions.bridge
+    if bridge is None or not bridge.tool_schemas:
+        return jsonify({"error": "硬件服务未就绪（MCP 未连接或串口未启用）",
+                        "error_en": "Hardware tools unavailable"}), 503
+    return jsonify({"tools": bridge.tool_schemas})
+
+
+@bp.route("/api/hardware/tool", methods=["POST"])
+def hardware_tool():
+    """静默调用一个 MCP 硬件工具：先执行硬件，执行器类成功再做面板等效记账。
+
+    串口归 web 独占后，语音助手不再碰 MCP/串口，所有硬件动作都经这里；
+    web 既是执行者也是记账者，状态/历史/「手动优先」事件天然与面板一致，
+    不再需要 manual_report 二段式回传。
     """
+    bridge = extensions.bridge
+    if bridge is None:
+        return jsonify({"ok": False,
+                        "error": "硬件服务未启动（硬件桥未初始化）"}), 503
     data = request.get_json(silent=True) or {}
+    name = data.get("name")
+    arguments = data.get("arguments") or {}
+    if not isinstance(name, str) or not name:
+        return jsonify({"ok": False, "error": "name 不能为空"}), 400
+    if not isinstance(arguments, dict):
+        return jsonify({"ok": False, "error": "arguments 必须是对象"}), 400
+    try:
+        timeout = float(data.get("timeout") or (20.0 if name in ("ac", "ir") else 10.0))
+    except (TypeError, ValueError):
+        timeout = 10.0
+
+    ok, text = bridge.call_tool(name, arguments, timeout=timeout)
+    if ok:
+        report = _tool_state_report(name, arguments)
+        if report is not None:
+            who = _SOURCES.get(str(data.get("source") or ""), "外部")
+            try:
+                _bookkeep(report, who)
+            except Exception:                                # noqa: BLE001
+                logger.debug("工具网关记账失败: %s", report, exc_info=True)
+    return jsonify({"ok": ok, "name": name, "result": text}), (200 if ok else 502)
+
+
+def _pct255(value, default=0):
+    """MCP 工具用 0~255 表示亮度/转速，面板记账用百分比。"""
+    try:
+        return max(0, min(100, round(int(value) * 100 / 255)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _tool_state_report(name, args):
+    """把 MCP 工具调用翻译成面板等效的记账载荷；无关工具返回 None。"""
+    action = str(args.get("action", "")).lower()
+
+    if name == "door":
+        if action not in ("open", "close"):
+            return None
+        return {"device": "door", "status": "open" if action == "open" else "closed"}
+
+    if name == "window":
+        if action not in ("open", "close", "normal"):
+            return None
+        status = {"open": "open", "close": "closed", "normal": "normal"}[action]
+        return {"device": "window", "status": status}
+
+    if name == "light":
+        if action == "off":
+            return {"device": "light", "status": "off", "brightness": 0}
+        if action in ("on", "white", "red", "green", "blue",
+                      "yellow", "purple", "cyan", "rgb"):
+            # 彩色指令面板不跟踪颜色，只记为「开」+亮度
+            return {"device": "light", "status": "on",
+                    "brightness": _pct255(args.get("value"), 100) or 100}
+        return None
+
+    if name == "fan":
+        if action == "off":
+            return {"device": "fan", "speed": 0}
+        if action == "on":
+            return {"device": "fan", "speed": 100}
+        if action == "set_speed":
+            return {"device": "fan", "speed": _pct255(args.get("value"), 50)}
+        return None
+
+    if name == "ac":
+        # 空调没有 action：只回传本次真正给出的字段，按 DB 当前值补齐
+        keys = ("power", "mode", "temperature", "fan",
+                "swing_ud", "swing_lr")
+        state = {k: args[k] for k in keys if args.get(k) is not None}
+        return {"device": "ac", "state": state} if state else None
+
+    return None
+
+
+def _bookkeep(data, who):
+    """按 manual_report 形态做面板等效记账（只写库/发事件，不下发硬件）。
+
+    返回 (HTTP 状态码, 响应体)。manual_report 端点与工具网关共用这一份逻辑，
+    保证「语音/外部动作」与「面板点击」产生完全相同的状态、历史与事件。
+    """
     device = str(data.get("device", "")).lower()
-    who = "语音" if data.get("source") == "voice" else str(data.get("source") or "外部")
 
     if device == "door":
         status = "open" if data.get("status") == "open" else "closed"
         _record_door(status, who=who)
-        return jsonify({"ok": True, "door_status": status})
+        return 200, {"ok": True, "door_status": status}
     if device == "window":
         status = data.get("status")
         if status not in ("open", "closed", "normal"):
-            return jsonify({"error": "无效状态"}), 400
+            return 400, {"error": "无效状态"}
         _record_window(status)
-        return jsonify({"ok": True, "window_status": status})
+        return 200, {"ok": True, "window_status": status}
     if device == "light":
         status = "on" if data.get("status") == "on" else "off"
         brightness = _pct(data.get("brightness"), 0)
         if status == "on" and brightness == 0:
             brightness = 100
         _record_light(status, brightness)
-        return jsonify({"ok": True, "light_status": status,
-                        "light_brightness": brightness})
+        return 200, {"ok": True, "light_status": status,
+                     "light_brightness": brightness}
     if device == "fan":
         speed = _pct(data.get("speed"), 0)
         _record_fan(speed)
-        return jsonify({"ok": True, "fan_speed": speed})
+        return 200, {"ok": True, "fan_speed": speed}
     if device == "ac":
-        # 空调是"合并式"状态：语音只报变化的字段，这里按 DB 当前值补齐
+        # 空调是"合并式"状态：调用方只报变化的字段，这里按 DB 当前值补齐
         state = data.get("state")
         if not isinstance(state, dict):
-            return jsonify({"error": "空调回传需要 state 对象"}), 400
+            return 400, {"error": "空调记账需要 state 对象"}
         try:
             target, _ = midea_ac.apply_overrides(
                 _ac_state_from_db(),
                 **{k: v for k, v in state.items() if k in AC_KEYS})
         except (ValueError, TypeError) as e:
-            return jsonify({"error": f"空调参数无效：{e}"}), 400
+            return 400, {"error": f"空调参数无效：{e}"}
         _record_ac(target, who=who)
-        return jsonify({"ok": True, **target.snapshot()})
+        return 200, {"ok": True, **target.snapshot()}
 
-    return jsonify({"error": f"不支持的设备: {device or '(空)'}",
-                    "error_en": f"Unsupported device: {device or '(empty)'}"}), 400
+    return 400, {"error": f"不支持的设备: {device or '(空)'}",
+                 "error_en": f"Unsupported device: {device or '(empty)'}"}
+
+
+# ==================== 外部动作回传（只记账）====================
+
+@bp.route("/api/devices/manual_report", methods=["POST"])
+def manual_report():
+    """外部系统「已经在别处执行完硬件动作」后的补记账通道。
+
+    本系统语音助手已改走 /api/hardware/tool（执行+记账一步到位），**不再调用
+    本接口**；保留它是给不受本进程控制的外部执行者（手工拨了继电器、另一台
+    网关）对账用：本接口**只记账、不下发硬件**。
+    """
+    data = request.get_json(silent=True) or {}
+    who = _SOURCES.get(str(data.get("source") or ""), "外部")
+    code, body = _bookkeep(data, who)
+    return jsonify(body), code

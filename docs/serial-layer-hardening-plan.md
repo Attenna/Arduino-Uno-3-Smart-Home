@@ -5,10 +5,13 @@
 > **P3 可观测性**（2026-10-02）：固件 `V2.9` 让响应/就绪帧自带固件实际状态快照，MCP 在命令 ack 当场打印
 > `[B] <设备>/<动作> ok <耗时> | 固件回读 {...}`；web 侧设备收口日志补 `Referer`/`UA`，钉死命令来源页面；
 > 新增只读自检 `/api/hardware/self_test`（= MCP `self_test` = 固件 `system/selftest`）。详见 §8.2。
-> 范围：`voice` 容器内的串口层（`PC_Test/mcp_home_server.py`）+ Module B 固件（如采纳 P0-3）。
+> 范围：`web` 容器内的串口层（web 的 MCP 子进程 `PC_Test/mcp_home_server.py`）+ Module B 固件（如采纳 P0-3）。
 > 触发背景：A 板读异常刷屏、MCP 调用洪泛、风扇"自己转 / 关不掉"——四个现象指向同一类根因。
 >
-> **实施记录**：健康度通过 MCP 工具 `get_serial_health` 暴露，可 `POST http://<派>:8101/tool -d '{"name":"get_serial_health","arguments":{}}'` 读取；web 先经 relay 低频取回并缓存，再随 `/api/status.serial_health` 透传到看板（P2）。
+> **实施记录**：健康度通过 MCP 工具 `get_serial_health` 暴露。串口就在 web 自己的 MCP 子进程里，
+> 所以 web 的硬件桥在自己的循环里低频轮询它并缓存，随 `/api/status.serial_health` 透传到看板（P2）；
+> 手工排查可直接 `POST http://<派>:5000/api/hardware/tool -d '{"name":"get_serial_health","arguments":{}}'`
+> （语音助手同样经这个端点取硬件，串口已不在 voice 容器里）。
 
 ---
 
@@ -137,7 +140,7 @@ B 串口 ─ 读者 ──┼─ ready ────→ 记 B 板复位（计数 
 
 1. **上报不丢**：拔插 / 复位 B 板，日志能看到 `ready` 帧 + 复位计数递增；`fan_pin_reclaim` 一条不漏。
 2. **空闲自愈**：空闲期拔掉 B 板 USB → 心跳失败 → 退避重连 → 插回后自动恢复，全程有"首条/摘要/恢复"三段日志。
-3. **不劣化**：控制命令延迟不增加（对照 `[HTTP] /tool` 耗时）；超时率不升高；`/api/status` 仍正常。
+3. **不劣化**：控制命令延迟不增加（对照 web 侧 `[MCP] -> <工具>` 与 `POST /api/hardware/tool` 的耗时）；超时率不升高；`/api/status` 仍正常。
 4. **健康度可见**：`/api/status`（或新只读接口）能读到 A/B 重连次数、B 板复位次数、最后自愈时间。
 5. **单测**：帧分类、迟到响应丢弃、心跳退避节拍、等待者超时唤醒——抽纯逻辑函数后写成回归用例。
 
@@ -271,7 +274,7 @@ by-id 与裸节点两条路径都能 `OPEN OK`。
 |------|------|------|------|
 | ① 整目录透视 | `volumes: - /dev:/dev` + `device_cgroup_rules: ['c 166:* rmw']` | 容器可见宿主全部设备，隔离性下降 | **已采纳并部署** |
 | ② 特权容器 | `privileged: true` | 权限最大 | 未采纳 |
-| ③ 接受 | 物理拔插后 `docker compose up -d --force-recreate voice` | 不改配置，靠维护动作恢复 | 兜底 |
+| ③ 接受 | 物理拔插后 `docker compose up -d --force-recreate web`（串口在 web 的 MCP 子进程里） | 不改配置，靠维护动作恢复 | 兜底 |
 
 > 结论：**两类故障都已实测通过**——串口级故障（USB CDC 抖动、句柄损坏、固件挂死）与**物理拔插**。
 

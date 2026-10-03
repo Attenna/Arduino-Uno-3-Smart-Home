@@ -1,21 +1,24 @@
-"""一键启动「语音助手 + 人脸识别 Web + 摄像头视频流」联动栈
+"""一键启动「Web 硬件网关 + 语音助手 + 摄像头视频流」联动栈
 ================================================================
-一次拉起 4 个进程（串口归语音助手独占，Web 以 --no-serial 看板模式运行，
-硬件控制/人脸自动开门经语音助手的 POST /tool 静默转发）：
+一次拉起最多 4 个进程（本轮重构后 web 是唯一硬件网关，语音退化为 HTTP 客户端）：
 
-    1. qwen_server.py       本地 LLM（llm-mode=local 时；:8000）
-    2. voice_assistant.py   语音助手，独占 A/B 串口（:8101，含 POST /tool）
-    3. run_web.py --no-serial  人脸 YOLO+ArcFace + 仪表盘（:5000）
+    1. qwen_server.py       本地 LLM（仅 --llm-mode local 时；:8000，默认不启）
+    2. run_web.py           仪表盘 + 人脸识别 + 唯一硬件网关（:5000，独占 A/B 串口）
+    3. voice_assistant.py   语音助手（:8101，经 web 的 /api/hardware/tool 调硬件）
     4. camera_stream.py     USB 摄像头 MJPEG 流（:8080）
 
-用法（在 PC_Test 目录下）:
-    py -3.13 start_all.py                     # 全部启动（推荐）
-    py -3.13 start_all.py --port-a COM7 --port-b COM6 --cam 0
-    py -3.13 start_all.py --llm-mode dashscope --api-key sk-xxx
-    py -3.13 start_all.py --camera-mode both  # 摄像头同时弹本地窗口
-    py -3.13 start_all.py --no-camera         # 不起摄像头
+串口只归 web 拉起的 mcp_home_server 独占；语音不再抢串口，硬件控制/人脸开门统一
+走 web，语音与面板因此天然等效（相同状态、相同历史、相同「全屋切手动」事件）。
 
-退出：本窗口按 Ctrl+C，会 taskkill 整个进程树（含 mcp_home_server 子进程），
+用法（在 PC_Test 目录下）:
+    py -3.13 start_all.py                                          # 全启动，默认云端 LLM
+    py -3.13 start_all.py --port-a COM7 --port-b COM6 --cam 0      # web 指定串口
+    py -3.13 start_all.py --llm-mode siliconflow --api-key sk-xxx   # 显式云端（默认即此）
+    py -3.13 start_all.py --llm-mode local                         # 改跑本地 llama.cpp(:8000)
+    py -3.13 start_all.py --camera-mode both                       # 摄像头同时弹本地窗口
+    py -3.13 start_all.py --no-camera                              # 不起摄像头
+
+退出：本窗口按 Ctrl+C，会 taskkill 整个进程树（含 web 的 mcp_home_server 子进程），
 不留孤儿。各服务实时日志在 logs/ 下（qwen.log / voice.log / web.log / camera.log）。
 """
 from __future__ import annotations
@@ -120,12 +123,14 @@ def cleanup() -> None:
 
 
 def main() -> int:
-    p = argparse.ArgumentParser(description="语音 + 人脸识别 Web + 摄像头流 一键启动")
-    p.add_argument("--port-a", help="Module A 串口（传给语音助手，如 COM7）")
-    p.add_argument("--port-b", help="Module B 串口（传给语音助手，如 COM6）")
+    p = argparse.ArgumentParser(description="Web 硬件网关 + 语音 + 摄像头流 一键启动")
+    p.add_argument("--port-a", help="Module A 串口（传给 Web 网关 run_web，如 COM7）")
+    p.add_argument("--port-b", help="Module B 串口（传给 Web 网关 run_web，如 COM6）")
     p.add_argument("--mic-index", type=int, help="麦克风设备索引（传给语音助手）")
-    p.add_argument("--llm-mode", choices=["local", "dashscope"], default="local")
-    p.add_argument("--api-key", help="dashscope 模式 API Key")
+    p.add_argument("--llm-mode", choices=["local", "siliconflow", "dashscope"],
+                   default="siliconflow",
+                   help="语音助手大模型引擎，默认 siliconflow（硅基流动云端，本地推理太慢）")
+    p.add_argument("--api-key", help="云端模式 API Key（不填则读环境变量或 PC_Test/llm_key.txt）")
     p.add_argument("--cam", help="摄像头索引(0)或名称('Web Cam')，传给 camera_stream")
     p.add_argument("--camera-mode", choices=["local", "web", "both"], default="web",
                    help="摄像头输出模式，默认 web（无头环境友好）")
@@ -139,20 +144,25 @@ def main() -> int:
     p.add_argument("--no-camera", action="store_true")
     args = p.parse_args()
 
+    # 本地 LLM 仅在跑 local 模式且需要语音助手时才拉起
     want_qwen = (not args.no_voice and not args.no_qwen
                  and args.llm_mode == "local")
     want_voice = not args.no_voice
     want_web = not args.no_web
     want_camera = not args.no_camera
 
+    # 语音依赖 web 网关：web 被关掉时语音无法下发硬件，给出显式提示但不阻断
+    if want_voice and not want_web:
+        log("注意：--no-web 时语音助手连不上硬件网关，设备控制将失败（看板/人脸也不可用）。")
+
     # 1. 端口占用预检
     planned = []
     if want_qwen:
         planned.append(("qwen_server", args.llm_port))
-    if want_voice:
-        planned.append(("voice_assistant", args.voice_port))
     if want_web:
         planned.append(("run_web", args.web_port))
+    if want_voice:
+        planned.append(("voice_assistant", args.voice_port))
     if want_camera:
         planned.append(("camera_stream", args.camera_port))
     for svc, port in planned:
@@ -160,31 +170,35 @@ def main() -> int:
             log(f"!! 端口 {port} 已被占用（{svc} 需要）。请先停掉占用进程，或用对应参数改端口。")
             return 1
 
-    # 2. 依次拉起
+    # 2. 依次拉起（web 先于 voice：它是语音依赖的硬件网关）
     try:
         if want_qwen:
             _PROCESSES["qwen"] = spawn("qwen", ["qwen_server.py"])
 
-        if want_voice:
-            va_args = ["voice_assistant.py", "--llm-mode", args.llm_mode]
+        if want_web:
+            web_args = ["run_web.py", "--port", str(args.web_port)]
             if args.port_a:
-                va_args += ["--port-a", args.port_a]
+                web_args += ["--port-a", args.port_a]
             if args.port_b:
-                va_args += ["--port-b", args.port_b]
+                web_args += ["--port-b", args.port_b]
+            # web 独占 A/B 串口（MCP 子进程）；语音/面板都经它调硬件
+            web_env = {
+                # 语音助手 HTTP 口：面板对话实况同源代理 + 自动化「唤醒/播报」动作
+                "SMART_HOME_VOICE_URL": f"http://127.0.0.1:{args.voice_port}",
+                # 人脸识别页面的实时画面：同源代理到相机进程的 MJPEG
+                "SMART_HOME_CAMERA_URL":
+                    f"http://127.0.0.1:{args.camera_port}/video_feed",
+            }
+            _PROCESSES["web"] = spawn("web", web_args, env_extra=web_env)
+
+        if want_voice:
+            va_args = ["voice_assistant.py", "--llm-mode", args.llm_mode,
+                       "--gateway", f"http://127.0.0.1:{args.web_port}"]
             if args.mic_index is not None:
                 va_args += ["--mic-index", str(args.mic_index)]
             if args.api_key:
                 va_args += ["--api-key", args.api_key]
             _PROCESSES["voice"] = spawn("voice", va_args)
-
-        if want_web:
-            web_args = ["run_web.py", "--no-serial", "--port", str(args.web_port)]
-            # 人脸开门/设备控制经语音助手 /tool 转发（不抢串口）
-            relay_env = {"SMART_HOME_HW_RELAY": f"http://127.0.0.1:{args.voice_port}",
-                         # 人脸识别页面的实时画面：同源代理到相机进程的 MJPEG
-                         "SMART_HOME_CAMERA_URL":
-                             f"http://127.0.0.1:{args.camera_port}/video_feed"}
-            _PROCESSES["web"] = spawn("web", web_args, env_extra=relay_env)
 
         if want_camera:
             cam_args = ["camera_stream.py",
@@ -201,10 +215,11 @@ def main() -> int:
     # 3. 就绪等待（按依赖顺序；LLM 加载模型较慢给 120s）
     if want_qwen:
         wait_ready("qwen", args.llm_port, "/v1/models", timeout=120)
+    if want_web:
+        # web 起 MCP 子进程 + 首次串口握手，start-period 给足；/api/health 不阻塞串口
+        wait_ready("web", args.web_port, "/api/health", timeout=90)
     if want_voice:
         wait_ready("voice", args.voice_port, "/state", timeout=120)
-    if want_web:
-        wait_ready("web", args.web_port, "/api/health", timeout=90)
     if want_camera:
         cam_ok = wait_ready("camera", args.camera_port, "/", timeout=25, optional=True)
         if not cam_ok:
@@ -214,13 +229,13 @@ def main() -> int:
     print("=" * 60, flush=True)
     print("  联动栈已启动：", flush=True)
     if want_web:
-        print(f"    🌐 仪表盘 / 人脸识别 : http://localhost:{args.web_port}", flush=True)
+        print(f"    🌐 仪表盘 / 人脸 / 硬件网关 : http://localhost:{args.web_port}", flush=True)
     if want_camera:
-        print(f"    📷 摄像头视频流       : http://localhost:{args.camera_port}", flush=True)
+        print(f"    📷 摄像头视频流             : http://localhost:{args.camera_port}", flush=True)
     if want_voice:
-        print(f"    🎤 语音助手控制台     : http://localhost:{args.voice_port}", flush=True)
+        print(f"    🎤 语音助手控制台           : http://localhost:{args.voice_port}", flush=True)
     if want_qwen:
-        print(f"    🧠 本地 LLM           : http://localhost:{args.llm_port}/v1", flush=True)
+        print(f"    🧠 本地 LLM                 : http://localhost:{args.llm_port}/v1", flush=True)
     print("  按 Ctrl+C 停止全部服务（日志在 logs/ 目录）", flush=True)
     print("=" * 60, flush=True)
 
