@@ -43,14 +43,14 @@ TYPE_LABELS = {"bool": "是/否", "number": "数字", "enum": "选项", "text": 
 
 # 种子变量：原「全屋模式」硬编码状态的积木化等价物（见 default_rules.py 的预设）。
 # 初值沿用旧引擎语义：全屋=自动；有人在家=**true**（无 PIR 数据时的安全默认，
-# 与 home_mode.person_present 一致）；允许自动开风扇=false（硬策略：风扇只能手动开）；
+# 与 home_mode.person_present 一致）；允许自动开风扇=true；
 # 手动优先_*=false（不在冷却窗口）。用户可以自由改名/删除，删了不会被强行加回。
 DEFAULT_VARS: list[dict] = [
     {"name": "全屋模式", "type": "enum", "value": "auto",
      "choices": ["auto", "manual", "away"],
      "choice_labels": {"auto": "自动", "manual": "手动", "away": "离家"}},
     {"name": "有人在家", "type": "bool", "value": True},
-    {"name": "允许自动开风扇", "type": "bool", "value": False},
+    {"name": "允许自动开风扇", "type": "bool", "value": True},
     {"name": "手动优先_门", "type": "bool", "value": False},
     {"name": "手动优先_窗", "type": "bool", "value": False},
     {"name": "手动优先_灯", "type": "bool", "value": False},
