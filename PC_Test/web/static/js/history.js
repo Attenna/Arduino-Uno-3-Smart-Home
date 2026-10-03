@@ -173,6 +173,10 @@ async function loadHistory() {
         historyChart.update();
     }
     
+    // 先清除旧窗口统计，空结果或全 NULL 时保持占位符。
+    for (const id of ['statMax', 'statMin', 'statAvg']) {
+        document.getElementById(id).textContent = '--';
+    }
     // 更新统计
     if (dataType === 'temperature') {
         const temps = reversed.map(d => d.temperature).filter(v => v !== null && v !== undefined);

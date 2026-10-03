@@ -380,10 +380,16 @@ class SmartHomeDB:
         hours = max(1, min(int(hours), 720))
         since = (datetime.now(timezone.utc)-timedelta(hours=hours)).strftime('%Y-%m-%d %H:%M:%S')
         if hours > self.HISTORY_RETENTION_DAYS * 24:
-            # 超出原始保留期：直接读小时聚合（24 行/天，含 NULL 均值）
-            return self._rows("SELECT hour_start AS timestamp, temperature, humidity,"
-                              " samples FROM sensor_hourly WHERE hour_start>? "
-                              "ORDER BY hour_start DESC LIMIT 5000", (since,))
+            # 已归档的小时与尚未清理的原始数据共同覆盖整个窗口。
+            # 清理按完整小时迁移，正常情况下两部分的小时不会重叠。
+            return self._rows(
+                "SELECT hour_start AS timestamp, temperature, humidity, samples "
+                "FROM sensor_hourly WHERE hour_start>? UNION ALL "
+                "SELECT strftime('%Y-%m-%d %H:00:00',timestamp) AS timestamp, "
+                "AVG(temperature),AVG(humidity),COUNT(*) "
+                "FROM temperature_history WHERE timestamp>? AND source='hardware' "
+                "GROUP BY strftime('%Y-%m-%d %H:00:00',timestamp) "
+                "ORDER BY timestamp DESC LIMIT 5000", (since, since))
         # Bucket the full requested range into <= 1440 intervals, ignoring NULLs.
         bucket_seconds = max(60, int(hours)*3600//1440)
         return self._rows("SELECT MIN(timestamp) timestamp, AVG(temperature) temperature, AVG(humidity) humidity FROM temperature_history WHERE timestamp>? AND source='hardware' GROUP BY CAST(strftime('%s',timestamp) AS INTEGER)/? ORDER BY timestamp DESC",(since,bucket_seconds))

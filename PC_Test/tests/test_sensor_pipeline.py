@@ -94,20 +94,33 @@ class RetentionTests(unittest.TestCase):
         with self.db.connection() as c:
             self.assertEqual(
                 c.execute("SELECT COUNT(*) FROM temperature_history "
-                          "WHERE source='hardware' AND timestamp<?", (old,)).fetchone()[0], 0)
+                          "WHERE source='hardware' AND timestamp<=?", (old,)).fetchone()[0], 0)
             self.assertEqual(
-                c.execute("SELECT COUNT(*) FROM sensor_history WHERE received_at<?",
+                c.execute("SELECT COUNT(*) FROM sensor_history WHERE received_at<=?",
                           (old,)).fetchone()[0], 0)
             hourly = c.execute("SELECT * FROM sensor_hourly").fetchall()
         self.assertEqual(len(hourly), 1)
         self.assertAlmostEqual(hourly[0]["temperature"], 21.0)
         self.assertEqual(hourly[0]["samples"], 2)
 
-        # 超过保留窗口：读聚合；窗口内：仍读原始
+        # 超过保留窗口必须同时包含归档小时与最近的原始数据。
         agg = self.db.get_temperature_history(hours=24 * 14)
-        self.assertEqual(len(agg), 1)
+        self.assertEqual(len(agg), 2)
+        self.assertEqual([row['temperature'] for row in agg], [25.0, 21.0])
+        self.assertEqual(sum(row['samples'] for row in agg), 3)
         fresh = self.db.get_temperature_history(hours=1)
         self.assertEqual(len(fresh), 1)
+
+        # 再次维护不能重复归档或丢掉已有小时。
+        self.db.run_history_maintenance()
+        self.assertEqual(self.db.get_temperature_history(hours=24 * 14), agg)
+
+    def test_long_window_with_only_recent_samples(self):
+        self.db.ingest_sensor(frame(temperature=23, humidity=48))
+        rows = self.db.get_temperature_history(hours=720)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['temperature'], 23)
+        self.assertEqual(rows[0]['samples'], 1)
 
 
 class BridgeIngestStatsTests(unittest.TestCase):
