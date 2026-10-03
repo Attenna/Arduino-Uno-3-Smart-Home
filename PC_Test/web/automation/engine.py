@@ -157,7 +157,9 @@ class AutomationEngine:
     _LEGACY_UNMAPPABLE = ("home_enabled", "home_fan", "home_light")
     # v4 起删除的预设：touch_toggle 拆成两条条件规则，档位 cycle 类不再重建
     _REMOVED_PRESETS = ("ir_fan_cycle", "ir_light_cycle_2", "ir_light_cycle_3",
-                        "touch_toggle")
+                        "touch_toggle", "touch_to_manual", "touch_to_auto",
+                        "door_in", "door_out", "dwell_alarm", "light_mid",
+                        "access_auto_close")
     # v5：门禁鉴权事件由「只有人脸」的 face_granted 换成统一的 access_granted
     # （带 method=face/rfid/keypad）。旧事件名不再有任何广播方，因此自定义规则
     # 里的 face_granted 触发就地换成等价写法，行为不变（只有人脸通过时才触发）。
@@ -182,6 +184,8 @@ class AutomationEngine:
             presets_version = int(data.get("presets_version") or 0)
         except (TypeError, ValueError):
             presets_version = 0
+        if presets_version < 6:
+            self.global_state.set_value("g:允许自动开风扇", True, source="全屋自动化升级")
         rules_list = self._migrate_legacy_rules(
             data.get("rules") or [], presets_version, from_file=raw is not None)
         # 逐条校验：坏的只跳过这一条并告警。以前整表 validate_rules 抛错会把
@@ -324,6 +328,9 @@ class AutomationEngine:
                 dropped.append(name)
                 continue
             pid = self._PRESET_RENAMES.get(pid, pid)
+            if pid in self._REMOVED_PRESETS:
+                dropped.append(name)
+                continue
             if pid in v4_by_pid and presets_version < PRESETS_VERSION:
                 new = copy.deepcopy(v4_by_pid[pid])
                 new["id"] = rule.get("id") or None
@@ -471,6 +478,9 @@ class AutomationEngine:
     def on_snapshot(self, snap: dict) -> None:
         """A 板周期数据（字段名：temperature/humidity/light/smoke/rain/touch/motion）。"""
         try:
+            if self._snapshot_ts and time.time() - self._snapshot_ts > 10:
+                self._hold_since.clear()
+                self._hold_fired.clear()
             self._snapshot = dict(snap or {})
             self._snapshot_ts = time.time()
             for rule in list(self._iter_enabled()):
@@ -730,6 +740,10 @@ class AutomationEngine:
     def _context(self) -> dict:
         """传感器快照 + SQLite 中的执行器当前状态 + 全局状态（g: 变量）。"""
         ctx = dict(self._snapshot)
+        ctx["sensor_fresh"] = bool(self._snapshot_ts and time.time() - self._snapshot_ts <= 10)
+        if not ctx["sensor_fresh"]:
+            for key in ("temperature", "humidity", "light", "motion", "touch", "rain", "smoke"):
+                ctx.pop(key, None)
         try:
             status = self.db.get_current_status()
             for key in ("door_status", "window_status", "light_status",
@@ -786,6 +800,10 @@ class AutomationEngine:
             trig = rule["trigger"]
             rid = rule["id"]
             ctx = self._context()
+            if ctx.get(trig["sensor"]) is None:
+                self._hold_since.pop(rid, None)
+                self._hold_fired.pop(rid, None)
+                return
             now_true = self._compare(ctx.get(trig["sensor"]), trig["op"], trig["value"])
             # 进程启动后的首轮求值：只把当前真值登记为基线，**绝不触发**。
             # DB 里的执行器状态是「上次命令下发值」，B 板一旦复位（开串口拉 DTR 就
@@ -908,6 +926,8 @@ class AutomationEngine:
                     logger.warning("[自动化] 规则「%s」动作失败 %s: %s",
                                    rule["name"], action.get("device"), msg)
                     break
+            if detail and all(d.get("ok") and "重复指令跳过" in d.get("result", "") for d in detail):
+                return
             self._log(rule, fired=True, conditions_hold=hold, reason=reason,
                       ok=ok_all, detail=detail)
         finally:
@@ -936,6 +956,8 @@ class AutomationEngine:
             op = str(action.get("op") or "set")
             source = (f"规则「{rule['name']}」" if rule and rule.get("name")
                       else "规则")
+            var_before = self.global_state.get(name) or {}
+            unchanged = op == "set" and var_before.get("value") == action.get("value")
             if op == "toggle":
                 ok, res = self.global_state.toggle(name, source=source)
             elif op == "add":
@@ -946,6 +968,17 @@ class AutomationEngine:
                     name, action.get("value"), source=source)
             if not ok:
                 return False, str(res)
+            # Event-driven state assignment renews any hold timer watching that state.
+            # This lets repeated manual controls extend grace without a false pulse.
+            if op == "set" and rule and rule.get("trigger", {}).get("kind") == "event":
+                with self._lock:
+                    for waiting in self.rules:
+                        trig = waiting.get("trigger", {})
+                        if trig.get("kind") == "sensor" and trig.get("sensor") == name:
+                            self._hold_since.pop(waiting["id"], None)
+                            self._hold_fired.pop(waiting["id"], None)
+            if unchanged:
+                return True, "状态重复指令跳过"
             var = self.global_state.get(name) or {}
             return True, f"全局状态「{var.get('label', name)}」= {res}"
         if device == "http":
@@ -988,9 +1021,17 @@ class AutomationEngine:
             # 积木动作用 open/close（窗另有 normal=45°）；DB 与页面约定 open/closed/normal
             status = action["status"]
             db_status = {"open": "open", "close": "closed"}.get(status, "normal")
+            if device == "window" and status != "close":
+                ctx = self._context()
+                if ctx.get("rain") is not False or ctx.get("smoke") is not False:
+                    return False, "雨水/烟雾未确认解除，暂不自动开窗"
             method = self.bridge.control_door if device == "door" else self.bridge.control_window
             label = "前门(自动化)" if device == "door" else "客厅窗户(自动化)"
+            if device == "window" and self._last_cmd.get("window") == status and self.db.get_current_status().get("window_status") == db_status:
+                return True, "窗户重复指令跳过"
             ok, msg = method(status)
+            if ok and device == "window":
+                self._last_cmd["window"] = status
             if ok:
                 self.db.update_status(**{f"{device}_status": db_status})
                 self.db.add_door_window_event(device, label, db_status)
@@ -999,6 +1040,10 @@ class AutomationEngine:
             status = action["status"]
             brightness = action["brightness"] if status == "on" else 0
             color = action.get("color") if status == "on" else None
+            current = self.db.get_current_status()
+            target_light = (status, brightness)
+            if not color and self._last_cmd.get("light") == target_light and (current.get("light_status"), current.get("light_brightness")) == target_light:
+                return True, "灯重复指令跳过"
             if color:
                 ok, msg = self.bridge.control_light_color(
                     color, action.get("r"), action.get("g"), action.get("b"))
@@ -1015,6 +1060,7 @@ class AutomationEngine:
             else:
                 ok, msg = self.bridge.control_light(status, brightness)
             if ok:
+                self._last_cmd["light"] = target_light if not color else None
                 self.db.update_status(light_status=status, light_brightness=brightness)
                 self.db.add_light_event("客厅主灯(自动化)", status, brightness)
             return ok, msg
@@ -1040,11 +1086,10 @@ class AutomationEngine:
                 else:
                     target = self._fan_memory
             target = max(0, min(100, int(target)))
-            # 「风扇只能手动开」不再是引擎硬策略：开风扇的预设自带
-            # g:允许自动开风扇==true 条件（默认 false），改这条状态定义的「当前值」即放开
-            # （见 default_rules.py）。这里只保留同值去重，防规则反复重发占串口。
+            # 默认规则控制自动开启权限；结合当前设备状态去重，手动改动后可恢复联动。
             with self._lock:
-                dup = self._last_cmd.get("fan") == target
+                dup = (self._last_cmd.get("fan") == target
+                       and self.db.get_current_status().get("fan_speed") == target)
             if dup:
                 return True, f"风扇已是 {target}%，重复指令跳过"
             ok, msg = self.bridge.control_fan(target)

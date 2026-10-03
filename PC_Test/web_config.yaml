@@ -67,3 +67,11 @@ face:
     motion_hold: 20        # 最后一次 motion 之后继续识别的秒数（人走到门口要时间）
     cooldown: 60           # 同一张脸放行后多久内不再重复开门（人站在门口不该连开）
     min_face_px: 60        # 人脸短边小于此像素只报「离得太远」，不进识别也不记日志
+
+# 独立门口超声波：尚未接线；不得用室内 PIR 代替距离数据。
+security:
+  doorway:
+    enabled: false
+    distance_cm: 100
+    hold_sec: 30
+    max_gap_sec: 5

@@ -1,0 +1,250 @@
+import json
+import tempfile
+import threading
+import time
+import unittest
+from pathlib import Path
+from unittest.mock import Mock, patch
+
+from keypad_code import KeypadCode
+from web.automation.engine import AutomationEngine
+from web.security_monitor import DoorwayDwell, SecurityMonitor
+
+
+class HomeRulesTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.bridge = Mock(online=True)
+        for name in ("control_door", "control_window", "control_fan", "control_light"):
+            getattr(self.bridge, name).return_value = (True, "ok")
+        self.status = dict(fan_speed=0, light_status="off", light_brightness=0, window_status="normal")
+        self.db = Mock()
+        self.db.get_current_status.side_effect = lambda: dict(self.status)
+        self.db.update_status.side_effect = lambda **kw: self.status.update(kw)
+        self.engine = AutomationEngine(self.bridge, self.db, Path(self.temp.name) / "rules.json")
+        self.engine.load()
+        self.addCleanup(self.engine.stop)
+        self.rules = {r["preset"]: r for r in self.engine.rules}
+        self.snapshot(temperature=27, light=100, motion=True, rain=False, smoke=False, touch=False)
+
+    def snapshot(self, **data):
+        self.engine._snapshot.update(data)
+        self.engine._snapshot_ts = time.time()
+
+    def apply(self, preset):
+        r = self.rules[preset]
+        if self.engine._conditions_hold(r, self.engine._context()):
+            for action in r["actions"]:
+                ok, message = self.engine._perform(action, r)
+                self.assertTrue(ok, message)
+
+    def test_occupied_temperature_and_light_hysteresis(self):
+        self.apply("temp_hot"); self.apply("light_dark")
+        self.assertEqual((self.status["fan_speed"], self.status["light_status"]), (100, "on"))
+        self.snapshot(temperature=26, light=250)
+        self.apply("temp_cool"); self.apply("light_off")
+        self.assertEqual((self.status["fan_speed"], self.status["light_status"]), (100, "on"))
+        self.snapshot(temperature=25, light=300)
+        self.apply("temp_cool"); self.apply("light_off")
+        self.assertEqual((self.status["fan_speed"], self.status["light_status"]), (0, "off"))
+
+    def test_threshold_boundaries_do_not_start_devices(self):
+        self.snapshot(temperature=26, light=200)
+        self.apply("temp_hot"); self.apply("light_dark")
+        self.bridge.control_fan.assert_not_called()
+        self.bridge.control_light.assert_not_called()
+
+    def test_access_uses_one_unconditional_open_close_sequence(self):
+        r = self.rules["access_open_door"]
+        self.assertEqual(r["conditions"], [])
+        self.assertEqual(r["actions"], self.rules["touch_open_close"]["actions"])
+        self.assertNotIn("access_auto_close", self.rules)
+
+    def test_entry_rechecks_existing_hot_dark_environment(self):
+        self.engine.global_state.set_value("g:有人在家", False)
+        self.apply("temp_hot"); self.apply("light_dark")
+        self.bridge.control_fan.assert_not_called()
+        self.apply("presence_motion")
+        self.apply("temp_hot"); self.apply("light_dark")
+        self.assertEqual(self.status["fan_speed"], 100)
+        self.assertEqual(self.status["light_status"], "on")
+
+    def test_away_only_closes_light_and_fan(self):
+        self.apply("temp_hot"); self.apply("light_dark")
+        self.snapshot(motion=False)
+        self.engine.global_state.set_value("g:有人在家", False)
+        self.apply("away_close_all")
+        self.assertEqual(self.status["fan_speed"], 0)
+        self.assertEqual(self.status["light_status"], "off")
+        self.bridge.control_window.assert_not_called()
+
+    def test_rain_and_smoke_window_priority_independent_of_presence(self):
+        self.engine.global_state.set_value("g:有人在家", False)
+        self.engine.global_state.set_value("g:手动优先_窗", True)
+        for rain, smoke, expected in [(True,False,"closed"),(True,True,"closed"),
+                                      (False,True,"closed"),(False,False,"normal")]:
+            self.snapshot(rain=rain,smoke=smoke)
+            self.apply("rain_window"); self.apply("window_normal")
+            self.assertEqual(self.status["window_status"], expected)
+
+    def test_open_window_rechecks_hazard_at_execution(self):
+        self.snapshot(smoke=True)
+        self.assertFalse(self.engine._perform({"device":"window","status":"normal"})[0])
+        self.bridge.control_window.assert_not_called()
+
+    def test_stale_data_cannot_open_window_or_start_fan(self):
+        self.engine._snapshot_ts = time.time()-11
+        self.apply("window_normal"); self.apply("temp_hot")
+        self.bridge.control_window.assert_not_called()
+        self.bridge.control_fan.assert_not_called()
+
+    def test_absence_hold_and_disconnection_reset(self):
+        r = self.rules["presence_timeout"]
+        with patch.object(self.engine, "_fire") as fire, patch("web.automation.engine.time.time", return_value=1000):
+            self.engine.on_snapshot(dict(motion=False))
+            self.engine.on_snapshot(dict(motion=False))
+            fire.assert_not_called()
+            self.assertEqual(self.engine._hold_since[r["id"]],1000)
+        with patch.object(self.engine, "_fire") as fire, patch("web.automation.engine.time.time", return_value=1121):
+            # Gap means no continuous evidence of absence.
+            self.engine.on_snapshot(dict(motion=False))
+            fire.assert_not_called()
+            self.assertEqual(self.engine._hold_since[r["id"]],1121)
+        with patch.object(self.engine, "_fire") as fire:
+            for now in range(1123,1243,2):
+                with patch("web.automation.engine.time.time", return_value=now):
+                    self.engine.on_snapshot(dict(motion=False))
+            fire.assert_called_once()
+
+    def test_touch_has_open_delay_close_sequence_and_no_startup_open(self):
+        r=self.rules["touch_open_close"]
+        with patch.object(self.engine,"_fire") as fire:
+            self.engine._snapshot["touch"]=True
+            self.engine._evaluate_sensor_rule(r)
+            fire.assert_not_called()
+            self.engine._snapshot["touch"]=False; self.engine._evaluate_sensor_rule(r)
+            self.engine._snapshot["touch"]=True; self.engine._evaluate_sensor_rule(r)
+            fire.assert_called_once()
+        actions=[]
+        lock=threading.Lock(); lock.acquire()
+        with patch.object(self.engine,"_perform",side_effect=lambda a,r:(actions.append(a) is None,"ok")):
+            self.engine._run_actions(r,r["actions"],True,"touch",lock)
+        self.assertEqual(actions,[{"device":"door","status":"open"},
+                                  {"device":"delay","seconds":10},
+                                  {"device":"door","status":"close"}])
+
+    def test_manual_grace_is_immediate_and_repeated_event_renews_it(self):
+        r=self.rules["manual_mark_fan"]
+        self.engine._perform(r["actions"][0],r)
+        self.apply("temp_hot")
+        self.bridge.control_fan.assert_not_called()
+        waiting=self.rules["manual_clear_fan"]["id"]
+        self.engine._hold_since[waiting]=10
+        self.engine._perform(r["actions"][0],r)
+        self.assertNotIn(waiting,self.engine._hold_since)
+
+    def test_manual_change_invalidates_command_deduplication(self):
+        self.apply("temp_hot"); self.apply("temp_hot")
+        self.bridge.control_fan.assert_called_once()
+        self.status["fan_speed"]=0
+        self.apply("temp_hot")
+        self.assertEqual(self.bridge.control_fan.call_count,2)
+
+    def test_upgrade_removes_conflicting_presets_and_preserves_custom_rules(self):
+        old={"id":"old", "preset":"touch_to_auto", "name":"old", "enabled":True,
+             "trigger":{"kind":"sensor","sensor":"touch","op":"==","value":True},
+             "actions":[{"device":"door","status":"open"}]}
+        custom=dict(old,id="custom",preset=None,name="custom")
+        self.engine.rules_path.write_text(json.dumps({"presets_version":5,"rules":[old,custom]}))
+        self.engine.load()
+        self.assertNotIn("touch_to_auto",[r.get("preset") for r in self.engine.rules])
+        self.assertIn("custom",[r["id"] for r in self.engine.rules])
+        self.assertTrue(self.engine.global_state.values()["g:允许自动开风扇"])
+
+
+class KeypadTests(unittest.TestCase):
+    def test_complete_attempts_and_success_reset(self):
+        keypad=KeypadCode("1111")
+        for attempt in range(1,5):
+            for digit in "222": self.assertIsNone(keypad.feed(digit))
+            self.assertEqual(keypad.feed("2")["failures"],attempt)
+        for digit in "111": keypad.feed(digit)
+        self.assertEqual(keypad.feed("1")["failures"],0)
+        for digit in "222": keypad.feed(digit)
+        self.assertEqual(keypad.feed("2")["failures"],1)
+
+    def test_clear_submit_and_timeout(self):
+        keypad=KeypadCode("1111",window=10)
+        keypad.feed("1",0);keypad.feed("*",1)
+        self.assertIsNone(keypad.feed("#",2))
+        keypad.feed("1",3)
+        self.assertEqual(keypad.feed("#",4)["failures"],1)
+        keypad.feed("1",5)
+        self.assertIsNone(keypad.feed("1",20))
+        self.assertEqual(keypad.buffer,"1")
+
+    def test_gateway_emits_results_without_direct_actuation_or_password(self):
+        from mcp_home_server import HomeController
+        from collections import deque
+        controller=HomeController.__new__(HomeController)
+        controller._snapshot_lock=threading.Lock();controller._events=deque(maxlen=64)
+        for digit in "2222222222221111": controller._handle_keypad(digit)
+        events=list(controller._events)
+        self.assertEqual([e["failures"] for e in events if e["event"]=="password_result"],[1,2,3,0])
+        self.assertNotIn("1111",json.dumps(events))
+
+
+class SecurityTests(unittest.TestCase):
+    def test_doorway_dwell_distinct_disabled_and_gaps(self):
+        disabled=DoorwayDwell()
+        self.assertFalse(disabled.feed(50,0));self.assertFalse(disabled.feed(50,60))
+        dwell=DoorwayDwell(enabled=True)
+        for now in range(0,30,2): self.assertFalse(dwell.feed(100,now))
+        self.assertTrue(dwell.feed(100,30));self.assertFalse(dwell.feed(100,32))
+        self.assertFalse(dwell.feed(101,34))
+        self.assertFalse(dwell.feed(80,36));self.assertFalse(dwell.feed(80,70))
+        for invalid in (None,0,-1,float("nan"),True): self.assertFalse(dwell.feed(invalid,72))
+
+    def test_third_and_later_failures_record_even_camera_unavailable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            monitor=SecurityMonitor(directory)
+            for failures in range(1,5):
+                monitor.on_event(dict(event="password_result",status="denied",failures=failures))
+            self.assertEqual(monitor.pending.qsize(),2)
+            while not monitor.pending.empty(): monitor.capture(monitor.pending.get_nowait())
+            events=monitor.events()
+            self.assertEqual(len(events),2)
+            self.assertTrue(all(e["capture"]=="failed" and e["status"]=="suspicious" for e in events))
+
+    def test_successful_photo_and_indoor_motion_ignored(self):
+        with tempfile.TemporaryDirectory() as directory:
+            monitor=SecurityMonitor(directory,{"camera":{"stream_url":"http://camera/video_feed"},
+                                               "security":{"doorway":{"enabled":True}}})
+            monitor.on_snapshot({"motion":True,"distance":20})
+            self.assertEqual(monitor.events(),[])
+            event=monitor.record("keypad_failures",{"failures":3})
+            response=Mock();response.__enter__=Mock(return_value=response);response.__exit__=Mock(return_value=False)
+            response.read.return_value=b"\xff\xd8photo\xff\xd9"
+            with patch("web.security_monitor.urllib.request.urlopen",return_value=response): monitor.capture(event)
+            self.assertEqual(monitor.events()[0]["capture"],"saved")
+            self.assertTrue((Path(directory)/(event["id"]+".jpg")).exists())
+
+    def test_restart_marks_pending_capture_failed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            monitor=SecurityMonitor(directory)
+            monitor.record("keypad_failures",{"failures":3})
+            replacement=SecurityMonitor(directory)
+            replacement.start()
+            replacement.stop()
+            self.assertEqual(replacement.events()[0]["capture"],"failed")
+
+    def test_security_endpoints_require_login(self):
+        from web.app import create_app
+        app=create_app({"serial":{"enabled":False}},start_hardware=False)
+        client=app.test_client()
+        self.assertEqual(client.get("/api/security/events").status_code,401)
+        self.assertEqual(client.get("/api/security/images/"+"a"*32).status_code,401)
+        with client.session_transaction() as session: session["user"]="test-admin"
+        self.assertEqual(client.get("/security").status_code,200)
+        self.assertEqual(client.get("/api/security/images/bad").status_code,404)
