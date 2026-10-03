@@ -4,6 +4,42 @@
 let voiceTimer = null;
 let liveES = null;
 
+const LIVE_STATE = {
+    IDLE: '待唤醒', ACK: '提示音中', COMMAND: '聆听指令',
+    THINKING: '处理中', FOLLOWUP: '可追问',
+};
+const STATE_DETAIL = {
+    IDLE: '等待唤醒词，或点击“唤醒并说话”。',
+    ACK: '正在处理唤醒提示，此时尚未监听。',
+    COMMAND: '麦克风正在监听，请开始说话。',
+    THINKING: '正在识别或调用模型，麦克风已关闭。',
+    FOLLOWUP: '回答已经结束，可直接继续追问。',
+};
+
+function paintVoiceState(state, label, info = null) {
+    const resolved = label || LIVE_STATE[state] || state || '离线';
+    const badge = document.getElementById('voiceStateBadge');
+    const text = document.getElementById('voiceStateText');
+    const detail = document.getElementById('voiceStateDetail');
+    if (badge) {
+        badge.textContent = resolved;
+        badge.className = 'card-badge'
+            + (state ? (state === 'IDLE' ? '' : ' warning') : ' danger');
+    }
+    if (text) text.textContent = resolved;
+    if (detail) detail.textContent = STATE_DETAIL[state] || '语音服务当前不可用。';
+    document.querySelectorAll('#voiceStateFlow [data-state]').forEach((step) => {
+        step.classList.toggle('active', step.dataset.state === state);
+    });
+    if (info) {
+        const runtime = document.getElementById('voiceRuntimeInfo');
+        if (runtime) {
+            runtime.textContent = [info.audio_output, info.context]
+                .filter(Boolean).join(' · ');
+        }
+    }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     updateClock();
     setInterval(updateClock, 1000);
@@ -49,17 +85,10 @@ async function refreshVoiceStatus() {
     }
     const dot = document.getElementById('voiceDot');
     const nav = document.getElementById('voiceNavText');
-    const badge = document.getElementById('voiceStateBadge');
-    const text = document.getElementById('voiceStateText');
-
     if (dot) dot.className = 'status-dot' + (data.online ? ' online' : '');
     if (nav) nav.textContent = data.online ? t('voice.online') : t('voice.offline');
-    if (badge) {
-        badge.textContent = data.state_label || '--';
-        badge.className = 'card-badge'
-            + (data.online ? (data.state === 'IDLE' ? '' : ' warning') : ' danger');
-    }
-    if (text) text.textContent = data.state_label || '--';
+    paintVoiceState(data.online ? data.state : null,
+        data.online ? data.state_label : '离线', data.info || null);
     setVoiceError(data.online ? '' : (data.error || ''));
 }
 
@@ -113,11 +142,6 @@ async function sayVoice() {
 }
 
 // ==================== 对话实况（SSE，同源 /api/voice/events）====================
-// 语音助手状态机 → 面板文案，与后端 STATE_LABELS 对齐；追问窗口 FOLLOWUP 用绿色。
-const LIVE_STATE = {
-    IDLE: '待唤醒', COMMAND: '聆听指令', THINKING: '思考中', FOLLOWUP: '可追问',
-};
-
 let liveCurBot = null;   // 当前正在流式追加的助手气泡节点
 
 function liveBadge(text, cls) {
@@ -152,6 +176,9 @@ function renderLive(e) {
         case 'partial':
             setLivePartial(e.text);
             break;
+        case 'speech_start':
+            setLivePartial('已检测到讲话，正在等待你说完…');
+            break;
         case 'user':
             setLivePartial('');
             liveCurBot = null;
@@ -166,6 +193,7 @@ function renderLive(e) {
             break;
         case 'turn_end':
             liveCurBot = null;
+            if (e.cancelled) addLive('lv-sys', '上一轮已取消，不会写入上下文。');
             break;
         case 'tool': {
             const args = JSON.stringify(e.arguments || {});
@@ -185,19 +213,13 @@ function renderLive(e) {
 // state 事件：既刷新实况徽标，也同步主状态徽标/导航点（与轮询一致）
 function applyLiveState(state) {
     const label = LIVE_STATE[state] || state || '离线';
-    const badge = document.getElementById('voiceStateBadge');
-    const text = document.getElementById('voiceStateText');
-    if (badge) {
-        badge.textContent = label;
-        badge.className = 'card-badge' + (state ? (state === 'IDLE' ? '' : ' warning') : ' danger');
-    }
-    if (text) text.textContent = label;
+    paintVoiceState(state, label);
 }
 
 function handleLive(e) {
     if (e.type === 'hello') {
         liveBadge(t('voice.live_conn'), '');
-        applyLiveState(e.state);
+        paintVoiceState(e.state, LIVE_STATE[e.state], e.info || null);
         for (const h of (e.history || [])) renderLive(h);
         return;
     }
