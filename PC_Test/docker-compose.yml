@@ -117,6 +117,8 @@ services:
       - /dev/snd:/dev/snd
     volumes:
       - ./models:/app/models:ro
+      # 对话上下文 MCP 持久化（与 web 共用 data 卷目录，不包含凭据）
+      - ./data:/app/data
       # 改配置无需重建镜像（只读挂载；文件须存在于宿主机）
       - ./voice_config.yaml:/app/voice_config.yaml:ro
     environment:
