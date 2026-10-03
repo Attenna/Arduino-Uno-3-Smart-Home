@@ -329,6 +329,13 @@ function renderWatcher() {
 function diagItems() {
     const d = diag || {};
     const items = [];
+    if (d.model_mismatch) {
+        // 库与模型不匹配时一张脸都认不出，比个别人员缺照片严重，排在最前
+        items.push(['bad', t('access.diag_model_block',
+                             d.model_mismatch.library, d.model_mismatch.current)]);
+    } else if (d.recognition_block) {
+        items.push(['bad', d.recognition_block]);
+    }
     (d.orphan_identities || []).forEach(name =>
         items.push(['warn', t('access.diag_orphan', name)]));
     (d.persons_without_photos || []).forEach(p =>

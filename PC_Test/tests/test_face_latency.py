@@ -130,6 +130,17 @@ class RecognizePathTests(unittest.TestCase):
         engine.recognize_jpeg(jpeg(100, 100))
         self.assertEqual(len(engine.recognizer.calls), 1)
 
+    def test_blocked_recognition_pays_no_embedding(self):
+        """认人被停用（库与模型不匹配）时不该再为每张脸付提特征的钱。"""
+        engine = build_engine([(10, 10, 130, 130), (10, 160, 50, 200)])
+        engine.recognition_block = "人脸库由模型 X 建立，当前模型是 Y"
+        result = engine.recognize_jpeg(jpeg(240, 240), min_face_px=20)
+        self.assertEqual(engine.recognizer.calls, [])
+        self.assertEqual(result["mode"], "yolov8")
+        # 检测照常：框还在，页面仍能说「站得太远」，只是不比对身份
+        self.assertTrue(result["detected"])
+        self.assertEqual(len(result["faces"]), 2)
+
     def test_throttle_window_is_visible_to_the_watcher(self):
         """哨兵要靠这个属性把两轮下限抬到不低于节流窗口。"""
         engine = build_engine()

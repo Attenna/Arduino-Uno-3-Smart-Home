@@ -238,4 +238,8 @@ def access_diagnostics():
         "watcher": face_watcher.state(),
         "recent_repeats": access_guard.recent_repeats(),
         "recognition": dict(face_engine.config.get("recognition", {}) or {}),
+        # 换模型而库没重建 → 整库失效，比个别人员缺照片严重，单独列出来
+        "model_mismatch": face_engine.model_mismatch(),
+        # 其它让认人停用的原因（比如模型文件没就位）：句子由后端给，前端原样显示
+        "recognition_block": face_engine.recognition_block,
     })

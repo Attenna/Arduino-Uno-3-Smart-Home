@@ -26,7 +26,7 @@ import time
 from pathlib import Path
 
 from ..config import (AUTHORIZED_DIR, EMBEDDINGS_PATH, FACE_MODEL_PATH,
-                      RECOGNITION_MODEL_PATH, FACE_CONFIG_PATH,
+                      PC_TEST_DIR, RECOGNITION_MODEL_PATH, FACE_CONFIG_PATH,
                       load_config)
 from ..utils import ConnectionHealth, RequestThrottler, safe_base64_decode
 
@@ -45,6 +45,8 @@ MAX_ENROLL_FRAMES = 12
 MIN_FACE_SIDE = 56
 # 每个身份最多参与原型计算的注册照张数（取文件名最新的 N 张）
 MAX_IDENTITY_IMAGES = 20
+# 老库自检的判定线：跨模型余弦实测 0.067~0.077，同模型同人 ≥0.75，取中间偏保守的值
+CROSS_MODEL_CEILING = 0.30
 # 单次录入的图像体积上限（MB）
 ENROLL_IMAGE_MAX_MB = 4.0
 
@@ -68,9 +70,12 @@ class FaceEngine:
         self.config_path = str(config_path or FACE_CONFIG_PATH)
         self.web_cfg = (web_cfg or load_config()).get("face", {})
         self.config = self._load_config()
+        self.recognition_model_path = self._recognition_model_path()
         self.detector = None
         self.recognizer = None
         self._model_loaded = False
+        # 库与模型不匹配时的可读原因；非空 = 认人停用（检测仍照常）
+        self.recognition_block: str | None = None
         self.simulation_mode = self.config.get("simulation_mode", True)
         self.throttler = RequestThrottler(
             min_interval=float(self.config.get("recognition_interval", 1.5)))
@@ -131,6 +136,19 @@ class FaceEngine:
             json.dump(config, f, ensure_ascii=False, indent=2)
         self.config = config
 
+    def _recognition_model_path(self) -> Path:
+        """嵌入模型文件：只认 web_config.yaml，face_config.json 里那句不作数。
+
+        那个 json 是运行期写的，可能带着另一台机器的绝对路径（移植/挂载场景常见）。
+        yaml 是部署时人审过的，换模型（174MB 的 iresnet50 → 13MB 的 MobileFaceNet）
+        或回滚都只改这一行；相对路径按 PC_Test/ 解析（容器里就是 /app）。
+        """
+        raw = str((self.web_cfg.get("recognition") or {}).get("model_path") or "").strip()
+        if not raw:
+            return RECOGNITION_MODEL_PATH
+        path = Path(raw)
+        return path if path.is_absolute() else PC_TEST_DIR / path
+
     # ==================== 模型加载 ====================
 
     def reload_model(self) -> bool:
@@ -171,8 +189,8 @@ class FaceEngine:
         # 识别器可选：embeddings 存在才启用
         recog_cfg = self.config.get("recognition", {})
         if recog_cfg.get("enabled", True):
-            # 路径一律以代码常量为准（按当前机器/容器解析）；
-            # data/face/face_config.json 可能存着另一台机器的绝对路径（移植/挂载场景）
+            # 模型路径取自 web_config.yaml（见 _recognition_model_path）；
+            # data/face/face_config.json 里那句可能存着另一台机器的绝对路径，不作数
             embeddings = str(EMBEDDINGS_PATH)
             if Path(embeddings).exists():
                 try:
@@ -180,18 +198,18 @@ class FaceEngine:
 
                     self.recognizer = FaceRecognizer(
                         embeddings_path=embeddings,
-                        model_path=str(RECOGNITION_MODEL_PATH),
+                        model_path=str(self.recognition_model_path),
                         method=recog_cfg.get("method", "simple_grayscale_cosine"),
                         similarity_threshold=float(
                             recog_cfg.get("similarity_threshold", 0.5)),
                         image_size=int(recog_cfg.get("image_size", 112)),
                     )
-                    logger.info("人脸身份识别已启用: %s（%d 人）",
-                                self.recognizer.method,
-                                len(self.recognizer.identities))
+                    self._check_library_model()
                 except Exception as e:
                     logger.warning("嵌入识别器不可用（仅检测）: %s", e)
                     self.recognizer = None
+                    # 认不出人是「模型没起来」还是「根本没这个人」，前端得区分开
+                    self.recognition_block = f"人脸身份识别不可用：{e}"
             else:
                 logger.info("未找到 %s，仅做人脸检测；运行 enroll_faces.py 启用身份识别",
                             embeddings)
@@ -201,11 +219,82 @@ class FaceEngine:
         logger.info("YOLOv8 人脸模型加载成功: %s", model_path)
         return True
 
+    def _check_library_model(self) -> None:
+        """库里的原型必须是当前这个 ONNX 算出来的，否则比对结果毫无意义。
+
+        跨模型的 512 维向量之间余弦相似度接近噪声。不拦的话服务照常启动、
+        日志一句不错，只是谁都进不了门 —— 换模型必然踩的坑得在这里显式失败。
+        """
+        rec = self.recognizer
+        if rec is None:
+            self.recognition_block = None
+            return
+        current = rec.model_fingerprint
+        stored = rec.library_fingerprint
+        if stored and stored != current:
+            self.recognition_block = (
+                f"人脸库由模型 {stored} 建立，当前模型是 {current}；"
+                "跨模型比对无效，请用 scripts/enroll_faces.py 重建人脸库")
+            logger.error("[人脸] 库与模型不匹配，认人已停用: %s", self.recognition_block)
+            return
+        if not stored and not self._verify_legacy_library():
+            return
+        self.recognition_block = None
+        logger.info("人脸身份识别已启用: %s（%d 人）", rec.method, len(rec.identities))
+
+    def _verify_legacy_library(self) -> bool:
+        """没写指纹的老库：拿注册照重算一遍，认不出是谁建的就停用认人。返回能否继续认人。
+
+        派上现存的库正是这种库（iresnet50 时代建的，文件里只有 method/image_size）。
+        光「按当前模型继续认人」的话，换模型没重建库的表现就是静默全拒 —— 那正是
+        本函数要消灭的故障，不能只留一行 warning。
+        判不了（照片读不出来）时宁可让它继续工作：把一扇本来能开的门莫名停下，
+        比一次可诊断的停用更糟。
+        """
+        from .recognizer import probe_library_similarity
+
+        rec = self.recognizer
+        similarity = probe_library_similarity(rec, AUTHORIZED_DIR)
+        current = rec.model_fingerprint
+        if similarity is None:
+            logger.warning("[人脸] 老库没记模型指纹，也没有可读的注册照可自检，"
+                           "按当前模型 %s 认人", current)
+            return True
+        if similarity < CROSS_MODEL_CEILING:
+            self.recognition_block = (
+                f"人脸库没记模型指纹，自检发现注册照与当前模型 {current} 的相似度只有"
+                f" {similarity:.2f}（跨模型的典型表现）；"
+                "请用 scripts/enroll_faces.py 重建人脸库")
+            logger.error("[人脸] 老库自检判定跨模型，认人已停用: %s", self.recognition_block)
+            return False
+        if similarity < rec.similarity_threshold:
+            logger.warning("[人脸] 老库自检只有 %.2f，低于阈值 %.2f（注册照可能不是人脸裁片）；"
+                           "暂按当前模型 %s 认人", similarity, rec.similarity_threshold,
+                           current)
+            return True
+        self._stamp_library_fingerprint(similarity)
+        return True
+
+    def _stamp_library_fingerprint(self, similarity: float) -> None:
+        """自检通过就把当前指纹写回库：下次启动不必再猜，也省掉这笔提特征的钱。"""
+        from .recognizer import save_embedding_database
+
+        rec = self.recognizer
+        rec.database["model_fingerprint"] = rec.model_fingerprint
+        rec.library_fingerprint = rec.model_fingerprint
+        logger.info("[人脸] 老库自检通过（相似度 %.2f），已补写模型指纹 %s",
+                    similarity, rec.model_fingerprint)
+        try:
+            save_embedding_database(rec.database, rec.embeddings_path)
+        except OSError as exc:
+            logger.warning("[人脸] 指纹写回人脸库失败（不影响认人）: %s", exc)
+
     def _fallback_simulation(self) -> None:
         self.detector = None
         self.recognizer = None
         self._model_loaded = False
         self.simulation_mode = True
+        self.recognition_block = None
         self.config["simulation_mode"] = True
 
     def warmup(self) -> bool:
@@ -340,8 +429,11 @@ class FaceEngine:
             detections = self.detector.detect(frame)
             detect_ms = (time.perf_counter() - t0) * 1000.0
 
-            targets = (self._embed_targets(detections, min_face_px)
-                       if self.recognizer is not None else set())
+            # 认人被停用（库与模型不匹配 / 识别器没起来）时一张脸都不必提特征：
+            # 比对结果毫无意义，付的钱却是每张线性叠加的
+            recognizing = (self.recognizer is not None
+                           and self.recognition_block is None)
+            targets = self._embed_targets(detections, min_face_px) if recognizing else set()
             faces: list[dict] = []
             best = None  # (优先授权身份的识别分, 检测置信度, face_info)
             embed_ms = 0.0
@@ -380,7 +472,7 @@ class FaceEngine:
             if best is not None:
                 self.health.record_success()
                 info = best[1]
-                mode = "recognition" if self.recognizer is not None else "yolov8"
+                mode = "recognition" if recognizing else "yolov8"
                 return {
                     "detected": True,
                     "face_id": info["face_id"],
@@ -435,7 +527,8 @@ class FaceEngine:
             "model_loaded": self._model_loaded,
             "simulation_mode": self.simulation_mode,
             "mode": "simulation" if self.simulation_mode else (
-                "recognition" if self.recognizer is not None else "yolov8"),
+                "recognition" if (self.recognizer is not None
+                                  and self.recognition_block is None) else "yolov8"),
             "model_path": self.config.get("model_path", ""),
             "confidence_threshold": self.config.get("confidence_threshold", 0.4),
             "camera_device": self.config.get("camera_device", 0),
@@ -446,6 +539,14 @@ class FaceEngine:
                            else recog_cfg.get("method")),
                 "identities": (len(self.recognizer.identities)
                                if self.recognizer is not None else 0),
+                "model_file": str(self.recognition_model_path),
+                # 换模型而库没重建时，认人会停用并把原因顶到前端
+                "blocked": self.recognition_block is not None,
+                "block_reason": self.recognition_block,
+                "model_fingerprint": (self.recognizer.model_fingerprint
+                                      if self.recognizer is not None else None),
+                "library_fingerprint": (self.recognizer.library_fingerprint
+                                        if self.recognizer is not None else None),
             },
         }
         status.update(self.health.get_status())
@@ -473,6 +574,19 @@ class FaceEngine:
     def identity_count(self) -> int:
         return (len(self.recognizer.identities or [])
                 if self.recognizer is not None else 0)
+
+    def model_mismatch(self) -> dict | None:
+        """库里写过的指纹与当前模型不同时给出两份指纹，其余情况返回 None。
+
+        句子交给前端按界面语言拼，日志里用 `_check_library_model` 那句中文。
+        老库自检（没有可比对的指纹）失败走 recognition_block，不冒充这种结构。
+        """
+        rec = self.recognizer
+        if rec is None or not rec.library_fingerprint:
+            return None
+        if rec.library_fingerprint == rec.model_fingerprint:
+            return None
+        return {"library": rec.library_fingerprint, "current": rec.model_fingerprint}
 
     def library_identities(self) -> list[str]:
         """人脸目录里到底有哪些身份（诊断孤儿用：认得出但名单里没有的人）。"""
@@ -523,13 +637,16 @@ class FaceEngine:
         method = str(recog_cfg.get("method", "simple_grayscale_cosine"))
         size = int(recog_cfg.get("image_size", 112))
         return (create_embedding_extractor(method=method,
-                                           model_path=str(RECOGNITION_MODEL_PATH),
+                                           model_path=str(self.recognition_model_path),
                                            image_size=size), method, size)
 
-    @staticmethod
-    def _empty_database(method: str, image_size: int) -> dict:
+    def _empty_database(self, method: str, image_size: int) -> dict:
+        from .recognizer import model_fingerprint
+
         return {"version": 2, "method": method,
-                "model_path": str(RECOGNITION_MODEL_PATH),
+                "model_path": str(self.recognition_model_path),
+                "model_fingerprint": model_fingerprint(
+                    method, self.recognition_model_path),
                 "image_size": image_size, "identities": []}
 
     def _apply_database(self, database: dict) -> None:
@@ -537,6 +654,9 @@ class FaceEngine:
         if self.recognizer is not None:
             self.recognizer.database = database
             self.recognizer.identities = database["identities"]
+            # 录完脸库里就带着指纹了（老库借此补写），状态里得显示新的那份
+            self.recognizer.library_fingerprint = str(
+                database.get("model_fingerprint") or "")
             return
         self._load_model()
 
@@ -567,7 +687,7 @@ class FaceEngine:
 
         只重算这一个身份：全库重建（scripts/enroll_faces.py）留给离线场景。
         """
-        from .recognizer import build_identity, save_embedding_database
+        from .recognizer import build_identity, model_fingerprint, save_embedding_database
 
         identity_dir = self._identity_dir(name)
         if self.simulation_mode or self.detector is None:
@@ -577,6 +697,9 @@ class FaceEngine:
                     "error": "人脸识别模型未加载（当前为模拟模式），无法录入真实人脸"}
         if not self.config.get("recognition", {}).get("enabled", True):
             return {"ok": False, "error": "人脸配置里 recognition.enabled=false，身份识别已关闭"}
+        if self.recognition_block:
+            # 库里是别的模型的原型，再录一张就成了混着两种向量的库：谁也认不出谁
+            return {"ok": False, "error": self.recognition_block}
 
         import cv2
         import numpy as np
@@ -635,6 +758,9 @@ class FaceEngine:
                 else self._empty_database(method, image_size)
             database["method"] = method
             database["image_size"] = image_size
+            # 顺带给老库补上指纹：录入用的就是当前模型，库里的原型从此有据可查
+            database["model_fingerprint"] = model_fingerprint(
+                method, self.recognition_model_path)
             database["identities"] = [
                 i for i in (database.get("identities") or [])
                 if str(i.get("name")) != identity["name"]] + [identity]

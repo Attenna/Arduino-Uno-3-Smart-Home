@@ -13,6 +13,7 @@
 | **接口 / 配置** | [api.md](api.md) | 全部编程接口（Web REST / 语音 HTTP / MCP 工具 / LLM / 摄像头） |
 | | [extension-guide.md](extension-guide.md) | 二次开发接口指南（对外表面、四条扩展缝、加积木的清单与落地顺序） |
 | | [configuration.md](configuration.md) | 配置项参考（yaml / .env / 环境变量 / Config.h） |
+| | [face-models.md](face-models.md) | 人脸嵌入模型：实测延迟与判别余量、下载校验、换模型后重建人脸库 |
 | **实战 / 排障** | [ha-automation-examples.md](ha-automation-examples.md) | Home Assistant 自动化实战 |
 | | [hardware-debug-notes.md](hardware-debug-notes.md) | 硬件踩坑复盘、排障速查 |
 | | [faq.md](faq.md) | 常见问题解答（38 问） |
