@@ -78,6 +78,14 @@ class TtsPlayer:
             raise ValueError(f"TTS 配置校验失败: {tts_dir}")
         self.tts = sherpa_onnx.OfflineTts(tts_cfg)
         self.sample_rate = self.tts.sample_rate
+        try:
+            self.output_available = any(
+                int(device.get("max_output_channels", 0)) > 0
+                for device in sd.query_devices())
+        except Exception:
+            self.output_available = False
+        self.output_status = ("扬声器可用" if self.output_available else
+                              "未检测到播放设备，回复仅显示在 UI")
 
         self._q: "queue.Queue[object]" = queue.Queue()
         self._buf: list[str] = []        # 跨 token 的待切分缓冲
@@ -171,7 +179,7 @@ class TtsPlayer:
 
     def _play_chirp(self, c: "_Chirp") -> None:
         import numpy as np
-        if self._cancel.is_set():
+        if self._cancel.is_set() or not self.output_available:
             return
         rate = 44100
         n = int(rate * c.ms / 1000)
@@ -192,7 +200,7 @@ class TtsPlayer:
             self._playing.clear()
 
     def _play_sentence(self, text: str) -> None:
-        if self._cancel.is_set():
+        if self._cancel.is_set() or not self.output_available:
             return
         # 1) sherpa VITS 本地合成（同步调用，3B 级句子通常 <0.5s）
         try:

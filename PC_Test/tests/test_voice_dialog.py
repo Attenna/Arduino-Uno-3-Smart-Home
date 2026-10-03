@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import numpy as np
 
 from sherpa_listener import SherpaListener
+from tts_player import TtsPlayer
 from voice_assistant import VoiceAssistant, validate_tool_arguments
 from voice_context_server import ConversationContextStore
 
@@ -83,6 +84,16 @@ class ListenerGateTests(unittest.TestCase):
         self.assertEqual(events, [])
         listener.kws_stream.accept_waveform.assert_called_once()
         listener.asr_stream.accept_waveform.assert_not_called()
+
+
+class TtsOutputTests(unittest.TestCase):
+    def test_missing_output_device_skips_synthesis(self):
+        player = TtsPlayer.__new__(TtsPlayer)
+        player.output_available = False
+        player._cancel = threading.Event()
+        player.tts = Mock()
+        player._play_sentence("测试回复")
+        player.tts.generate.assert_not_called()
 
 
 class ListeningStateTests(unittest.TestCase):

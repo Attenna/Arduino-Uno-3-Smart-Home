@@ -19,6 +19,7 @@ bp = Blueprint("voice", __name__)
 # 语音助手状态机 → 中文标签（面板只读展示）
 STATE_LABELS = {
     "IDLE": "待唤醒",
+    "ACK": "提示音中",
     "COMMAND": "聆听指令中",
     "THINKING": "思考中",
     "FOLLOWUP": "追问窗口",
@@ -38,11 +39,15 @@ def voice_status():
         return jsonify({"online": False, "state": None, "state_label": "离线",
                         "error": text}), 503
     try:
-        state = json.loads(text).get("state")
+        payload = json.loads(text)
+        state = payload.get("state")
+        info = payload.get("info") if isinstance(payload.get("info"), dict) else {}
     except Exception:                            # noqa: BLE001
         state = None
+        info = {}
     return jsonify({"online": True, "base_url": base, "state": state,
-                    "state_label": STATE_LABELS.get(state, state or "未知")})
+                    "state_label": STATE_LABELS.get(state, state or "未知"),
+                    "info": info})
 
 
 @bp.route("/api/voice/wake", methods=["POST"])
@@ -50,7 +55,13 @@ def voice_wake():
     ok, text = voice_client.voice_request(_base_url(), "/trigger")
     if not ok:
         return jsonify({"ok": False, "error": text}), 502
-    return jsonify({"ok": True, "message": "已唤醒，请说指令", "state": "COMMAND"})
+    try:
+        state = json.loads(text).get("state") or "ACK"
+    except Exception:                            # noqa: BLE001
+        state = "ACK"
+    return jsonify({"ok": True, "message": "已唤醒，提示结束后开始监听",
+                    "state": state,
+                    "state_label": STATE_LABELS.get(state, state)})
 
 
 @bp.route("/api/voice/say", methods=["POST"])

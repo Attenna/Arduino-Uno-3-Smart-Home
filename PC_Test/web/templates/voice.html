@@ -68,6 +68,15 @@
                         <span data-i18n="voice.state">当前状态</span>：
                         <strong id="voiceStateText">--</strong>
                     </div>
+                    <div id="voiceStateDetail" class="voice-state-detail">正在连接语音服务…</div>
+                    <div id="voiceStateFlow" class="voice-state-flow" aria-label="对话状态">
+                        <span data-state="IDLE">待唤醒</span>
+                        <span data-state="ACK">提示音</span>
+                        <span data-state="COMMAND">聆听</span>
+                        <span data-state="THINKING">处理</span>
+                        <span data-state="FOLLOWUP">追问</span>
+                    </div>
+                    <div id="voiceRuntimeInfo" class="voice-runtime-info"></div>
                     <div class="voice-state-line" id="voiceErrorLine" style="display:none">
                         <span data-i18n="voice.error">错误</span>：<span id="voiceError"></span>
                     </div>
@@ -125,6 +134,6 @@
     </main>
 
     <script src="{{ url_for('static', filename='js/lang.js') }}?v=20261003e"></script>
-    <script src="{{ url_for('static', filename='js/voice.js') }}?v=20261002"></script>
+    <script src="{{ url_for('static', filename='js/voice.js') }}?v=20261003b"></script>
 </body>
 </html>

@@ -17,7 +17,7 @@ os.environ.update(SMART_HOME_ADMIN_USER="test-admin",
                   SMART_HOME_SERVICE_TOKEN="t" * 48)
 
 from web.app import create_app
-from web.api import access, devices, status
+from web.api import access, devices, status, voice
 from web.automation.engine import AutomationEngine
 from web.hardware import McpHardwareBridge
 import camera_stream
@@ -84,6 +84,19 @@ class ApiTests(unittest.TestCase):
         with patch.object(status.db, "get_current_status", return_value={"sensor_online": True, "output_online": True}), \
              patch.object(status.extensions, "bridge", SimpleNamespace(online=True)):
             self.assertEqual(self.client.get("/api/ready").status_code, 200)
+
+    def test_voice_status_and_wake_expose_ack_and_runtime_info(self):
+        self.login()
+        upstream = '{"state":"ACK","info":{"audio_output":"UI only"}}'
+        with patch.object(voice.voice_client, "voice_request",
+                          return_value=(True, upstream)):
+            status_response = self.client.get("/api/voice/status")
+            self.assertEqual(status_response.json["state_label"], "提示音中")
+            self.assertEqual(status_response.json["info"]["audio_output"], "UI only")
+            wake_response = self.client.post(
+                "/api/voice/wake", headers={"Origin": "http://localhost"})
+            self.assertEqual(wake_response.json["state"], "ACK")
+            self.assertEqual(wake_response.json["state_label"], "提示音中")
 
     def test_ac_resends_unchanged_state(self):
         self.login()
