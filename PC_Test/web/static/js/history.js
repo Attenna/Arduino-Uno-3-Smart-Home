@@ -96,10 +96,33 @@ function initHistoryChart() {
     });
 }
 
+// 统计概览区：湿度显示湿度文案与 % 单位；门窗/灯光不显示这四个统计块
+function applyStatView(dataType) {
+    const grid = document.getElementById('statGrid');
+    if (grid) {
+        grid.style.display = (dataType === 'door_window' || dataType === 'light') ? 'none' : '';
+    }
+    const isHumidity = dataType === 'humidity';
+    const unit = isHumidity ? '%' : '°C';
+    ['max', 'min', 'avg'].forEach(name => {
+        const suffix = name.charAt(0).toUpperCase() + name.slice(1);
+        const key = isHumidity ? `history.stat_${name}_humidity` : `history.stat_${name}`;
+        const label = document.getElementById(`stat${suffix}Label`);
+        if (label) {
+            label.setAttribute('data-i18n', key);
+            label.textContent = t(key);
+        }
+        const unitEl = document.getElementById(`stat${suffix}Unit`);
+        if (unitEl) unitEl.textContent = unit;
+    });
+}
+
 // 加载历史数据
 async function loadHistory() {
     const dataType = document.getElementById('dataType').value;
     const hours = document.getElementById('timeRange').value;
+
+    applyStatView(dataType);
     
     let data = [];
     let title = '';

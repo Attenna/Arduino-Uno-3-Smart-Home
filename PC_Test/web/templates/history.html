@@ -68,26 +68,26 @@
         </div>
 
         <!-- 统计概览 -->
-        <div class="dashboard-grid grid-4">
+        <div class="dashboard-grid grid-4" id="statGrid">
             <div class="card card-stat">
                 <div class="card-body stat-body">
-                    <span class="stat-label" data-i18n="history.stat_max">最高温度</span>
+                    <span class="stat-label" id="statMaxLabel" data-i18n="history.stat_max">最高温度</span>
                     <span class="stat-value" id="statMax">--</span>
-                    <span class="stat-unit">°C</span>
+                    <span class="stat-unit" id="statMaxUnit">°C</span>
                 </div>
             </div>
             <div class="card card-stat">
                 <div class="card-body stat-body">
-                    <span class="stat-label" data-i18n="history.stat_min">最低温度</span>
+                    <span class="stat-label" id="statMinLabel" data-i18n="history.stat_min">最低温度</span>
                     <span class="stat-value" id="statMin">--</span>
-                    <span class="stat-unit">°C</span>
+                    <span class="stat-unit" id="statMinUnit">°C</span>
                 </div>
             </div>
             <div class="card card-stat">
                 <div class="card-body stat-body">
-                    <span class="stat-label" data-i18n="history.stat_avg">平均温度</span>
+                    <span class="stat-label" id="statAvgLabel" data-i18n="history.stat_avg">平均温度</span>
                     <span class="stat-value" id="statAvg">--</span>
-                    <span class="stat-unit">°C</span>
+                    <span class="stat-unit" id="statAvgUnit">°C</span>
                 </div>
             </div>
             <div class="card card-stat">
@@ -133,7 +133,7 @@
         </div>
     </main>
 
-    <script src="{{ url_for('static', filename='js/lang.js') }}?v=20261003e"></script>
-    <script src="{{ url_for('static', filename='js/history.js') }}?v=20261003e"></script>
+    <script src="{{ url_for('static', filename='js/lang.js') }}?v=20261003f"></script>
+    <script src="{{ url_for('static', filename='js/history.js') }}?v=20261003f"></script>
 </body>
 </html>
