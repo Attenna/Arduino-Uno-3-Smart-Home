@@ -89,23 +89,33 @@ class SherpaListener:
         self.asr_stream = self.recognizer.create_stream()
         self.last_partial = ""
 
-    def accept(self, pcm_float32: np.ndarray) -> list[tuple[str, str]]:
-        """喂一帧 16kHz 单声道 float32 PCM，返回本帧产生的事件列表。"""
+    def accept(self, pcm_float32: np.ndarray, *, enable_kws: bool = True,
+               enable_asr: bool = True) -> list[tuple[str, str]]:
+        """喂一帧 PCM，并按对话状态选择 KWS/ASR。
+
+        ASR 在待唤醒、提示音、思考和 TTS 播放期间必须关闭，否则助手自己的
+        声音会积累成下一轮用户输入。关闭时同时丢弃旧半句，重新开始监听时不会
+        带入前一状态的残音。
+        """
         events: list[tuple[str, str]] = []
 
         # KWS
-        self.kws_stream.accept_waveform(_SAMPLE_RATE, pcm_float32)
-        while self.kws.is_ready(self.kws_stream):
-            self.kws.decode_stream(self.kws_stream)
-        kw = self.kws.get_result(self.kws_stream)  # Python 绑定直接返回关键词内部名
-        if kw:
-            events.append(("wake", kw.replace("_", " ")))  # Hey_Bota → "Hey Bota"
-            # KeywordSpotter 只有 reset_stream（1.13 起），没有 OnlineRecognizer 那样的
-            # reset：写错会在第一次命中唤醒词时抛 AttributeError，被音频回调吞掉，
-            # 表现为「说破嘴也不唤醒」。
-            self.kws.reset_stream(self.kws_stream)
+        if enable_kws:
+            self.kws_stream.accept_waveform(_SAMPLE_RATE, pcm_float32)
+            while self.kws.is_ready(self.kws_stream):
+                self.kws.decode_stream(self.kws_stream)
+            kw = self.kws.get_result(self.kws_stream)  # Python 绑定直接返回关键词内部名
+            if kw:
+                events.append(("wake", kw.replace("_", " ")))  # Hey_Bota → "Hey Bota"
+                # KeywordSpotter 只有 reset_stream（1.13 起），没有 OnlineRecognizer 那样的
+                # reset：写错会在第一次命中唤醒词时抛 AttributeError，被音频回调吞掉。
+                self.kws.reset_stream(self.kws_stream)
 
         # ASR（端点检测自动切句）
+        if not enable_asr:
+            if self.last_partial:
+                self.reset_asr()
+            return events
         self.asr_stream.accept_waveform(_SAMPLE_RATE, pcm_float32)
         while self.recognizer.is_ready(self.asr_stream):
             self.recognizer.decode_stream(self.asr_stream)
@@ -121,6 +131,13 @@ class SherpaListener:
             if final:
                 events.append(("final", final))
         return events
+
+    def finalize_asr(self) -> str:
+        """在最长发言保护触发时提交当前识别文本并重置流。"""
+        text = self.recognizer.get_result(self.asr_stream).strip()
+        self.recognizer.reset(self.asr_stream)
+        self.last_partial = ""
+        return text
 
     def reset_asr(self):
         """丢弃当前 ASR 半句（处理指令期间误录入时调用）。"""

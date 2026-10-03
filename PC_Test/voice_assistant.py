@@ -125,6 +125,42 @@ class HardwareGateway:
             return False, {"error": str(e)}
 
 
+def validate_tool_arguments(tool: dict, arguments) -> str | None:
+    """Validate the useful subset of JSON Schema before touching hardware."""
+    if not isinstance(arguments, dict):
+        return "工具参数必须是 JSON 对象"
+    schema = (tool.get("function") or {}).get("parameters") or {}
+    required = schema.get("required") or []
+    for name in required:
+        if name not in arguments or arguments[name] is None:
+            return f"缺少必填参数 {name}"
+    properties = schema.get("properties") or {}
+    if schema.get("additionalProperties") is False:
+        extra = sorted(set(arguments) - set(properties))
+        if extra:
+            return "包含未知参数 " + ", ".join(extra)
+    type_map = {"string": str, "integer": int, "number": (int, float),
+                "boolean": bool, "object": dict, "array": list}
+    for name, value in arguments.items():
+        rule = properties.get(name)
+        if not isinstance(rule, dict) or value is None:
+            continue
+        expected = rule.get("type")
+        pytype = type_map.get(expected)
+        if pytype and (not isinstance(value, pytype)
+                       or (expected in ("integer", "number")
+                           and isinstance(value, bool))):
+            return f"参数 {name} 类型应为 {expected}"
+        if "enum" in rule and value not in rule["enum"]:
+            return f"参数 {name} 不在允许值中"
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            if "minimum" in rule and value < rule["minimum"]:
+                return f"参数 {name} 小于最小值 {rule['minimum']}"
+            if "maximum" in rule and value > rule["maximum"]:
+                return f"参数 {name} 大于最大值 {rule['maximum']}"
+    return None
+
+
 # ==================== 事件总线（SSE 对话实况）====================
 
 class EventBus:
@@ -190,13 +226,19 @@ DEFAULT_CONFIG = {
                 "speed": 1.0, "num_threads": 2},
     },
     "wake": {"words": ["hey bota"],
-             "command_timeout": 6.0,
+             "command_timeout": 8.0,
+             "max_utterance_seconds": 20.0,
              "followup_timeout": 8.0, "wake_ack": "在的",
              "ack_mode": "chirp",       # chirp=滴声(最快) / voice=说"在的" / both / none
              "chirp_freq": 880, "chirp_ms": 120},
     "mic": {"device_index": None},
     # 上下文轮数（多轮对话记忆，按 user/assistant 轮计；0=每句独立）
     "history_rounds": 4,
+    "context": {"enabled": True, "server_path": "voice_context_server.py",
+                "store_path": "data/voice_context.json",
+                "session_id": "smart-home", "history_rounds": 6,
+                "max_turns": 20, "ttl_hours": 24.0},
+    "safety": {"max_tool_calls_per_turn": 6},
     # 手动触发对话开始（等价于 KWS 唤醒）：
     #   keyboard=终端按回车；http=POST/GET http://<host>:<port>/trigger
     #   香橙派物理按钮可接 GPIO 守护进程 curl 一下，或手机/浏览器开主页点按钮
@@ -438,7 +480,7 @@ background:var(--panel);color:var(--txt);font-size:15px;cursor:pointer}
  onkeydown="if(event.key==='Enter')say()">
 <button id="send" onclick="say()">发送</button></footer>
 <script>
-const ST={IDLE:['待唤醒','var(--dim)'],COMMAND:['聆听指令','var(--blue)'],
+const ST={IDLE:['待唤醒','var(--dim)'],ACK:['已唤醒','var(--amber)'],COMMAND:['聆听指令','var(--blue)'],
 THINKING:['思考中','var(--amber)'],FOLLOWUP:['可追问','var(--green)']};
 const log=document.getElementById('log'),partial=document.getElementById('partial');
 let curBot=null;
@@ -703,8 +745,10 @@ class VoiceAssistant:
         from tts_player import TtsPlayer  # 惰性导入（依赖 sounddevice）
         self.tts = TtsPlayer(cfg=cfg["sherpa"]["tts"])
         self.wake_words = cfg["wake"]["words"]
-        self.command_timeout = cfg["wake"]["command_timeout"]
-        self.followup_timeout = cfg["wake"].get("followup_timeout", 8.0)
+        self.command_timeout = float(cfg["wake"]["command_timeout"])
+        self.max_utterance_seconds = float(
+            cfg["wake"].get("max_utterance_seconds", 20.0))
+        self.followup_timeout = float(cfg["wake"].get("followup_timeout", 8.0))
         self.wake_ack = cfg["wake"]["wake_ack"]
         self.ack_mode = cfg["wake"].get("ack_mode", "chirp")
         self.chirp_freq = int(cfg["wake"].get("chirp_freq", 880))
@@ -720,10 +764,18 @@ class VoiceAssistant:
         self.stream = None
         self.state = "IDLE"
         self.command_state_start = 0.0
+        self.speech_state_start = 0.0
+        self._listen_generation = 0
+        self._state_lock = threading.RLock()
+        self._turn_cancel = threading.Event()
         self.command_queue: "queue.Queue[str]" = queue.Queue()
 
         self.llm_tools: list = []       # 网关工具 schema（run() 启动时拉取）
         self.history: list = []         # 多轮上下文（仅 user/assistant 文本）
+        self.max_tool_calls = max(1, int(
+            cfg.get("safety", {}).get("max_tool_calls_per_turn", 6)))
+        from voice_context_client import VoiceContextClient
+        self.context = VoiceContextClient(cfg.get("context", {}), PC_TEST_DIR)
 
     # ── 事件广播 ──
     def publish(self, etype: str, **fields) -> None:
@@ -763,9 +815,6 @@ class VoiceAssistant:
             self.trigger.fire(who)
         else:
             self._on_wake(who, time.time(), manual=True)
-            # 没有音频回调来兜底超时，自己起个定时器把状态收回 IDLE，
-            # 否则面板会一直显示「聆听指令中」
-            threading.Timer(self.command_timeout, self._idle_if_command).start()
 
     def _idle_if_command(self):
         """无麦克风部署下 COMMAND 状态的超时回收（音频回调不在时使用）。"""
@@ -773,7 +822,8 @@ class VoiceAssistant:
             self._set_state("IDLE", note="未收到指令，回到待唤醒状态")
 
     def _set_state(self, new_state: str, note: str = ""):
-        self.state = new_state
+        with self._state_lock:
+            self.state = new_state
         self._emit_state(new_state)
         if note:
             self.publish("system", text=note)
@@ -786,8 +836,10 @@ class VoiceAssistant:
         self.publish("state", state=new_state)
         if new_state == "IDLE":
             print("\n  [⏸ 待唤醒] 说「Hey Bota」唤醒我（也可直接打字）", flush=True)
+        elif new_state == "ACK":
+            print("\n  [🔔 已唤醒] 提示结束后开始监听", flush=True)
         elif new_state == "COMMAND":
-            print(f"\n  [🎤 请说指令] （{self.command_timeout:.0f}s 内有效）", flush=True)
+            print(f"\n  [🎤 请说指令] （{self.command_timeout:.0f}s 内开始说话）", flush=True)
         elif new_state == "THINKING":
             print("\n  [🤖 思考中] 正在调用大模型...", flush=True)
         elif new_state == "FOLLOWUP":
@@ -802,30 +854,74 @@ class VoiceAssistant:
 
     def _on_wake(self, keyword: str, now: float, manual: bool = False):
         # 手动触发可打断正在播放的回答（barge-in）；语音唤醒受回声抑制约束不会走到这里
-        if manual and self.tts.is_busy():
-            self.tts.stop()
-            print("\n  [✋ 打断] 已停止当前播报", flush=True)
-            self.publish("system", text="已打断当前播报")
-        self.state = "COMMAND"
-        self.command_state_start = now
+        with self._state_lock:
+            was_thinking = self.state == "THINKING"
+        if manual and (was_thinking or self.tts.is_busy()):
+            self._turn_cancel.set()
+            if self.tts.is_busy():
+                self.tts.stop()
+            print("\n  [✋ 打断] 已停止当前轮次", flush=True)
+            self.publish("system", text="已打断当前轮次")
+        with self._state_lock:
+            self._listen_generation += 1
+            generation = self._listen_generation
+            self.state = "ACK"
+            self.command_state_start = 0.0
+            self.speech_state_start = 0.0
         if manual and self.listener:
             self.listener.reset_asr()   # 手动触发：丢弃触发前录入的半句噪声
+        self._emit_state("ACK")
         self._ack()
         tag = "手动触发" if manual else "KWS 命中"
-        print(f"\n  [⭐ 唤醒成功！] {tag}「{keyword}」→ 已切换到指令模式", flush=True)
+        print(f"\n  [⭐ 唤醒成功！] {tag}「{keyword}」", flush=True)
         self.publish("system", text=f"唤醒成功（{tag}）")
+        threading.Thread(target=self._begin_listening_after_ack,
+                         args=(generation,), daemon=True,
+                         name="voice-wake-ack").start()
+
+    def _begin_listening_after_ack(self, generation: int) -> None:
+        """提示音完全结束后才清空 ASR 并打开本轮监听。"""
+        self.tts.wait_done()
+        with self._state_lock:
+            if self.state != "ACK" or generation != self._listen_generation:
+                return
+            if self.listener:
+                self.listener.reset_asr()
+            self.command_state_start = time.time()
+            self.speech_state_start = 0.0
+            self.state = "COMMAND"
         self._emit_state("COMMAND")
+        if self.stream is None:
+            threading.Timer(self.command_timeout, self._idle_if_command).start()
+
+    def _open_followup(self) -> None:
+        """TTS 播放结束后开启追问，避免把助手声音识别成用户语音。"""
+        with self._state_lock:
+            if self.state != "THINKING":
+                return
+            if self.listener:
+                self.listener.reset_asr()
+            self.command_state_start = time.time()
+            self.speech_state_start = 0.0
+            self.state = "FOLLOWUP"
+        print(f"\n  [💬 可追问] {self.followup_timeout:.0f}s 内可直接说下一句，超时回到待唤醒",
+              flush=True)
+        self._emit_state("FOLLOWUP")
 
     def submit_text(self, text: str, source: str = "键盘") -> None:
         """键盘/HTTP 直接输入文本指令（绕过 ASR）：打断播报、清空残句、入队对话。"""
         text = (text or "").strip()
         if not text:
             return
+        self._turn_cancel.set()  # 中止仍在输出的上一轮
         if self.tts.is_busy():
             self.tts.stop()
         print(f"\n  [📥 {source}文本指令] {text}", flush=True)
         self.publish("user", text=text, source=source)
-        self.state = "THINKING"
+        with self._state_lock:
+            self._listen_generation += 1
+            self.state = "THINKING"
+            self.speech_state_start = 0.0
         self._last_state = "THINKING"  # 抑制随后重复的思考状态行
         self.publish("state", state="THINKING")
         if self.listener:
@@ -833,6 +929,9 @@ class VoiceAssistant:
         self.command_queue.put(text)
 
     def _on_final(self, text: str):
+        text = (text or "").strip()
+        if not text:
+            return
         print(f"  [识别] {text}", flush=True)
         if self.state == "COMMAND":
             cmd = self._strip_wake_prefix(text)
@@ -887,22 +986,46 @@ class VoiceAssistant:
             manual_src = self.trigger.consume()
             if manual_src:
                 self._on_wake(manual_src, now, manual=True)
-            events = self.listener.accept(samples)
             tts_busy = self.tts.is_busy()
+            with self._state_lock:
+                state = self.state
+            enable_kws = state == "IDLE" and not tts_busy
+            enable_asr = state in ("COMMAND", "FOLLOWUP") and not tts_busy
+            events = self.listener.accept(
+                samples, enable_kws=enable_kws, enable_asr=enable_asr)
             for kind, text in events:
                 if kind == "wake":
                     # 回声抑制：TTS 播放时忽略 KWS 命中（防止听到自己声音自唤醒）
                     if not tts_busy:
                         self._on_wake(text, now)
                 elif kind == "partial":
+                    if enable_asr and not self.speech_state_start:
+                        self.speech_state_start = now
+                        self.publish("speech_start", state=state)
                     self._emit_partial(text)
                 elif kind == "final":
                     self._on_final(text)
-            # 超时检查（由音频帧驱动）
-            if self.state == "COMMAND" and now - self.command_state_start > self.command_timeout:
-                self._set_state("IDLE", note="未收到指令，回到待唤醒状态")
-            elif self.state == "FOLLOWUP" and now - self.command_state_start > self.followup_timeout:
-                self._set_state("IDLE")
+            # 开始说话前按等待窗口超时；开始说话后只受最长发言保护，
+            # 不会因固定的唤醒计时器在半句中途结束监听。
+            with self._state_lock:
+                state = self.state
+                listen_start = self.command_state_start
+                speech_start = self.speech_state_start
+            if state in ("COMMAND", "FOLLOWUP"):
+                wait_limit = (self.command_timeout if state == "COMMAND"
+                              else self.followup_timeout)
+                if not speech_start and now - listen_start > wait_limit:
+                    note = ("未收到指令，回到待唤醒状态"
+                            if state == "COMMAND" else "追问窗口已结束")
+                    if self.listener:
+                        self.listener.reset_asr()
+                    self._set_state("IDLE", note=note)
+                elif speech_start and now - speech_start > self.max_utterance_seconds:
+                    final = self.listener.finalize_asr() if self.listener else ""
+                    if final:
+                        self._on_final(final)
+                    else:
+                        self._set_state("IDLE", note="没有识别到有效语音")
         except Exception as e:
             print(f"\n[音频] 回调异常: {e}", flush=True)
 
@@ -921,6 +1044,8 @@ class VoiceAssistant:
     async def stream_llm(self, messages, tools):
         """流式调用 LLM，token 边生成边喂 TTS/广播；返回 (content, tool_calls)。"""
         def on_token(tok):
+            if self._turn_cancel.is_set():
+                return
             self.tts.feed_token(tok)
             self.publish("delta", text=tok)
 
@@ -929,6 +1054,8 @@ class VoiceAssistant:
                 self.llm_base_url, self.llm_api_key, self.llm_model,
                 messages, tools, on_content=on_token, extra_body=self.llm_extra_body,
                 timeout_s=self.llm_timeout_s)
+            if self._turn_cancel.is_set():
+                return "", []
             return content, tool_calls
         except Exception as e:
             print(f"[LLM] 调用失败: {e}", flush=True)
@@ -936,12 +1063,33 @@ class VoiceAssistant:
             self.tts.speak("大模型出错了")
             return "", []
 
-    def _context_messages(self, user_text: str) -> list:
-        """system + 最近 history_rounds 轮 + 本句用户输入。"""
+    async def _context_messages(self, user_text: str) -> list:
+        """Build messages from durable MCP context, falling back to memory."""
         messages = [{"role": "system", "content": self.system_prompt}]
-        tail = self.history[-2 * max(0, self.history_rounds):] \
-            if self.history_rounds > 0 else []
-        messages.extend(tail)
+        turns = []
+        if self.context.online:
+            try:
+                turns = (await self.context.get_context()).get("turns") or []
+            except Exception as exc:
+                print(f"[上下文] MCP 读取失败，使用进程内历史: {exc}", flush=True)
+        if turns:
+            facts = []
+            for turn in turns:
+                messages.append({"role": "user", "content": str(turn.get("user") or "")})
+                messages.append({"role": "assistant",
+                                 "content": str(turn.get("assistant") or "")})
+                for tool in turn.get("tool_results") or []:
+                    status = "成功" if tool.get("ok") else "失败或不确定"
+                    facts.append(f"{tool.get('name')}: {status}; {tool.get('result')}")
+            if facts:
+                messages.insert(1, {"role": "system", "content":
+                    "上下文服务器记录的工具事实如下。只有标记成功的结果可作为设备事实；"
+                    "失败或不确定的动作不得假定已经执行，也不得自动重试：\n" +
+                    "\n".join(facts[-12:])})
+        else:
+            tail = self.history[-2 * max(0, self.history_rounds):] \
+                if self.history_rounds > 0 else []
+            messages.extend(tail)
         messages.append({"role": "user", "content": user_text})
         return messages
 
@@ -954,10 +1102,17 @@ class VoiceAssistant:
 
     async def handle_command(self, user_text):
         print(f"[你] {user_text}", flush=True)
-        messages = self._context_messages(user_text)
+        messages = await self._context_messages(user_text)
         final_content = ""
+        tool_map = {t.get("function", {}).get("name"): t for t in self.llm_tools}
+        seen_calls: dict[str, str] = {}
+        tool_records: list[dict] = []
+        tool_call_count = 0
         for rnd in range(3):
             content, tool_calls = await self.stream_llm(messages, self.llm_tools)
+            if self._turn_cancel.is_set():
+                print("[对话] 当前轮次已被新唤醒打断", flush=True)
+                break
             if content:
                 final_content = content
                 print(f"[助手] {content}", flush=True)   # 输出大模型的文字回答
@@ -969,6 +1124,8 @@ class VoiceAssistant:
                 "tool_calls": tool_calls,
             })
             for tc in tool_calls:
+                if self._turn_cancel.is_set():
+                    break
                 name = tc["function"]["name"]
                 raw_args = tc["function"]["arguments"] or "{}"
                 try:
@@ -977,26 +1134,79 @@ class VoiceAssistant:
                     messages.append({"role": "tool", "tool_call_id": tc["id"],
                                      "content": f"error: 参数解析失败 {e}"})
                     continue
+                tool = tool_map.get(name)
+                if tool is None:
+                    result_text = f"error: 未知工具 {name}，禁止执行"
+                    messages.append({"role": "tool", "tool_call_id": tc["id"],
+                                     "content": result_text})
+                    tool_records.append({"name": name, "arguments": args,
+                                         "ok": False, "result": result_text})
+                    continue
+                validation_error = validate_tool_arguments(tool, args)
+                if validation_error:
+                    result_text = f"error: 参数校验失败：{validation_error}"
+                    messages.append({"role": "tool", "tool_call_id": tc["id"],
+                                     "content": result_text})
+                    tool_records.append({"name": name, "arguments": args,
+                                         "ok": False, "result": result_text})
+                    continue
+                tool_call_count += 1
+                if tool_call_count > self.max_tool_calls:
+                    result_text = "error: 本轮工具调用已达安全上限，请向用户确认后再继续"
+                    messages.append({"role": "tool", "tool_call_id": tc["id"],
+                                     "content": result_text})
+                    tool_records.append({"name": name, "arguments": args,
+                                         "ok": False, "result": result_text})
+                    continue
+                signature = name + ":" + json.dumps(
+                    args, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+                if signature in seen_calls:
+                    result_text = ("error: 已阻止同一轮中的重复工具调用；上次结果为 " +
+                                   seen_calls[signature])
+                    messages.append({"role": "tool", "tool_call_id": tc["id"],
+                                     "content": result_text})
+                    tool_records.append({"name": name, "arguments": args,
+                                         "ok": False, "result": result_text})
+                    continue
                 print(f"[工具] 调用 {name}({args})", flush=True)
                 ok, result_text = await asyncio.to_thread(
                     self.gateway.call, name, args)
                 if not ok and not result_text.startswith("error"):
                     result_text = f"error: {result_text}"
+                if "unknown_sent" in result_text:
+                    result_text += "；执行结果未知，禁止自动重试，必须先查询设备状态"
+                seen_calls[signature] = result_text
                 print(f"[工具] {name} -> {result_text}", flush=True)
                 self.publish("tool", name=name, arguments=args,
                              ok=ok, result=result_text[:300])
+                tool_records.append({"name": name, "arguments": args,
+                                     "ok": ok, "result": result_text})
                 messages.append({"role": "tool", "tool_call_id": tc["id"],
                                  "content": result_text})
         self.tts.flush()
-        self.publish("turn_end")
+        if self._turn_cancel.is_set():
+            self.tts.stop()
+            self.publish("turn_end", cancelled=True)
+            return
         # 若本轮只有工具调用没有解说词，最后再请求一次大模型生成自然语言总结
         if final_content == "" and any(m.get("role") == "tool" for m in messages):
             content, _ = await self.stream_llm(messages, self.llm_tools)
+            if self._turn_cancel.is_set():
+                self.tts.stop()
+                self.publish("turn_end", cancelled=True)
+                return
             if content:
                 final_content = content
                 print(f"[助手] {content}", flush=True)
-            self.publish("turn_end")
         self._remember(user_text, final_content or "（已执行）")
+        if self.context.online:
+            try:
+                await self.context.record_turn(
+                    user_text, final_content or "（无文字回复）", tool_records)
+            except Exception as exc:
+                print(f"[上下文] MCP 写入失败: {exc}", flush=True)
+                self.publish("system", text="上下文保存失败，本轮仍已完成")
+        self.publish("turn_end")
         if not final_content:
             print("[助手] (无文字回复)", flush=True)
         await asyncio.sleep(0.2)
@@ -1018,6 +1228,14 @@ class VoiceAssistant:
                 backoff = min(backoff * 2, 30.0)
         print(f"[网关] 已加载 {len(self.llm_tools)} 个硬件工具: "
               f"{[t['function']['name'] for t in self.llm_tools]}", flush=True)
+
+        try:
+            if await self.context.start():
+                print(f"[上下文] MCP 已连接，会话 {self.context.session_id}", flush=True)
+            else:
+                print("[上下文] MCP 已禁用，使用进程内历史", flush=True)
+        except Exception as exc:
+            print(f"[上下文] MCP 启动失败，退回进程内历史: {exc}", flush=True)
 
         # 输入通道（配置可关）：键盘（打字对话/空行触发）+ HTTP（/trigger、/say）
         tcfg = self.cfg.get("trigger", {})
@@ -1057,6 +1275,7 @@ class VoiceAssistant:
                 text = await loop.run_in_executor(None, self.command_queue.get)
                 if text is None:
                     break
+                self._turn_cancel.clear()
                 try:
                     await self.handle_command(text)
                 except Exception as e:
@@ -1064,12 +1283,10 @@ class VoiceAssistant:
                     self.publish("system", text=f"处理指令失败: {e}")
                     self.tts.speak("出错了，请重说")
                 finally:
-                    # 处理完毕，进入追问模式（followup_timeout 内可直接说话，无需重新唤醒）
-                    self.command_state_start = time.time()
-                    if self.listener:
-                        self.listener.reset_asr()  # 清掉思考期间误录的半句
-                    print(f"\n  [💬 可追问] {self.followup_timeout:.0f}s 内可直接说下一句，超时回到待唤醒", flush=True)
-                    self._set_state("FOLLOWUP")
+                    # 等回答完全播完再打开 ASR 和追问计时，避免把 TTS 当成用户语音。
+                    await asyncio.to_thread(self.tts.wait_done)
+                    if self.command_queue.empty():
+                        self._open_followup()
         except (KeyboardInterrupt, asyncio.CancelledError):
             pass
         try:
@@ -1079,6 +1296,7 @@ class VoiceAssistant:
             pass
         if self.trigger_http is not None:
             self.trigger_http.shutdown()
+        await self.context.close()
         self.tts.shutdown()
 
     def _console_info(self) -> dict:
@@ -1086,7 +1304,8 @@ class VoiceAssistant:
         ok, info = self.gateway.health()
         gw = "在线" if ok and info.get("online") else ("可达" if ok else "离线")
         return {"gateway": f"{gw} @ {self.gateway.base_url}",
-                "llm": f"{self.llm_mode} · {self.llm_model}"}
+                "llm": f"{self.llm_mode} · {self.llm_model}",
+                "context": "MCP 在线" if self.context.online else "进程内"}
 
 
 # ==================== 手动触发键盘通道 ====================
