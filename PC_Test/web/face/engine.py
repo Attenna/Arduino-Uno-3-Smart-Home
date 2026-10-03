@@ -255,6 +255,12 @@ class FaceEngine:
                 "faces": [], "mode": "throttled",
                 "message": f"请求过于频繁，请等待 {wait:.1f} 秒"}
 
+    @property
+    def recognition_min_interval(self) -> float:
+        """识别节流窗口（秒）。哨兵拿它定两轮之间的下限：唤醒若正好撞在节流里，
+        这一轮只会被 can_execute 判成 throttled 消耗掉，下一次还要等满 interval。"""
+        return float(self.throttler.min_interval)
+
     def _decode_frame(self, blob: bytes):
         import cv2
         import numpy as np
@@ -311,8 +317,11 @@ class FaceEngine:
         提特征是按人脸张数线性叠加的（派上实测每张约 370ms），而「太远不参与开门」
         和「同框人数上限」这两条本来就有配置，只是过去要先算完才判定、上限没生效。
         返回选中项的 id 集合；检出框本身不受影响，前端照样能画全部脸。
+
+        人数上限只认 web_config.yaml：data/face/face_config.json 是运行期写的，
+        可能带着另一台机器当时的取值（与嵌入模型路径同理）。
         """
-        cap = int(self.config.get("max_faces", 5) or 0)
+        cap = int(self.web_cfg.get("max_faces", 5) or 0)
         scored = []
         for det in detections:
             x1, y1, x2, y2 = det.xyxy_int()

@@ -132,11 +132,16 @@ class FaceWatcher:
 
     # ==================== 主循环 ====================
 
+    def _spacing(self) -> float:
+        """两轮之间的下限：既不把抖动的 PIR 打成连拍，也不低于引擎的识别节流窗口。
+        否则唤醒只是白取一帧（recognize_jpeg 判 throttled），下一轮还得等满 interval。"""
+        return max(MIN_WAKE_SPACING_S, self.engine.recognition_min_interval)
+
     def _loop(self) -> None:
         last_run = 0.0
         while not self._stop.is_set():
             now = time.monotonic()
-            floor = last_run + MIN_WAKE_SPACING_S
+            floor = last_run + self._spacing()
             due = last_run + self.interval
             if now < floor:
                 # 上升沿来早了：事件先攒着，这段只睡觉（拿 _stop 睡，退得出去）

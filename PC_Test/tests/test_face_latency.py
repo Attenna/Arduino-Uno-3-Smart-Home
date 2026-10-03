@@ -55,12 +55,18 @@ class FakeRecognizer:
                               "identity": "爱丽丝"})()
 
 
-def build_engine(boxes=(), max_faces=5):
-    """构造一个「有模型」外观的引擎，但推理全是桩件。"""
+def build_engine(boxes=(), max_faces=5, saved_max_faces=None):
+    """构造一个「有模型」外观的引擎，但推理全是桩件。
+
+    max_faces 走 web_cfg（= web_config.yaml 的那一行）；saved_max_faces 用来模拟
+    data/face/face_config.json 里别的机器留下的旧取值。
+    """
     cfg = Path(tempfile.mkdtemp()) / "face_config.json"
-    cfg.write_text(json.dumps({"simulation_mode": True, "max_faces": max_faces}),
-                   encoding="utf-8")
-    engine = FaceEngine(config_path=cfg, web_cfg={"face": {}})
+    saved = {"simulation_mode": True}
+    if saved_max_faces is not None:
+        saved["max_faces"] = saved_max_faces
+    cfg.write_text(json.dumps(saved), encoding="utf-8")
+    engine = FaceEngine(config_path=cfg, web_cfg={"face": {"max_faces": max_faces}})
     engine.simulation_mode = False
     engine.throttler.min_interval = 0.0
     engine.detector = FakeDetector(boxes)
@@ -117,6 +123,20 @@ class RecognizePathTests(unittest.TestCase):
         engine.recognize_jpeg(jpeg(100, 100))
         self.assertEqual(len(engine.recognizer.calls), 3)
 
+    def test_stale_saved_max_faces_is_ignored(self):
+        """上限只认 yaml：face_config.json 是运行期写的，可能带着另一台机器的取值。"""
+        boxes = [(0, 0, s, s) for s in (40, 50, 60)]
+        engine = build_engine(boxes, max_faces=1, saved_max_faces=9)
+        engine.recognize_jpeg(jpeg(100, 100))
+        self.assertEqual(len(engine.recognizer.calls), 1)
+
+    def test_throttle_window_is_visible_to_the_watcher(self):
+        """哨兵要靠这个属性把两轮下限抬到不低于节流窗口。"""
+        engine = build_engine()
+        self.assertEqual(engine.recognition_min_interval, 0.0)
+        engine.throttler.min_interval = 1.5
+        self.assertEqual(engine.recognition_min_interval, 1.5)
+
 
 class WarmupTests(unittest.TestCase):
     def test_warmup_runs_one_detect_and_one_embed(self):
@@ -156,6 +176,7 @@ class MotionEdgeWakeTests(unittest.TestCase):
         def __init__(self):
             self.calls = []
             self.result = {"detected": False, "faces": [], "mode": "yolov8"}
+            self.recognition_min_interval = 0.0
 
         def identity_count(self):
             return 1
@@ -197,6 +218,16 @@ class MotionEdgeWakeTests(unittest.TestCase):
         self.assertTrue(self.wait_for_calls(1))
         self.watcher.on_snapshot({"motion": True})
         self.assertTrue(self.wait_for_calls(2), "上升沿没能在 interval 内触发第二轮")
+
+    def test_wake_floor_follows_the_recognition_throttle(self):
+        """唤醒撞在节流窗口里只会白取一帧（下一轮还要等满 interval）：下限跟着节流走。"""
+        self.engine.recognition_min_interval = 0.6
+        self.assertTrue(self.wait_for_calls(1))
+        self.watcher.on_snapshot({"motion": True})
+        time.sleep(0.25)          # 已过 MIN_WAKE_SPACING_S，但还在节流里
+        self.assertEqual(len(self.engine.calls), 1)
+        self.assertTrue(self.wait_for_calls(2, timeout=2.0),
+                        "节流窗口打开后没补上这一轮")
 
     def test_steady_motion_does_not_repeatedly_wake(self):
         self.assertTrue(self.wait_for_calls(1))
