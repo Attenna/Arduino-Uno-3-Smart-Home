@@ -197,6 +197,38 @@ body {
     color: var(--text-secondary);
 }
 .voice-state-line strong { color: var(--accent-cyan); }
+.voice-state-detail {
+    margin-top: 6px;
+    min-height: 20px;
+    color: var(--text-secondary);
+    font-size: 13px;
+}
+.voice-state-flow {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 6px;
+    margin-top: 14px;
+}
+.voice-state-flow span {
+    padding: 7px 4px;
+    border: 1px solid var(--border-color);
+    border-radius: 999px;
+    color: var(--text-muted);
+    font-size: 12px;
+    text-align: center;
+}
+.voice-state-flow span.active {
+    border-color: var(--accent-cyan);
+    color: var(--accent-cyan);
+    background: rgba(0, 229, 255, 0.1);
+    box-shadow: 0 0 12px rgba(0, 229, 255, 0.15);
+}
+.voice-runtime-info {
+    margin-top: 10px;
+    color: var(--text-muted);
+    font-size: 12px;
+    line-height: 1.5;
+}
 .voice-say-result {
     margin-top: 12px;
     font-size: 13px;

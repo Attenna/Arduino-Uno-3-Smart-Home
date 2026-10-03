@@ -393,7 +393,8 @@ class TriggerHTTPServer:
                     who = self.headers.get("X-Trigger-Source", "http")
                     self._say((q.get("text") or [""])[0], who)
                 elif path == "/state":
-                    self._json(200, {"state": state_ref()})
+                    self._json(200, {"state": state_ref(),
+                                     "info": (info_ref() if info_ref else {})})
                 elif path == "/events":
                     self._events()
                 elif path == "/":
@@ -1305,7 +1306,9 @@ class VoiceAssistant:
         gw = "在线" if ok and info.get("online") else ("可达" if ok else "离线")
         return {"gateway": f"{gw} @ {self.gateway.base_url}",
                 "llm": f"{self.llm_mode} · {self.llm_model}",
-                "context": "MCP 在线" if self.context.online else "进程内"}
+                "context": "MCP 在线" if self.context.online else "进程内",
+                "audio_output": getattr(
+                    self.tts, "output_status", "播放设备状态未知")}
 
 
 # ==================== 手动触发键盘通道 ====================
