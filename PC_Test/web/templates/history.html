@@ -92,9 +92,9 @@
             </div>
             <div class="card card-stat">
                 <div class="card-body stat-body">
-                    <span class="stat-label" data-i18n="history.stat_count">数据点数</span>
+                    <span class="stat-label" id="statCountLabel" data-i18n="history.stat_count">数据点数</span>
                     <span class="stat-value" id="statCount">--</span>
-                    <span class="stat-unit" data-i18n="history.stat_count_unit">条</span>
+                    <span class="stat-unit" id="statCountUnit">条</span>
                 </div>
             </div>
         </div>
@@ -106,6 +106,14 @@
             </div>
             <div class="card-body chart-container-large">
                 <canvas id="historyChart"></canvas>
+                <div id="stateTimeline" class="state-timeline hidden">
+                    <div id="timelineRows"></div>
+                    <div class="tl-axis">
+                        <span id="timelineStart">--</span>
+                        <span id="timelineEnd">--</span>
+                    </div>
+                    <div class="tl-note" id="timelineNote">绿色：开启 · 灰色：关闭</div>
+                </div>
             </div>
         </div>
 
@@ -133,7 +141,7 @@
         </div>
     </main>
 
-    <script src="{{ url_for('static', filename='js/lang.js') }}?v=20261003f"></script>
-    <script src="{{ url_for('static', filename='js/history.js') }}?v=20261003f"></script>
+    <script src="{{ url_for('static', filename='js/lang.js') }}?v=20261003g"></script>
+    <script src="{{ url_for('static', filename='js/history.js') }}?v=20261003g"></script>
 </body>
 </html>
