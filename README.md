@@ -105,6 +105,7 @@ docker compose up -d --build       # 默认云端 LLM（硅基流动，web 独�
 | [docs/configuration.md](docs/configuration.md) | yaml / .env / 环境变量 / Config.h 配置参考 |
 | [docs/serial-protocol.md](docs/serial-protocol.md) | 串口 JSON 协议规范（A 上报 / B 命令） |
 | [docs/development-guide.md](docs/development-guide.md) | 命名、依赖方向、禁止跨层调用等开发规范（含 PC_Test / Web 前端硬约定） |
+| [docs/git-workflow.md](docs/git-workflow.md) | 多人并行开发、分支、worktree、提交、评审和部署规范 |
 | [docs/ha-automation-examples.md](docs/ha-automation-examples.md) | Home Assistant 自动化实战 |
 | [docs/hardware-debug-notes.md](docs/hardware-debug-notes.md) | 硬件调试备忘（踩坑复盘、排障速查） |
 | [docs/faq.md](docs/faq.md) | 常见问题解答 |
