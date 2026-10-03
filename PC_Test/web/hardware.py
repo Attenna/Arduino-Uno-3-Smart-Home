@@ -633,11 +633,25 @@ class McpHardwareBridge:
         action = {"open": "open", "close": "close", "normal": "normal"}.get(status, "close")
         return self.call_tool("window", {"action": action})
 
-    def control_light(self, status: str, brightness_pct: int) -> tuple[bool, str]:
+    def control_light(self, status: str, brightness_pct: int,
+                     mode: str = "white") -> tuple[bool, str]:
+        """mode: white=整条灯带白光；night=夜灯（固件只点亮居中几颗灯珠）。
+
+        mode 缺省 white，老调用方（自动化引擎等）行为完全不变。
+        """
         if status == "off" or brightness_pct <= 0:
             return self.call_tool("light", {"action": "off"})
         value = max(1, min(255, round(brightness_pct * 255 / 100)))
-        return self.call_tool("light", {"action": "white", "value": value})
+        action = "night" if str(mode).lower() == "night" else "white"
+        return self.call_tool("light", {"action": action, "value": value})
+
+    def control_light_temp(self, kelvin: int, brightness_pct: int) -> tuple[bool, str]:
+        """色温白光：kelvin 2700~6500K，brightness_pct 0~100。"""
+        if brightness_pct <= 0:
+            return self.call_tool("light", {"action": "off"})
+        value = max(1, min(255, round(brightness_pct * 255 / 100)))
+        k = max(2700, min(6500, int(kelvin)))
+        return self.call_tool("light", {"action": "temp", "temp": k, "value": value})
 
     def control_fan(self, speed_pct: int) -> tuple[bool, str]:
         if speed_pct <= 0:
@@ -645,17 +659,21 @@ class McpHardwareBridge:
         value = max(1, min(255, round(speed_pct * 255 / 100)))
         return self.call_tool("fan", {"action": "set_speed", "value": value})
 
-    def control_light_color(self, color: str, r=None, g=None, b=None) -> tuple[bool, str]:
+    def control_light_color(self, color: str, r=None, g=None, b=None,
+                            brightness_pct=None) -> tuple[bool, str]:
         """灯颜色：MCP 工具名仍是 light（复用 ACK 心跳与 output_online）。
 
         color: white/red/green/blue/yellow/purple/cyan/rgb；rgb 需 r/g/b(0-255)。
-        彩色预设不接受亮度参数（B 板只有 white 用 value）。
+        只有 rgb 接受 brightness_pct（固件按它对颜色做整体缩放）；固件彩色预设是
+        固定亮度，不带 value，这里也不下发，避免旧固件收到不认识的字段组合。
         """
         args = {"action": color}
         if color == "rgb":
             if None in (r, g, b):
                 return False, "RGB 需要 r/g/b 三个值(0~255)"
             args.update({"r": int(r), "g": int(g), "b": int(b)})
+            if brightness_pct is not None:
+                args["value"] = max(0, min(255, round(int(brightness_pct) * 255 / 100)))
         return self.call_tool("light", args)
 
     def self_test(self, timeout: float = 8.0) -> tuple[bool, str]:

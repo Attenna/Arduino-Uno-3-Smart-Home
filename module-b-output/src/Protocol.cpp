@@ -198,6 +198,17 @@ bool Protocol::handleLegacy(const char* line) {
     // 灯
     else if (strcmp(p, "LIGHT:ON") == 0 || strcmp(p, "LIGHT:WHITE") == 0) { strcpy(cmd.device, "light"); strcpy(cmd.action, "white"); cmd.value = 255; }
     else if (strcmp(p, "LIGHT:OFF") == 0)    { strcpy(cmd.device, "light"); strcpy(cmd.action, "off"); }
+    else if (strcmp(p, "LIGHT:NIGHT") == 0)  { strcpy(cmd.device, "light"); strcpy(cmd.action, "night"); }
+    else if (startsWith(p, "LIGHT:NIGHT:"))  { strcpy(cmd.device, "light"); strcpy(cmd.action, "night"); cmd.value = atol(p + 12); cmd.hasValue = true; }
+    else if (startsWith(p, "LIGHT:TEMP:")) {   // LIGHT:TEMP:<K>[:<level>]
+        strcpy(cmd.device, "light"); strcpy(cmd.action, "temp");
+        int k = 0, v = 0;
+        int fields = sscanf(p + 11, "%d:%d", &k, &v);
+        if (fields < 1) return false;
+        cmd.temp = k;
+        cmd.value = v;
+        cmd.hasValue = fields == 2;
+    }
     else if (strcmp(p, "LIGHT:RED") == 0)    { strcpy(cmd.device, "light"); strcpy(cmd.action, "red"); }
     else if (strcmp(p, "LIGHT:GREEN") == 0)  { strcpy(cmd.device, "light"); strcpy(cmd.action, "green"); }
     else if (strcmp(p, "LIGHT:BLUE") == 0)   { strcpy(cmd.device, "light"); strcpy(cmd.action, "blue"); }

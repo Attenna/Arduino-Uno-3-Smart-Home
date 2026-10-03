@@ -39,6 +39,14 @@
 #define LIGHT_BOOT_ON       0   // 1=上电默认点亮（需独立供电，否则易欠压复位）, 0=上电熄灭
 #define LIGHT_BOOT_LEVEL    20  // 上电点亮时的亮度 0~255（越小越省电）
 
+// 夜灯（night）：只点亮居中的几颗灯珠，其余保持熄灭，避免整条灯带当小夜灯晃眼
+#define LIGHT_NIGHT_COUNT   2   // 夜灯点亮的灯珠数量（居中对齐，超过 LED_COUNT 时按整条处理）
+#define LIGHT_NIGHT_LEVEL   60  // 夜灯缺省亮度 0~255（未带 value 时用）
+
+// 色温（temp）可调范围，单位 K
+#define LIGHT_TEMP_MIN      2700
+#define LIGHT_TEMP_MAX      6500
+
 // ---- 蜂鸣器 ----
 #define BUZZER_PIN          9
 #define BUZZER_ACTIVE_LOW   1   // 1=低电平触发（有源蜂鸣器低电平响）, 0=高电平触发

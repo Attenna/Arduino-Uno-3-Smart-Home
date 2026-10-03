@@ -51,6 +51,8 @@ pio device monitor --port /dev/ttyUSB0 --baud 115200
 ```bash
 mosquitto_pub 或 echo 均可，例如：
 echo 'B:LIGHT:RED' > /dev/ttyUSB0        # 红灯（文本命令）
+echo 'B:LIGHT:NIGHT' > /dev/ttyUSB0      # 夜灯：只亮中间 2 颗（B:LIGHT:NIGHT:80 可指定亮度）
+echo 'B:LIGHT:TEMP:3000' > /dev/ttyUSB0  # 3000K 暖白（可加亮度：B:LIGHT:TEMP:3000:200）
 echo 'B:DOOR:OPEN' > /dev/ttyUSB0        # 开门
 echo 'B:STATUS' > /dev/ttyUSB0           # 查状态
 ```

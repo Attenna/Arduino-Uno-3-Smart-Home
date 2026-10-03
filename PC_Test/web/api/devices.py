@@ -322,6 +322,54 @@ def get_door_window_history():
 
 # ==================== 灯 ====================
 
+# 灯不止「开关 + 亮度」两档：同一亮度下还有不同亮法，B 板固件据此执行不同动作。
+#   white —— 整条灯带白光（旧行为，缺省）
+#   night —— 夜灯，只点亮居中 LIGHT_NIGHT_COUNT 颗灯珠
+#   temp  —— 色温白光 2700~6500K（整条，颜色由色温决定，亮度仍是 brightness）
+#   rgb   —— 自定义颜色 (r,g,b)，brightness 作为整体亮度缩放
+# 三者同时给了按 rgb > temp > mode 的优先级二选一，避免一条请求里出现矛盾意图。
+LIGHT_MODES = ("white", "night")
+LIGHT_TEMP_MIN, LIGHT_TEMP_MAX = 2700, 6500
+
+
+def _light_mode(data):
+    mode = str(data.get("mode") or "white").lower()
+    return mode if mode in LIGHT_MODES else "white"
+
+
+def _light_temp(data):
+    """色温 K；缺省/非法值返回 None（表示「不改色温」）。"""
+    raw = data.get("temp")
+    if raw is None:
+        return None
+    try:
+        return max(LIGHT_TEMP_MIN, min(LIGHT_TEMP_MAX, int(raw)))
+    except (TypeError, ValueError):
+        return None
+
+
+def _light_rgb(data):
+    """自定义颜色 (r,g,b) 0~255；缺省/非法值返回 None。"""
+    raw = data.get("rgb")
+    if not isinstance(raw, (list, tuple)) or len(raw) != 3:
+        return None
+    try:
+        return tuple(max(0, min(255, int(v))) for v in raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _light_mode_label(mode, temp, rgb):
+    """把本次的亮法翻译成提示文案（中/英），用于响应 message。"""
+    if rgb is not None:
+        return f"自定义颜色 RGB{rgb}", f"custom color RGB{rgb}"
+    if temp is not None:
+        return f"色温 {temp}K", f"color temperature {temp}K"
+    if mode == "night":
+        return "夜灯", "night light"
+    return "白光", "white light"
+
+
 @bp.route("/api/light", methods=["GET"])
 def get_light_status():
     status = db.get_current_status()
@@ -340,12 +388,25 @@ def control_light():
         brightness = 100
     if light_status == "off":
         brightness = 0
+    mode = _light_mode(data)       # white=整条白光 / night=夜灯（只亮中间几颗）
+    temp = _light_temp(data)       # 色温 K，None=不改色温
+    rgb = _light_rgb(data)         # (r,g,b)，None=不自定义颜色
     cid, seq = _client_token(data)
-    target = (light_status, brightness)
+    target = (light_status, brightness, mode, temp, rgb)
 
     def _run(v):
-        status, level = v
-        ok, msg = _hw_call("control_light", status, level)
+        status, level, m, k, color = v
+        # 优先级：自定义颜色 > 色温 > 亮法（白光/夜灯）。关灯始终走 off 分支。
+        if status == "off":
+            ok, msg = _hw_call("control_light", "off", 0)
+        elif color is not None:
+            ok, msg = _hw_call("control_light_color", "rgb",
+                               color[0], color[1], color[2],
+                               brightness_pct=level)
+        elif k is not None:
+            ok, msg = _hw_call("control_light_temp", k, level)
+        else:
+            ok, msg = _hw_call("control_light", status, level, m)
         if ok:
             _record_light(status, level)
         return ok, msg
@@ -362,13 +423,17 @@ def control_light():
     row = db.get_current_status()
     status_shown = row.get("light_status", "off")
     shown = int(row.get("light_brightness") or 0)
+    label_zh, label_en = _light_mode_label(mode, temp, rgb)
     if outcome == "executed":
-        message = f"灯光已{'打开' if status_shown == 'on' else '关闭'}，亮度: {shown}%"
-        message_en = (f"Light {'turned on' if status_shown == 'on' else 'turned off'}, "
-                      f"brightness: {shown}%")
+        if status_shown == "on":
+            message = f"灯光已打开，亮度: {shown}%（{label_zh}）"
+            message_en = f"Light turned on, brightness: {shown}% ({label_en})"
+        else:
+            message = "灯光已关闭"
+            message_en = "Light turned off"
     else:
-        message = f"已按最新操作执行（灯光 {status_shown}/{shown}%）"
-        message_en = f"Latest command applied (light {status_shown}/{shown}%)"
+        message = f"已按最新操作执行（灯光 {status_shown}/{shown}% {label_zh}）"
+        message_en = f"Latest command applied (light {status_shown}/{shown}% {label_en})"
     return jsonify({"light_status": status_shown, "light_brightness": shown,
                     "message": message, "message_en": message_en})
 
@@ -556,9 +621,16 @@ def _tool_state_report(name, args):
     if name == "light":
         if action == "off":
             return {"device": "light", "status": "off", "brightness": 0}
-        if action in ("on", "white", "red", "green", "blue",
+        if action in ("night", "temp", "rgb") and args.get("value") is not None:
+            if _pct255(args["value"], 0) == 0:
+                return {"device": "light", "status": "off", "brightness": 0}
+        if action == "night":
+            # 夜灯缺省 60/255 ≈ 24%
+            return {"device": "light", "status": "on",
+                    "brightness": _pct255(args.get("value"), 24) or 24}
+        if action in ("on", "white", "temp", "red", "green", "blue",
                       "yellow", "purple", "cyan", "rgb"):
-            # 彩色指令面板不跟踪颜色，只记为「开」+亮度
+            # 彩色/色温指令面板不跟踪颜色，只记为「开」+亮度
             return {"device": "light", "status": "on",
                     "brightness": _pct255(args.get("value"), 100) or 100}
         return None

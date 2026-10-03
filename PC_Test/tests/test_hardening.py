@@ -131,6 +131,56 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(state[0].fan, "high")
 
 
+class LightModeTests(unittest.TestCase):
+    """/api/light 的「亮法」选择：白光 / 夜灯 / 色温 / 自定义颜色。
+
+    只断言最终落到硬件桥的调用参数——这层决定灯带怎么亮，是本次改动的语义核心。
+    DB 侧仍只记 status+brightness（不新增列），所以这里把记账与状态读取打桩隔离。
+    """
+
+    def setUp(self):
+        self.app = create_app({"serial": {"enabled": True}}, start_hardware=False)
+        self.app.testing = True
+        self.client = self.app.test_client()
+        with self.client.session_transaction() as session:
+            session["user"] = "test-admin"
+
+    def _post(self, payload):
+        state = {"light_status": payload.get("status", "off"),
+                 "light_brightness": payload.get("brightness", 0)}
+        with patch.object(devices, "_record_light"), \
+             patch.object(devices.db, "get_current_status", return_value=state), \
+             patch.object(devices, "_hw_call", return_value=(True, "ok")) as hardware:
+            response = self.client.post("/api/light", json=payload,
+                                        headers={"Origin": "http://localhost"})
+        return response, hardware
+
+    def test_default_stays_white(self):
+        response, hardware = self._post({"status": "on", "brightness": 60})
+        self.assertEqual(response.status_code, 200)
+        hardware.assert_called_once_with("control_light", "on", 60, "white")
+
+    def test_night_mode_uses_night_action(self):
+        response, hardware = self._post({"status": "on", "brightness": 25, "mode": "night"})
+        hardware.assert_called_once_with("control_light", "on", 25, "night")
+        self.assertIn("夜灯", response.get_json()["message"])
+
+    def test_color_temperature_is_clamped(self):
+        for given, expected in ((9000, 6500), (1000, 2700), (4000, 4000)):
+            _, hardware = self._post({"status": "on", "brightness": 80, "temp": given})
+            hardware.assert_called_once_with("control_light_temp", expected, 80)
+
+    def test_custom_rgb_is_scaled_by_brightness(self):
+        _, hardware = self._post({"status": "on", "brightness": 50, "rgb": [255, 128, 0]})
+        hardware.assert_called_once_with("control_light_color", "rgb", 255, 128, 0,
+                                         brightness_pct=50)
+
+    def test_off_wins_over_any_style(self):
+        _, hardware = self._post({"status": "off", "brightness": 50, "mode": "night",
+                                  "temp": 3000, "rgb": [1, 2, 3]})
+        hardware.assert_called_once_with("control_light", "off", 0)
+
+
 class HardwareTests(unittest.TestCase):
     def setUp(self):
         self.loop = asyncio.new_event_loop()
@@ -216,6 +266,80 @@ class AcProtocolTests(unittest.TestCase):
         expected = midea_ac.to_frames(controller._ac, {"power"})[0]
         for call in controller._send_b.call_args_list:
             self.assertEqual(call.args[0]["hex"], expected)
+
+
+class LightSerialTests(unittest.TestCase):
+    """Web 语义 → B 板串口帧的映射（MCP 工具层）。"""
+
+    def _controller(self):
+        from mcp_home_server import HomeController
+        controller = HomeController.__new__(HomeController)
+        controller._send_b = Mock(return_value="ok")
+        return controller
+
+    def test_white_is_unchanged(self):
+        controller = self._controller()
+        controller.handle_light("white", 180)
+        controller._send_b.assert_called_once_with(
+            {"cmd": "light", "action": "white", "value": 180})
+
+    def test_night_falls_back_to_firmware_default(self):
+        controller = self._controller()
+        controller.handle_light("night")
+        controller._send_b.assert_called_once_with(
+            {"cmd": "light", "action": "night", "value": 60})
+
+    def test_temp_needs_kelvin(self):
+        controller = self._controller()
+        self.assertTrue(controller.handle_light("temp").startswith("error"))
+        controller.handle_light("temp", 200, temp=3000)
+        controller._send_b.assert_called_once_with(
+            {"cmd": "light", "action": "temp", "temp": 3000, "value": 200})
+
+    def test_rgb_keeps_value_as_brightness(self):
+        controller = self._controller()
+        controller.handle_light("rgb", 128, r=255, g=128, b=0)
+        controller._send_b.assert_called_once_with(
+            {"cmd": "light", "action": "rgb", "r": 255, "g": 128, "b": 0, "value": 128})
+
+
+class LightBridgeTests(unittest.TestCase):
+    """硬件桥：百分比/色温 → MCP 工具参数。"""
+
+    def setUp(self):
+        self.bridge = McpHardwareBridge({}, Mock())
+        self.bridge.call_tool = Mock(return_value=(True, "ok"))
+
+    def test_night_uses_night_action(self):
+        self.bridge.control_light("on", 25, "night")
+        self.bridge.call_tool.assert_called_once_with("light", {"action": "night", "value": 64})
+
+    def test_temperature_clamps_kelvin(self):
+        self.bridge.control_light_temp(3000, 50)
+        self.bridge.call_tool.assert_called_once_with(
+            "light", {"action": "temp", "temp": 3000, "value": 128})
+        self.bridge.control_light_temp(9000, 100)
+        self.bridge.call_tool.assert_called_with(
+            "light", {"action": "temp", "temp": 6500, "value": 255})
+
+    def test_rgb_carries_brightness(self):
+        self.bridge.control_light_color("rgb", 255, 128, 0, brightness_pct=50)
+        self.bridge.call_tool.assert_called_once_with(
+            "light", {"action": "rgb", "r": 255, "g": 128, "b": 0, "value": 128})
+
+    def test_preset_color_has_no_brightness(self):
+        self.bridge.control_light_color("red")
+        self.bridge.call_tool.assert_called_once_with("light", {"action": "red"})
+
+    def test_rgb_zero_brightness_is_preserved(self):
+        self.bridge.control_light_color("rgb", 255, 128, 0, brightness_pct=0)
+        self.bridge.call_tool.assert_called_once_with(
+            "light", {"action": "rgb", "r": 255, "g": 128, "b": 0, "value": 0})
+
+    def test_zero_brightness_ack_is_recorded_as_off(self):
+        for action in ('night', 'temp', 'rgb'):
+            self.assertEqual(devices._tool_state_report('light', {'action': action, 'value': 0}),
+                             {'device': 'light', 'status': 'off', 'brightness': 0})
 
 
 class CameraTests(unittest.TestCase):
