@@ -202,7 +202,7 @@ GET 与 POST 等价（便于浏览器地址栏直接点）。
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/api/light` | 返回 `light_status` 与 `light_brightness` |
-| POST | `/api/light` | 开关灯并设置亮度 |
+| POST | `/api/light` | 开关灯、设置亮度与「亮法」（白光 / 夜灯 / 色温 / 自定义颜色） |
 
 请求：
 
@@ -211,7 +211,19 @@ GET 与 POST 等价（便于浏览器地址栏直接点）。
 ```
 
 - `brightness` 为百分比 **0~100**（自动夹取到该范围）；
-- `status:"on"` 且未给亮度时按 100% 处理；`status:"off"` 时亮度强制为 0。
+- `status:"on"` 且未给亮度时按 100% 处理；`status:"off"` 时亮度强制为 0，并忽略所有亮法参数；
+- `mode`（可选）：`white`（缺省，整条灯带白光）/ `night`（夜灯，固件只点亮居中几颗灯珠）；
+- `temp`（可选）：色温 **2700~6500K**（超出自动夹取），由固件按色温表出光，`brightness` 仍是亮度；
+- `rgb`（可选）：`[r,g,b]` 三个 0~255 的自定义颜色，`brightness` 作为整体亮度缩放；
+- 同时给出多个时按 `rgb` > `temp` > `mode` 取其一，一条请求只表达一种亮法。
+
+亮法示例：
+
+```json
+{ "status": "on", "brightness": 25, "mode": "night" }
+{ "status": "on", "brightness": 80, "temp": 3000 }
+{ "status": "on", "brightness": 50, "rgb": [255, 128, 0] }
+```
 
 响应：
 
@@ -219,8 +231,8 @@ GET 与 POST 等价（便于浏览器地址栏直接点）。
 {
   "light_status": "on",
   "light_brightness": 80,
-  "message": "灯光已打开，亮度: 80%",
-  "message_en": "Light turned on, brightness: 80%"
+  "message": "灯光已打开，亮度: 80%（白光）",
+  "message_en": "Light turned on, brightness: 80% (white light)"
 }
 ```
 

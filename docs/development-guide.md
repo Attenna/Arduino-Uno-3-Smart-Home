@@ -103,7 +103,7 @@ module-b-output/
 ```cpp
 // ✅ 允许
 fan.setSpeed(180); fan.stop(); fan.full();
-light.off(); light.white(180); light.red(); light.rgb(255,0,0);
+light.off(); light.white(180); light.night(60); light.temp(3000, 180); light.red(); light.rgb(255,0,0);
 door.open(); door.close();
 
 // ❌ 禁止（业务语义）

@@ -75,6 +75,9 @@ const I18N = {
             // 灯光
             'light.title': '灯光控制',
             'light.brightness': '灯光亮度',
+            'light.temp': '色温',
+            'light.color': '自定义颜色',
+            'light.apply': '应用',
             'light.full': '全亮',
             'light.half': '半亮',
             'light.night': '夜灯',
@@ -419,6 +422,9 @@ const I18N = {
             // Light
             'light.title': 'Light Control',
             'light.brightness': 'Brightness',
+            'light.temp': 'Color Temp',
+            'light.color': 'Custom Color',
+            'light.apply': 'Apply',
             'light.full': 'Full',
             'light.half': 'Half',
             'light.night': 'Night',

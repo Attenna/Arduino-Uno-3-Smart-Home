@@ -254,7 +254,8 @@ ls -l /dev/ttyUSB* /dev/ttyACM* /dev/serial/by-id/* /dev/video*
 
 常用参数宏：门/窗舵机引脚与角度（`DOOR_*` / `WINDOW_*` / `SERVO_SETTLE_TIME`）、
 `FAN_INA` / `FAN_INB`、`RGB_PIN` / `LED_COUNT` / `LIGHT_BRIGHTNESS`、
-`LIGHT_BOOT_ON` / `LIGHT_BOOT_LEVEL`、`BUZZER_*`、`OLED_*` / `OLED_IS_SH1106`、
+`LIGHT_BOOT_ON` / `LIGHT_BOOT_LEVEL`、`LIGHT_NIGHT_COUNT` / `LIGHT_NIGHT_LEVEL`、
+`BUZZER_*`、`OLED_*` / `OLED_IS_SH1106`、
 `MIDEA_*`（美的长码时序）、`FW_VERSION`。
 
 > 所有引脚/阈值/时序只能改 Config.h，禁止在驱动 `.cpp` 内硬编码。

@@ -192,11 +192,25 @@
                             <span class="slider-value" id="brightnessValue">0%</span>
                         </div>
                     </div>
+                    <div class="control-row">
+                        <label data-i18n="light.temp">色温</label>
+                        <div class="slider-container">
+                            <input type="range" id="tempSlider" min="2700" max="6500" step="100" value="4000" class="slider slider-light">
+                            <span class="slider-value" id="tempValue">4000K</span>
+                        </div>
+                    </div>
                     <div class="btn-group">
                         <button class="btn btn-sm" onclick="setLight('on', 100)" data-i18n="light.full">全亮</button>
                         <button class="btn btn-sm" onclick="setLight('on', 50)" data-i18n="light.half">半亮</button>
-                        <button class="btn btn-sm" onclick="setLight('on', 25)" data-i18n="light.night">夜灯</button>
+                        <button class="btn btn-sm" onclick="setLight('on', 25, 'night')" data-i18n="light.night">夜灯</button>
                         <button class="btn btn-sm btn-danger" onclick="setLight('off', 0)" data-i18n="light.off">关闭</button>
+                    </div>
+                    <div class="control-row">
+                        <label data-i18n="light.color">自定义颜色</label>
+                        <div class="slider-container">
+                            <input type="color" id="lightColor" value="#ffb347" class="color-picker">
+                            <button class="btn btn-sm" onclick="applyLightColor()" data-i18n="light.apply">应用</button>
+                        </div>
                     </div>
                 </div>
             </div>

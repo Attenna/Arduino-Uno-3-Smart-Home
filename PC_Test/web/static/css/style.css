@@ -864,6 +864,17 @@ body {
     font-family: 'Courier New', monospace;
 }
 
+/* 灯光自定义颜色取色器：与滑杆同排，尺寸对齐 btn-sm */
+.color-picker {
+    width: 54px;
+    height: 30px;
+    padding: 2px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: var(--bg-secondary);
+    cursor: pointer;
+}
+
 /* ==================== 按钮 ==================== */
 .btn {
     padding: 8px 16px;

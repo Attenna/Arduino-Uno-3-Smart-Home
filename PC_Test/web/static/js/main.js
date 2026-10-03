@@ -218,6 +218,13 @@ function initControlSliders() {
                            const n = parseInt(v);
                            setLight(n > 0 ? 'on' : 'off', n);
                        });
+    // 色温 / 自定义颜色：两者都是「亮法」，滑杆与取色器走同一套防抖收口
+    bindActuatorSlider(document.getElementById('tempSlider'),
+                       document.getElementById('tempValue'),
+                       v => v + 'K',
+                       v => applyLightTemp(parseInt(v)));
+    const colorInput = document.getElementById('lightColor');
+    if (colorInput) colorInput.addEventListener('change', applyLightColor);
     bindActuatorSlider(document.getElementById('acTempSlider'),
                        document.getElementById('acTempLabel'),
                        v => Number(v).toFixed(1) + '\u00b0C',
@@ -528,23 +535,26 @@ function guardWindow() { tapGuard('window', toggleWindow); }
 // --no-serial，DB 里的 light_status/light_brightness 只是「上次命令值」，灯被 B 板
 // 复位或外部关掉后它仍可能记着 on/100。拿它去重会把用户的点击静默吞掉——连请求都
 // 不发、也没有任何提示，表现为「按下没反应」（后端 /api/light 同样已去掉 DB 幂等）。
-let lightInflight = null;    // 正在飞的意图串 status/brightness
-const postLightDebounced = debounce(async (status, brightness) => {
+// style 是「亮法」：{mode:'night'} 夜灯（只亮中间几颗）/ {temp:4000} 色温 / {rgb:[r,g,b]} 自定义色，
+// 缺省 {} 表示白光。后端按 rgb > temp > mode 的优先级只认一种，界面上也照此下发。
+let lightInflight = null;    // 正在飞的意图串 status/brightness/亮法
+const postLightDebounced = debounce(async (status, brightness, style) => {
     brightness = Number(brightness) || 0;
-    const target = status + '/' + brightness;
+    const extra = style || {};
+    const target = status + '/' + brightness + '/' + JSON.stringify(extra);
     if (lightInflight === target) {
         return;              // 同一意图已在飞（触摸双发/连点），其结果即本次结果
     }
     lightInflight = target;
     // 乐观更新：立即刷新本地显示，指令在飞期间界面不卡顿；
     // 失败时 loadStatus() 会用服务端真值回滚界面
-    lastKnownLight = { status, brightness };
+    lastKnownLight = { status, brightness, ...extra };
     const bSlider = document.getElementById('brightnessSlider');
     if (bSlider && document.activeElement !== bSlider) bSlider.value = brightness;
     const bLabel = document.getElementById('brightnessValue');
     if (bLabel) bLabel.textContent = brightness + '%';
     try {
-        const result = await apiPost('/api/light', { status, brightness });
+        const result = await apiPost('/api/light', { status, brightness, ...extra });
         if (result) {
             showNotification(getMessage(result));
         }
@@ -554,8 +564,33 @@ const postLightDebounced = debounce(async (status, brightness) => {
     loadStatus();
 }, 300);
 
-function setLight(status, brightness) {
-    postLightDebounced(status, Number(brightness) || 0);
+function setLight(status, brightness, mode) {
+    postLightDebounced(status, Number(brightness) || 0,
+                       mode ? { mode } : {});
+}
+
+// 色温 / 自定义颜色只改「亮法」，亮度沿用当前档位（灯是关的就用 100% 起步）。
+function currentBrightness(fallback) {
+    const n = lastKnownLight ? Number(lastKnownLight.brightness) : 0;
+    return n > 0 ? n : fallback;
+}
+
+function applyLightTemp(kelvin) {
+    postLightDebounced('on', currentBrightness(100), { temp: Number(kelvin) });
+}
+
+function hexToRgb(hex) {
+    const v = String(hex || '').replace('#', '');
+    const full = v.length === 3 ? v.split('').map(c => c + c).join('') : v;
+    const n = parseInt(full, 16);
+    if (!Number.isFinite(n)) return [255, 255, 255];
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+function applyLightColor() {
+    const input = document.getElementById('lightColor');
+    if (!input) return;
+    postLightDebounced('on', currentBrightness(100), { rgb: hexToRgb(input.value) });
 }
 
 // 风扇卡片按钮：关闭/低速/中速/高速（与灯光相同的防抖收口原因）

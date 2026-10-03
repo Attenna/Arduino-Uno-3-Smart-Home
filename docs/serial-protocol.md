@@ -142,9 +142,11 @@ Module A 原则上"只报告"，下行仅支持少量**无业务含义**的控�
 | `fan` | `set_speed` | `value` 0~255 | 保留 | PWM 调速；D8 非 PWM，退化为开关（0=停，>0=全速） |
 | `fan` | `on` / `full` | - | 保留 | 全速 |
 | `fan` | `off` / `stop` | - | 保留 | 停止 |
-| `light` | `white` | `value` 0~255 | 保留 | 白光亮度 |
-| `light` | `red` / `green` / `blue` / `yellow` / `purple` / `cyan` | - | 保留 | 预设颜色 |
-| `light` | `rgb` | `r`,`g`,`b` | 保留 | 自定义颜色 |
+| `light` | `white` | `value` 0~255 | 保留 | 白光亮度（整条灯带） |
+| `light` | `night` | `value` 0~255（缺省 `LIGHT_NIGHT_LEVEL`=60） | 保留 | 夜灯：只点亮居中 `LIGHT_NIGHT_COUNT`（默认 2）颗灯珠，其余保持熄灭 |
+| `light` | `temp` | `temp` 2700~6500(K)，`value` 0~255（缺省 255） | 保留 | 色温白光：`temp` 定冷暖，`value` 定亮度（查表插值，无浮点运算） |
+| `light` | `red` / `green` / `blue` / `yellow` / `purple` / `cyan` | - | 保留 | 预设颜色（固定亮度，不带 `value`） |
+| `light` | `rgb` | `r`,`g`,`b`，`value` 0~255（缺省 255） | 保留 | 自定义颜色；`value` 是整体亮度缩放 |
 | `light` | `off` | - | 保留 | 关灯 |
 | `buzzer` | `on` / `off` | - | 保留 | 持续响 / 停止 |
 | `buzzer` | `beep` | `count`,`on_ms`,`off_ms` | 保留 | 间歇蜂鸣 |
@@ -166,6 +168,8 @@ Module A 原则上"只报告"，下行仅支持少量**无业务含义**的控�
 {"cmd":"window","action":"close"}
 {"cmd":"fan","action":"set_speed","value":180}
 {"cmd":"light","action":"rgb","r":255,"g":0,"b":0}
+{"cmd":"light","action":"night","value":60}                 // 夜灯：只亮中间 2 颗
+{"cmd":"light","action":"temp","temp":3000,"value":200}     // 3000K 暖白，亮度 200/255
 {"cmd":"buzzer","action":"beep","count":3,"on_ms":200,"off_ms":200}
 {"cmd":"oled","action":"show_text","line":2,"text":"T: 25.3 C"}
 {"cmd":"ir","action":"send_nec","code":16712445}
@@ -227,7 +231,7 @@ Module A 原则上"只报告"，下行仅支持少量**无业务含义**的控�
 ```json
 {"module":"output","type":"selftest","version":"V2.9","uptime_ms":9904,"ok":2,"err":0,
  "fan":{"speed":0,"reclaim":0,"pin":[1,0,1,0]},
- "light":{"level":255,"bright":255,"shows":1,"d4":[1,1,0]},"buzzer":"off"}
+ "light":{"level":255,"bright":255,"shows":1,"lit":0,"d4":[1,1,0]},"buzzer":"off"}
 ```
 
 | 字段 | 含义 |
@@ -237,6 +241,7 @@ Module A 原则上"只报告"，下行仅支持少量**无业务含义**的控�
 | `light.level` | 灯的**意图值**（`Light::getLevel()`） |
 | `light.bright` | 灯带全局亮度（`setBrightness` 的值） |
 | `light.shows` | `_strip.show()` **实际被调用的次数**——证明数据真的推给灯带了 |
+| `light.lit` | 最近一次点亮的灯珠数，`0` = 整条；夜灯下为 `LIGHT_NIGHT_COUNT`（区分「整条暗」与「只亮几颗」） |
 | `light.d4` | `[方向位, 拉高读回, 拉低读回]`；绕过 NeoPixel 直接把数据脚当 GPIO |
 | `buzzer` | 蜂鸣器实际电平 |
 

@@ -73,6 +73,7 @@ void assignNumber(Command& cmd, const char* key, unsigned long v) {
     else if (strcmp(key, "r") == 0)      cmd.r = (long)v;
     else if (strcmp(key, "g") == 0)      cmd.g = (long)v;
     else if (strcmp(key, "b") == 0)      cmd.b = (long)v;
+    else if (strcmp(key, "temp") == 0)   cmd.temp = (long)v;
     else if (strcmp(key, "count") == 0)  cmd.count = (long)v;
     else if (strcmp(key, "on_ms") == 0)  cmd.onMs = (long)v;
     else if (strcmp(key, "off_ms") == 0) cmd.offMs = (long)v;
