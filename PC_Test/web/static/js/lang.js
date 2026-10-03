@@ -31,6 +31,9 @@ const I18N = {
             'temp.auto_fan': '温度过高将自动启动风扇',
             'temp.trend': '温度趋势',
             'temp.trend_24h': '温度趋势 (24小时)',
+            'temp.updated': '更新于 {0}',
+            'temp.stale': '数据未更新（传感器离线或入库链路故障）',
+            'temp.ingest_fail': '入库失败 {0} 帧',
             'temp.label': '温度 (°C)',
             'humidity.label': '湿度 (%)',
 
@@ -375,6 +378,9 @@ const I18N = {
             'temp.auto_fan': 'Fan auto-starts when temp is high',
             'temp.trend': 'Temperature Trend',
             'temp.trend_24h': 'Temperature Trend (24H)',
+            'temp.updated': 'Updated {0}',
+            'temp.stale': 'Data stale (sensor offline or ingest failing)',
+            'temp.ingest_fail': '{0} frames failed to store',
             'temp.label': 'Temperature (°C)',
             'humidity.label': 'Humidity (%)',
 
