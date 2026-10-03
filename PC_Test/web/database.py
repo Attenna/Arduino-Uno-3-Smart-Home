@@ -21,6 +21,9 @@ SENSORS = ('temperature', 'humidity', 'light_raw', 'smoke', 'rain', 'distance',
            'touch', 'motion', 'soil_moisture', 'soil_dry')
 OUTPUTS = ('door_status', 'window_status', 'fan_speed',
            'light_status', 'light_brightness', 'buzzer_status',
+           # 灯的「亮法」（白光/夜灯/色温/自定义颜色）：与开关、亮度一起持久化，
+           # 面板据此回显当前是怎么亮的，也让只调亮度的命令不必猜颜色（#27）
+           'light_mode', 'light_temp', 'light_rgb',
            # 美的空调（红外遥控）：都是"已收到 ACK 的指令状态"，与其它执行器一样持久保留
            'ac_status', 'ac_mode', 'ac_temperature', 'ac_fan',
            'ac_swing_ud', 'ac_swing_lr', 'ac_eco', 'ac_fzc', 'ac_timer')
@@ -147,6 +150,11 @@ class SmartHomeDB:
             extra.update({k: 'TEXT' for k in ('rb_door_status','rb_window_status',
                                               'rb_buzzer_status','rb_seen_at')})
             extra.update({k: 'REAL' for k in ('ac_temperature','ac_timer')})
+            # 灯的「亮法」（#27）：除白光/夜灯外还有色温与自定义颜色，B 板一条命令
+            # 只认一种。mode 记是哪一种，temp/rgb 只在对应 mode 下有值，所以库里
+            # 不会出现「色温和颜色同时有效」的矛盾行。
+            extra.update({'light_mode': 'TEXT', 'light_rgb': 'TEXT',
+                          'light_temp': 'INTEGER'})
             columns = {r['name'] for r in c.execute('PRAGMA table_info(system_status)')}
             for key, kind in extra.items():
                 if key not in columns:
@@ -238,6 +246,10 @@ class SmartHomeDB:
             if module == 'sensor' and not online:
                 for field in fields:
                     result[field] = None
+        # light_rgb 在库里存成 "r,g,b" 文本；对外一律给三元列表。/api/status 是公开
+        # 契约，前端与 HA 都不该去猜存储格式（#27：文本直接让页面的颜色恢复逻辑失效）。
+        if isinstance(result.get('light_rgb'), str):
+            result['light_rgb'] = [int(v) for v in result['light_rgb'].split(',')]
         return result
 
     def update_status(self, **kwargs):

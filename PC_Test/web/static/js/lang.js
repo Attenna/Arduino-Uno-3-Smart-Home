@@ -83,6 +83,7 @@ const I18N = {
             'light.apply': '应用',
             'light.full': '全亮',
             'light.half': '半亮',
+            'light.white': '白光',
             'light.night': '夜灯',
             'light.off': '关闭',
 
@@ -437,6 +438,7 @@ const I18N = {
             'light.apply': 'Apply',
             'light.full': 'Full',
             'light.half': 'Half',
+            'light.white': 'White',
             'light.night': 'Night',
             'light.off': 'Off',
 

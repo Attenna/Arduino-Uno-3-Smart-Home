@@ -43,6 +43,7 @@ from .schema import validate_rule, validate_rules
 from . import webhook
 import midea_ac
 from .. import voice_client
+from .. import light_state
 from ..ac_state import AC_LOCK, AC_KEYS, ac_state_from_db, write_ac_state
 # RFID 卡号归一化：规则里存的与事件里带的两侧都归一后再比
 from ..database import normalize_uid
@@ -1061,8 +1062,15 @@ class AutomationEngine:
                 ok, msg = self.bridge.control_light(status, brightness)
             if ok:
                 self._last_cmd["light"] = target_light if not color else None
-                self.db.update_status(light_status=status, light_brightness=brightness)
-                self.db.add_light_event("客厅主灯(自动化)", status, brightness)
+                # 亮法一并记账：规则把灯设成红色/色温后，面板显示的才是灯真正的
+                # 样子，而不是上一次面板命令留下的颜色（#27）。关灯不改亮法。
+                style = (light_state.from_color_param(
+                    color, action.get("r"), action.get("g"), action.get("b"))
+                    if status == "on" else light_state.from_status(current))
+                values = light_state.status_values(status, brightness, style)
+                self.db.update_status(**values)
+                self.db.add_light_event("客厅主灯(自动化)", values["light_status"],
+                                        values["light_brightness"])
             return ok, msg
         if device == "fan":
             # 风扇状态机：set=绝对转速（旧规则兼容）；on/off 语义动作；
