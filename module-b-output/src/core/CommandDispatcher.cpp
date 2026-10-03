@@ -84,12 +84,13 @@ bool CommandDispatcher::_route(const Command& cmd) {
         if (strcmp(cmd.action, "white") == 0) { _light.white((int)cmd.value); return true; }
         // 夜灯：只点中间几颗；未带 value 时用 Config 里的 LIGHT_NIGHT_LEVEL
         if (strcmp(cmd.action, "night") == 0) {
-            _light.night(cmd.value > 0 ? (int)cmd.value : LIGHT_NIGHT_LEVEL);
+            _light.night(cmd.hasValue ? (int)constrain(cmd.value, 0L, 255L) : LIGHT_NIGHT_LEVEL);
             return true;
         }
         // 色温：temp 是色温(K)，value 是亮度 0~255（缺省 255）
         if (strcmp(cmd.action, "temp") == 0) {
-            _light.temp((int)cmd.temp, cmd.value > 0 ? (int)cmd.value : 255);
+            _light.temp((int)constrain(cmd.temp, (long)LIGHT_TEMP_MIN, (long)LIGHT_TEMP_MAX),
+                        cmd.hasValue ? (int)constrain(cmd.value, 0L, 255L) : 255);
             return true;
         }
         if (strcmp(cmd.action, "red") == 0)   { _light.red();    return true; }
@@ -101,7 +102,7 @@ bool CommandDispatcher::_route(const Command& cmd) {
         // rgb 的 value 是整体亮度缩放 0~255，缺省 255（保持旧行为：按原色全亮）
         if (strcmp(cmd.action, "rgb") == 0) {
             _light.rgb((int)cmd.r, (int)cmd.g, (int)cmd.b,
-                       cmd.value > 0 ? (int)cmd.value : 255);
+                       cmd.hasValue ? (int)constrain(cmd.value, 0L, 255L) : 255);
             return true;
         }
     }

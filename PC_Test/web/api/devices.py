@@ -621,6 +621,9 @@ def _tool_state_report(name, args):
     if name == "light":
         if action == "off":
             return {"device": "light", "status": "off", "brightness": 0}
+        if action in ("night", "temp", "rgb") and args.get("value") is not None:
+            if _pct255(args["value"], 0) == 0:
+                return {"device": "light", "status": "off", "brightness": 0}
         if action == "night":
             # 夜灯缺省 60/255 ≈ 24%
             return {"device": "light", "status": "on",

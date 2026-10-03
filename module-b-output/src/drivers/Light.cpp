@@ -1,4 +1,5 @@
 #include "Light.h"
+#include "LightMath.h"
 #include "../Config.h"
 #include <Adafruit_NeoPixel.h>
 #include <avr/pgmspace.h>
@@ -120,9 +121,10 @@ void Light::temp(int kelvin, int level) {
     }
 
     // level 是整体亮度缩放：色温决定「什么颜色」，level 决定「多亮」
-    r = r * level / 255;
-    g = g * level / 255;
-    b = b * level / 255;
+    // AVR int 只有 16 位，乘积最大 65025，必须先提升再相乘。
+    r = scaleLightChannel(r, level);
+    g = scaleLightChannel(g, level);
+    b = scaleLightChannel(b, level);
     setRgb(r, g, b);
 }
 
@@ -135,9 +137,9 @@ void Light::cyan()   { setRgb(0, 180, 255); }
 
 void Light::rgb(int r, int g, int b, int level) {
     level = constrain(level, 0, 255);
-    r = constrain(r, 0, 255) * level / 255;
-    g = constrain(g, 0, 255) * level / 255;
-    b = constrain(b, 0, 255) * level / 255;
+    r = scaleLightChannel(constrain(r, 0, 255), level);
+    g = scaleLightChannel(constrain(g, 0, 255), level);
+    b = scaleLightChannel(constrain(b, 0, 255), level);
     setRgb(r, g, b);
 }
 

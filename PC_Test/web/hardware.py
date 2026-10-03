@@ -673,7 +673,7 @@ class McpHardwareBridge:
                 return False, "RGB 需要 r/g/b 三个值(0~255)"
             args.update({"r": int(r), "g": int(g), "b": int(b)})
             if brightness_pct is not None:
-                args["value"] = max(1, min(255, round(int(brightness_pct) * 255 / 100)))
+                args["value"] = max(0, min(255, round(int(brightness_pct) * 255 / 100)))
         return self.call_tool("light", args)
 
     def self_test(self, timeout: float = 8.0) -> tuple[bool, str]:

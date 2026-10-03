@@ -318,6 +318,16 @@ class LightBridgeTests(unittest.TestCase):
         self.bridge.control_light_color("red")
         self.bridge.call_tool.assert_called_once_with("light", {"action": "red"})
 
+    def test_rgb_zero_brightness_is_preserved(self):
+        self.bridge.control_light_color("rgb", 255, 128, 0, brightness_pct=0)
+        self.bridge.call_tool.assert_called_once_with(
+            "light", {"action": "rgb", "r": 255, "g": 128, "b": 0, "value": 0})
+
+    def test_zero_brightness_ack_is_recorded_as_off(self):
+        for action in ('night', 'temp', 'rgb'):
+            self.assertEqual(devices._tool_state_report('light', {'action': action, 'value': 0}),
+                             {'device': 'light', 'status': 'off', 'brightness': 0})
+
 
 class CameraTests(unittest.TestCase):
     def test_encoding_shared_and_no_duplicate_frames(self):

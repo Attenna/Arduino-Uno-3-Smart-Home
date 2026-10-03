@@ -16,6 +16,7 @@ let acState = { power: false, mode: 'auto', temperature: 26, fan: 'auto',
 // 屏蔽移动端滑块连续 change、重复点击造成的无意义指令
 let lastKnownFanSpeed = null;
 let lastKnownLight = null;   // { status: 'on'|'off', brightness: Number }
+let lightStyle = {};        // 当前页面选择的模式；状态接口只回传开关/亮度
 
 // 页面实例标识 + 单调命令序号：服务端据此识别「迟到的旧命令」并丢弃，
 // 防止弱网下请求乱序到达（例如先关后开两请求颠倒 → 风扇关了又自己开）。
@@ -216,11 +217,11 @@ function initControlSliders() {
                        v => v + '%',
                        v => {
                            const n = parseInt(v);
-                           setLight(n > 0 ? 'on' : 'off', n);
+                           postLightDebounced(n > 0 ? 'on' : 'off', n, lightStyle);
                        });
     // 色温 / 自定义颜色：两者都是「亮法」，滑杆与取色器走同一套防抖收口
     bindActuatorSlider(document.getElementById('tempSlider'),
-                       document.getElementById('tempValue'),
+                       document.getElementById('lightTempValue'),
                        v => v + 'K',
                        v => applyLightTemp(parseInt(v)));
     const colorInput = document.getElementById('lightColor');
@@ -565,8 +566,8 @@ const postLightDebounced = debounce(async (status, brightness, style) => {
 }, 300);
 
 function setLight(status, brightness, mode) {
-    postLightDebounced(status, Number(brightness) || 0,
-                       mode ? { mode } : {});
+    lightStyle = mode ? { mode } : {};
+    postLightDebounced(status, Number(brightness) || 0, lightStyle);
 }
 
 // 色温 / 自定义颜色只改「亮法」，亮度沿用当前档位（灯是关的就用 100% 起步）。
@@ -576,7 +577,8 @@ function currentBrightness(fallback) {
 }
 
 function applyLightTemp(kelvin) {
-    postLightDebounced('on', currentBrightness(100), { temp: Number(kelvin) });
+    lightStyle = { temp: Number(kelvin) };
+    postLightDebounced('on', currentBrightness(100), lightStyle);
 }
 
 function hexToRgb(hex) {
@@ -590,7 +592,8 @@ function hexToRgb(hex) {
 function applyLightColor() {
     const input = document.getElementById('lightColor');
     if (!input) return;
-    postLightDebounced('on', currentBrightness(100), { rgb: hexToRgb(input.value) });
+    lightStyle = { rgb: hexToRgb(input.value) };
+    postLightDebounced('on', currentBrightness(100), lightStyle);
 }
 
 // 风扇卡片按钮：关闭/低速/中速/高速（与灯光相同的防抖收口原因）

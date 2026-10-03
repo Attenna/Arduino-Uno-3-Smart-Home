@@ -68,7 +68,7 @@ void assignString(Command& cmd, const char* key, const char* val) {
 }
 
 void assignNumber(Command& cmd, const char* key, unsigned long v) {
-    if (strcmp(key, "value") == 0)       cmd.value = (long)v;
+    if (strcmp(key, "value") == 0) { cmd.value = (long)v; cmd.hasValue = true; }
     else if (strcmp(key, "id") == 0)     cmd.id = (long)v;
     else if (strcmp(key, "r") == 0)      cmd.r = (long)v;
     else if (strcmp(key, "g") == 0)      cmd.g = (long)v;
