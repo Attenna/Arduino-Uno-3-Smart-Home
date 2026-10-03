@@ -364,6 +364,38 @@ class FaceEngine:
         self.save_config(self.config)
         return True
 
+    def has_identity(self, name: str) -> bool:
+        """人脸库里到底有没有这个身份 —— 名单查不到人时要区分「没录过」和「录过没进名单」。"""
+        if not name:
+            return False
+        if self.recognizer is not None and any(
+                str(i.get("name")) == name
+                for i in (self.recognizer.identities or [])):
+            return True
+        try:
+            return (AUTHORIZED_DIR / identity_name(name)).is_dir()
+        except ValueError:
+            return False
+
+    def identity_count(self) -> int:
+        return (len(self.recognizer.identities or [])
+                if self.recognizer is not None else 0)
+
+    def library_identities(self) -> list[str]:
+        """人脸目录里到底有哪些身份（诊断孤儿用：认得出但名单里没有的人）。"""
+        if not AUTHORIZED_DIR.is_dir():
+            return []
+        return sorted(p.name for p in AUTHORIZED_DIR.iterdir() if p.is_dir())
+
+    def recognize_jpeg(self, blob: bytes) -> dict:
+        """识别一整帧 JPEG（门口识别哨兵用）。
+
+        与录入共用同一把锁：两个线程同时进 ultralytics 推理没有保护，而且录脸
+        本来就该独占摄像头（人站在门口摆姿势，此时不需要刷脸开门）。
+        """
+        with self._enroll_lock:
+            return self.recognize_from_base64(base64.b64encode(blob).decode())
+
     def remove_known_face(self, face_id: str) -> bool:
         known = self.config.get("known_faces", {})
         if face_id in known:

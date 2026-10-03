@@ -11,10 +11,12 @@ access_denied_buzzer，用户可改可停用）。
     房卡 —— 点「录入房卡」开一个等待会话，用户把卡贴到 A 板 RC522 上，
             web 从串口事件里取到卡号绑到人（``access_guard``）。
 """
+from collections import Counter
+
 from flask import Blueprint, jsonify, request
 
-from ..access_guard import CARD_ENROLL_TTL_S
-from ..extensions import access_guard, db, face_engine
+from ..access_guard import CARD_ENROLL_TTL_S, deny_texts
+from ..extensions import access_guard, db, face_engine, face_watcher
 
 bp = Blueprint("access", __name__)
 
@@ -174,7 +176,8 @@ def access_test():
     """自测口：拿名单里的真实人员走一遍完整鉴权链（不碰硬件、不录凭证）。
 
     替代旧页面上写死的 FACE001/002/003 三个演示按钮 —— 身份来自数据库，
-    鉴权、日志、事件广播与真实刷卡/推送完全同一条路径。
+    鉴权、日志、事件广播与真实刷卡/推送完全同一条路径；唯一区别是不去抖，
+    连点两次就该看到两条日志，否则用户以为按钮失灵。
     """
     data = request.json or {}
     method = data.get("method") if data.get("method") in VERIFY_METHODS else "face"
@@ -186,14 +189,52 @@ def access_test():
         label = "人脸" if method == "face" else "房卡"
         return _fail(f"该人员还没有录入{label}", f"Person has no {method} credential",
                      400)
-    matched = access_guard.verify(method, credential)
+    matched = access_guard.verify(method, credential, debounce=False)
     granted = matched is not None
+    # 被拒时把原因一起带回去：只说「未识别」用户不知道该去录脸还是去启用人员
+    reason = None if granted else db.diagnose(credential, method)[0]
+    label, label_en = deny_texts(reason) if reason else ("", "")
     return jsonify({
         "granted": granted,
         "person": matched["name"] if granted else None,
-        "method": method, "credential": credential,
+        "method": method, "credential": credential, "reason": reason,
         "message": (f"验证通过，欢迎 {matched['name']}!" if granted
-                    else "身份未识别，访问被拒绝"),
+                    else f"未放行：{label}"),
         "message_en": (f"Verified, Welcome {matched['name']}!" if granted
-                       else "Not recognized, access denied"),
+                       else f"Access denied: {label_en}"),
+    })
+
+
+# ==================== 门禁体检 ====================
+
+@bp.route("/api/access/diagnostics")
+def access_diagnostics():
+    """名单 / 人脸库 / 识别哨兵三方对不对得上，页面据此给提示。
+
+    「录了脸却不开门」的原因散在三处 —— 人脸库里没这张脸、名单里没这个人、
+    哨兵根本没在跑；让用户逐处排查不如一次列出来。只读，不改任何东西。
+    """
+    persons = [_person_json(p) for p in db.list_persons()]
+    face_ids = {p["face_id"] for p in persons if p.get("face_id")}
+    library = face_engine.library_identities()
+    known = face_engine.config.get("known_faces", {}) or {}
+    active = Counter(p["face_id"] for p in persons
+                     if p["face_id"] and p["enabled"])
+    return jsonify({
+        # 认得出但名单里没有：刷脸必然被拒（旧演示数据或删人没清目录留下的）
+        "orphan_identities": [i for i in library if i not in face_ids],
+        # 名单里生效但一张注册照都没有：刷脸永远认不到他
+        "persons_without_photos": [{"id": p["id"], "name": p["name"]}
+                                   for p in persons
+                                   if p["enabled"] and not p["face_images"]],
+        # 同一个 face_id 挂在一个以上生效人员身上：鉴权会按歧义一律拒绝
+        "ambiguous_face_ids": sorted(k for k, n in active.items() if n > 1),
+        # known_faces 里既不在名单也不在库里的别名（模拟模式演示残留）
+        "dead_aliases": sorted(k for k in known
+                               if k not in face_ids and k not in library),
+        "library_count": len(library),
+        "persons_count": len(persons),
+        "watcher": face_watcher.state(),
+        "recent_repeats": access_guard.recent_repeats(),
+        "recognition": dict(face_engine.config.get("recognition", {}) or {}),
     })

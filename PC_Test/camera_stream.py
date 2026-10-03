@@ -11,6 +11,9 @@
 自行恢复。断流期间 /video_feed 发送占位帧（而不是静默不返回），前端
 onerror 与 /api/camera/status 因此能看到真实状态。
 
+路由：/ 首页、/video_feed MJPEG 流、/snapshot 最近一帧单张 JPEG（供
+后端识别哨兵轮询，无新鲜帧时返回 503 JSON，绝不发占位帧）、/health。
+
 用法:
     python camera_stream.py                       # 自动发现摄像头，本地窗口 + HTTP 流
     python camera_stream.py --mode web            # 仅 HTTP 流（适合香橙派无头环境）
@@ -366,6 +369,21 @@ def make_app(src, capture_alive):
     def video_feed():
         return Response(stream_multipart(src),
                         mimetype="multipart/x-mixed-replace; boundary=frame")
+
+    @app.route("/snapshot")
+    def snapshot():
+        # 识别哨兵要把「没画面」和「画面是占位帧」区分开，所以无新鲜帧时报 503 而不是发占位帧
+        frame = src.fresh_frame()
+        if frame is None:
+            return jsonify({"error": "摄像头当前无新鲜画面",
+                            "error_en": "no fresh frame available"}), 503
+        ok, encoded = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+        if not ok:
+            return jsonify({"error": "画面编码 JPEG 失败",
+                            "error_en": "jpeg encode failed"}), 503
+        resp = Response(encoded.tobytes(), mimetype="image/jpeg")
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
 
     @app.route("/health")
     def health():

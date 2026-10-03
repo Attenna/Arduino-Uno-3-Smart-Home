@@ -2119,7 +2119,8 @@ async function refreshLogs() {
     if (!tbody) return;
     tbody.innerHTML = (data.logs || []).map(r => {
         const icon = r.success ? '✅' : (r.triggered ? '⚠️' : '•');
-        const ts = (r.timestamp || '').replace('T', ' ').slice(0, 19);
+        const when = serverDate(r.timestamp);
+        const ts = when ? when.toLocaleString(I18N.currentLang === 'zh' ? 'zh-CN' : 'en-US') : '';
         return `<tr><td>${esc(ts)}</td><td>${esc(r.rule_name)}</td>` +
                `<td>${icon} ${esc(r.reason || '')}<br>` +
                `<span style="color:var(--text-muted)">${r.conditions_hold ? '走「那么」' : '走「否则」'}</span></td></tr>`;

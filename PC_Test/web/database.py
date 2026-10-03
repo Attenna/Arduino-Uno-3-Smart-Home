@@ -29,6 +29,18 @@ def utcnow():
     return datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S.%f')
 
 
+def age_seconds(value):
+    """UTC naive 时间串距今多少秒；解析不了就返回 None（别让页面瞎猜新鲜度）。"""
+    text = str(value or '').strip().replace('T', ' ')[:26]
+    for fmt in ('%Y-%m-%d %H:%M:%S.%f', '%Y-%m-%d %H:%M:%S'):
+        try:
+            when = datetime.strptime(text, fmt)
+        except ValueError:
+            continue
+        return max(0.0, (datetime.now(timezone.utc).replace(tzinfo=None) - when).total_seconds())
+    return None
+
+
 def normalize_uid(value):
     uid = re.sub(r'[\s:-]', '', str(value or '')).upper()
     if len(uid) not in (8, 14, 20) or not re.fullmatch(r'[0-9A-F]+', uid):
@@ -152,7 +164,8 @@ class SmartHomeDB:
             for table, definition in definitions.items():
                 c.execute(f'CREATE TABLE IF NOT EXISTS {table} ({definition})')
             additions = {'authorized_persons': {'rfid_uid':'TEXT', 'enabled':'INTEGER NOT NULL DEFAULT 0'},
-                         'access_logs': {'credential':'TEXT', 'command_status':'TEXT'}}
+                         'access_logs': {'credential':'TEXT', 'command_status':'TEXT', 'deny_reason':'TEXT'},
+                         'face_events': {'deny_reason':'TEXT'}}
             for table, fields in additions.items():
                 names = {r['name'] for r in c.execute(f'PRAGMA table_info({table})')}
                 for key, definition in fields.items():
@@ -319,10 +332,10 @@ class SmartHomeDB:
     def get_access_logs(self, limit=50):
         return self._rows('SELECT * FROM access_logs ORDER BY id DESC LIMIT ?',(max(1,min(int(limit),500)),))
 
-    def add_access_log(self, person_name, access_type, status, credential=None, command_status=None):
+    def add_access_log(self, person_name, access_type, status, credential=None, command_status=None, deny_reason=None):
         with self.connection() as c:
-            return c.execute('INSERT INTO access_logs(timestamp,person_name,access_type,status,credential,command_status) VALUES(?,?,?,?,?,?)',
-                             (utcnow(),person_name,access_type,status,credential,command_status)).lastrowid
+            return c.execute('INSERT INTO access_logs(timestamp,person_name,access_type,status,credential,command_status,deny_reason) VALUES(?,?,?,?,?,?,?)',
+                             (utcnow(),person_name,access_type,status,credential,command_status,deny_reason)).lastrowid
 
     def get_authorized_persons(self):
         """当前生效的名单（鉴权用；停用的不算）。"""
@@ -392,17 +405,39 @@ class SmartHomeDB:
             c.execute('DELETE FROM authorized_persons WHERE id=?', (person_id,))
         return person
 
-    def find_authorized(self, credential, kind):
-        if not credential or kind not in ('rfid','face'):
-            return None
+    def diagnose(self, credential, kind):
+        """鉴权判定 + 失败原因：返回 (reason, person|None)。
+
+        页面上「被拒」必须说得出为什么 —— 只写「未知人员」时，用户分不清是没录入、
+        被停用还是名单里两个人共用一个凭证，而这三种的处置方式完全不同。
+        reason: matched / no_such_identity / disabled / ambiguous / bad_credential
+        """
+        if kind not in ('rfid','face'):
+            return 'bad_credential', None
+        if not credential:
+            return 'no_such_identity', None
         if kind == 'rfid':
             try:
                 credential = normalize_uid(credential)
             except ValueError:
-                return None
-        col = 'rfid_uid' if kind == 'rfid' else 'face_id'
-        rows = self._rows(f'SELECT * FROM authorized_persons WHERE enabled=1 AND {col}=?',(credential,))
-        return rows[0] if len(rows) == 1 else None
+                return 'bad_credential', None
+            col = 'rfid_uid'
+        else:
+            col = 'face_id'
+        rows = self._rows(f'SELECT * FROM authorized_persons WHERE {col}=?',(credential,))
+        if not rows:
+            return 'no_such_identity', None
+        active = [r for r in rows if r.get('enabled')]
+        if not active:
+            return 'disabled', rows[0]
+        if len(active) > 1:
+            return 'ambiguous', None
+        return 'matched', active[0]
+
+    def find_authorized(self, credential, kind):
+        """当前生效名单里的唯一命中；任何其它情况（未登记/停用/歧义）都不放行。"""
+        reason, person = self.diagnose(credential, kind)
+        return person if reason == 'matched' else None
 
     def get_statistics(self):
         temp = self._rows("SELECT AVG(temperature) avg,MAX(temperature) max,MIN(temperature) min,AVG(humidity) avg_humidity FROM temperature_history WHERE source='hardware' AND timestamp>datetime('now','-24 hours')")[0]
@@ -421,9 +456,18 @@ class SmartHomeDB:
 
     def get_latest_face_event(self):
         rows = self.get_face_events(1)
-        return rows[0] if rows else None
+        if not rows:
+            return None
+        event = rows[0]
+        # 库里存的是 UTC naive，浏览器再按本地时区算就会差 8 小时；
+        # 「这条多久前」由后端算，前端只管按新鲜度决定要不要当实时判定用
+        event['age_s'] = age_seconds(event.get('timestamp'))
+        return event
 
-    def update_face_event_status(self, event_id, status, verified=False):
+    def update_face_event_status(self, event_id, status, verified=False,
+                                 deny_reason=None):
+        """把识别事件的最终判定写回去；被拒时连原因一起存，页面才说得清为什么。"""
         with self.connection() as c:
-            return c.execute('UPDATE face_events SET status=?,verified=? WHERE id=?',(status,int(verified),event_id)).rowcount > 0
+            return c.execute('UPDATE face_events SET status=?,verified=?,deny_reason=? WHERE id=?',
+                             (status, int(verified), deny_reason, event_id)).rowcount > 0
 

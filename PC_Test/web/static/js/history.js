@@ -143,9 +143,9 @@ async function loadHistory() {
     // 更新图表
     if (historyChart) {
         const labels = reversed.map(d => {
-            const dt = new Date(d.timestamp);
+            const dt = serverDate(d.timestamp);
             const locale = I18N.currentLang === 'zh' ? 'zh-CN' : 'en-US';
-            return dt.toLocaleString(locale, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+            return dt ? dt.toLocaleString(locale, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '--';
         });
         
         let values;
@@ -224,9 +224,9 @@ function updateTable(dataType, data) {
     let bodyHTML = '';
     
     displayData.forEach(d => {
-        const dt = new Date(d.timestamp);
+        const dt = serverDate(d.timestamp);
         const locale = I18N.currentLang === 'zh' ? 'zh-CN' : 'en-US';
-        const timeStr = dt.toLocaleString(locale);
+        const timeStr = dt ? dt.toLocaleString(locale) : '--';
         bodyHTML += `<tr><td>${timeStr}</td>`;
         
         switch (dataType) {

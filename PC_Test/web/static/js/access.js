@@ -7,6 +7,9 @@
 let facePollTimer = null;
 let lastEventId = null;
 let persons = [];
+// 识别哨兵的状态与体检结果缓存：语言切换与轮询都拿它重渲染，不重复请求
+let diag = null;
+const DIAG_INTERVAL_MS = 5000;
 
 // 截帧数量与后端 face/engine.py 的 MAX_ENROLL_FRAMES 对齐
 const ENROLL_MAX_FRAMES = 8;
@@ -26,6 +29,7 @@ document.addEventListener('DOMContentLoaded', () => {
     loadFaceEvents();
     startFacePolling();
     startFaceStream();
+    setInterval(loadDiagnostics, DIAG_INTERVAL_MS);   // 首帧由 loadPersons() 带出来
     document.getElementById('personList').addEventListener('click', onPersonAction);
 });
 
@@ -126,23 +130,62 @@ function report(res, okType = 'success') {
 
 // ==================== 实时识别结果轮询 ====================
 
+// 超过这个秒数的「最新事件」不再当实时判定用：面板宁可空着，也不能把昨天
+// 测试脚本塞进库的假放行显示成「摄像头前有人被验证通过」。
+const FACE_FRESH_WINDOW_S = 90;
+
 function startFacePolling() {
     // 每2秒轮询最新识别事件
-    facePollTimer = setInterval(pollLatestFaceEvent, 2000);
+    facePollTimer = setInterval(() => pollLatestFaceEvent(), 2000);
 }
 
-async function pollLatestFaceEvent() {
+
+function agoText(seconds) {
+    const s = Math.max(0, Math.round(Number(seconds) || 0));
+    if (s < 60) return t('access.ago_s', s);
+    if (s < 3600) return t('access.ago_m', Math.round(s / 60));
+    if (s < 86400) return t('access.ago_h', Math.round(s / 3600));
+    return t('access.ago_d', Math.round(s / 86400));
+}
+
+async function pollLatestFaceEvent(silent) {
     const event = await apiGet('/api/face/events/latest');
-    if (!event || !event.id) return;
+    if (!event || !event.id) {
+        showFaceWaiting();
+        return;
+    }
 
     // 只有新事件才更新UI
     if (lastEventId === event.id) return;
     lastEventId = event.id;
 
-    updateFaceResultDisplay(event);
+    if (typeof event.age_s === 'number' && event.age_s > FACE_FRESH_WINDOW_S) {
+        // 陈旧事件：留在下面的事件表里，但不占住「刚刚发生了什么」这块面板
+        showFaceWaiting(event);
+        return;
+    }
+
+    updateFaceResultDisplay(event, silent);
 }
 
-function updateFaceResultDisplay(event) {
+function showFaceWaiting(event) {
+    const waitingEl = document.getElementById('faceResultWaiting');
+    const contentEl = document.getElementById('faceResultContent');
+    if (!waitingEl || !contentEl) return;
+    contentEl.classList.add('hidden');
+    waitingEl.classList.remove('hidden');
+    const title = document.getElementById('faceWaitingTitle');
+    const sub = document.getElementById('faceWaitingSub');
+    if (event && event.id) {
+        if (title) title.textContent = t('access.waiting_stale');
+        if (sub) sub.textContent = t('access.waiting_stale_sub', agoText(event.age_s));
+    } else {
+        if (title) title.textContent = t('access.waiting_push');
+        if (sub) sub.textContent = t('access.waiting_sub');
+    }
+}
+
+function updateFaceResultDisplay(event, silent) {
     const waitingEl = document.getElementById('faceResultWaiting');
     const contentEl = document.getElementById('faceResultContent');
     const statusEl = document.getElementById('faceResultStatus');
@@ -156,6 +199,7 @@ function updateFaceResultDisplay(event) {
 
     const isGranted = event.status === 'granted';
     const lang = I18N.currentLang;
+    const reason = reasonText(event.deny_reason);
 
     // 状态样式
     if (isGranted) {
@@ -175,8 +219,10 @@ function updateFaceResultDisplay(event) {
                 <line x1="15" y1="9" x2="9" y2="15"/>
                 <line x1="9" y1="9" x2="15" y2="15"/>
             </svg>`;
-        nameEl.textContent = event.person_name || t('access.unknown');
-        metaEl.textContent = lang === 'zh' ? '访问被拒绝' : 'Access Denied';
+        nameEl.textContent = event.person_name
+            || (event.face_id ? t('access.unbound') : t('access.unknown_person'));
+        metaEl.textContent = (lang === 'zh' ? '访问被拒绝' : 'Access Denied')
+            + (reason ? '：' + reason : '');
         metaEl.style.color = '#ff1744';
     }
 
@@ -185,22 +231,128 @@ function updateFaceResultDisplay(event) {
     document.getElementById('faceResultConfidence').textContent =
         event.confidence ? (event.confidence * 100).toFixed(1) + '%' : '--';
 
-    const dt = new Date(event.timestamp);
+    const dt = serverDate(event.timestamp);
     const locale = lang === 'zh' ? 'zh-CN' : 'en-US';
     document.getElementById('faceResultTime').textContent =
-        dt.toLocaleString(locale);
+        dt ? dt.toLocaleString(locale) : '--';
     document.getElementById('faceResultSource').textContent =
-        event.device_source || 'orange_pi';
+        sourceText(event.device_source);
 
-    // 通知
-    const msg = isGranted
-        ? (lang === 'zh' ? `${event.person_name} 已通过验证` : `${event.person_name} verified`)
-        : (lang === 'zh' ? '未授权人员，访问被拒绝' : 'Unauthorized access denied');
-    showNotification(msg, isGranted ? 'success' : 'error');
+    // 通知：把「为什么被拒」直接说出口，过去所有拒绝都只有一句话。
+    // 语言切换后的重渲染传 silent，否则每切一次语言就再弹一次窗。
+    if (!silent) {
+        showNotification(isGranted
+            ? t('notify.access_granted', event.person_name || t('access.unknown'))
+            : t('notify.access_denied', reason || t('access.unknown')),
+            isGranted ? 'success' : 'error');
+    }
 
     // 刷新事件列表和门禁日志
     loadFaceEvents();
     loadAccessLogs();
+}
+
+// ==================== 识别哨兵状态 / 门禁体检 ====================
+// 这一页过去只会写「等待香橙派推送识别结果」，用户分不清到底是没摄像头、没录脸、
+// 门口没人还是识别器没起来。后端每轮判定都记在哨兵状态里，这里翻成一句人话。
+
+async function loadDiagnostics() {
+    const body = await apiGet('/api/access/diagnostics');
+    if (!body || body.error) return;
+    diag = body;
+    renderWatcher();
+    renderDiagnostics();
+}
+
+function tk(key, fallback) {
+    const text = t(key);
+    return text === key ? fallback : text;
+}
+
+function reasonText(code) {
+    return code ? tk('access.reason_' + code, code) : '';
+}
+
+// 识别来源：内部标识直接显示时用户只会看到 face_watcher / orange_pi 这种词
+function sourceText(src) {
+    return src ? tk('access.source_' + src, src) : t('access.source_unknown');
+}
+
+// ok=正在识别 / wait=门控没开 / bad=干不了活 / off=没启动
+function watcherTone() {
+    const w = (diag && diag.watcher) || null;
+    if (!w || !w.enabled || !w.running) return 'off';
+    if (w.camera_error || !w.snapshot_url || !w.model_ready || !w.identities) return 'bad';
+    return (w.gate || {}).open ? 'ok' : 'wait';
+}
+
+function watcherText() {
+    const w = (diag && diag.watcher) || null;
+    if (!w) return t('access.watcher_unknown');
+    if (!w.enabled) return t('access.watcher_off');
+    if (!w.running) return t('access.watcher_stopped');
+    if (!w.snapshot_url) return t('access.watcher_no_camera');
+    if (w.camera_error) return t('access.watcher_camera');
+    if (!w.model_ready) return t('access.watcher_no_model');
+    if (!w.identities) return t('access.watcher_no_identity');
+    if (!(w.gate || {}).open) return t('access.watcher_wait_motion');
+    return t('access.watcher_watch', w.interval);
+}
+
+function watcherSub() {
+    const w = (diag && diag.watcher) || {};
+    const parts = [];
+    const last = w.last || null;
+    if (last && last.kind) {
+        let line = tk('access.last_' + last.kind, last.kind);
+        if (last.person) line += '：' + last.person;
+        else if (last.reason) line += '：' + reasonText(last.reason);
+        if (typeof last.age_s === 'number') line = t('access.last_at', line,
+                                                    Math.round(last.age_s));
+        parts.push(line);
+    }
+    const c = w.counts || {};
+    if (typeof c.granted === 'number') {
+        parts.push(t('access.watcher_counts', c.granted, c.denied, c.strangers));
+    }
+    return parts.join(' · ');
+}
+
+function renderWatcher() {
+    const bar = document.getElementById('watcherBar');
+    if (!bar) return;
+    bar.className = 'watcher-bar tone-' + watcherTone();
+    document.getElementById('watcherText').textContent = watcherText();
+    document.getElementById('watcherSub').textContent = watcherSub();
+}
+
+function diagItems() {
+    const d = diag || {};
+    const items = [];
+    (d.orphan_identities || []).forEach(name =>
+        items.push(['warn', t('access.diag_orphan', name)]));
+    (d.persons_without_photos || []).forEach(p =>
+        items.push(['warn', t('access.diag_no_photo', p.name)]));
+    (d.ambiguous_face_ids || []).forEach(id =>
+        items.push(['bad', t('access.diag_ambiguous', id)]));
+    if ((d.dead_aliases || []).length) {
+        items.push(['muted', t('access.diag_aliases', d.dead_aliases.join(', '))]);
+    }
+    (d.recent_repeats || []).forEach(r => {
+        if (r.repeats) {
+            items.push(['muted', t('access.diag_repeat', r.credential, r.repeats)]);
+        }
+    });
+    return items;
+}
+
+function renderDiagnostics() {
+    const box = document.getElementById('accessDiag');
+    if (!box) return;
+    const items = diagItems();
+    box.classList.toggle('hidden', !items.length);
+    box.innerHTML = items.map(item =>
+        `<div class="diag-item diag-${item[0]}">${esc(item[1])}</div>`).join('');
 }
 
 // ==================== 授权人员管理 ====================
@@ -211,6 +363,8 @@ async function loadPersons() {
     persons = list;
     renderPersons();
     renderTestPicker();
+    // 录入/删除人员都会改变体检结论（有没有注册照、库里有没有孤儿），一起刷
+    loadDiagnostics();
 }
 
 // 语言切换：人员条目与两张表都是 JS 渲染的，不在 data-i18n 覆盖范围内，
@@ -221,6 +375,10 @@ function toggleAccessLang() {
     renderTestPicker();
     loadAccessLogs();
     loadFaceEvents();
+    renderWatcher();          // 状态与体检是 JS 渲染的，用缓存立刻翻一次
+    renderDiagnostics();
+    lastEventId = null;       // 结果面板同理：重渲染最新事件，silent 免得再弹通知
+    pollLatestFaceEvent(true);
 }
 
 function renderPersons() {
@@ -489,23 +647,29 @@ async function loadFaceEvents() {
 
     let html = '';
     events.forEach(evt => {
-        const dt = new Date(evt.timestamp);
+        const dt = serverDate(evt.timestamp);
         const locale = lang === 'zh' ? 'zh-CN' : 'en-US';
-        const timeStr = dt.toLocaleString(locale);
+        const timeStr = dt ? dt.toLocaleString(locale) : '--';
 
         const statusClass = evt.status === 'granted' ? 'granted' : 'denied';
         const statusText = evt.status === 'granted'
             ? (lang === 'zh' ? '已通过' : 'Granted')
             : (lang === 'zh' ? '已拒绝' : 'Denied');
+        // 认出身份但名单里没有对应人时，「陌生人」是误导：脸录过，缺的是名单那一行
+        const who = esc(evt.person_name)
+            || (evt.face_id ? t('access.unbound') : t('access.unknown_person'));
 
         html += `
             <tr>
                 <td>${timeStr}</td>
-                <td>${esc(evt.person_name) || (lang === 'zh' ? '未知' : 'Unknown')}</td>
-                <td>${esc(evt.face_id) || '--'}</td>
+                <td>${who}</td>
+                <td>${esc(evt.face_id) || t('access.unmatched')}</td>
                 <td>${evt.confidence ? (evt.confidence * 100).toFixed(1) + '%' : '--'}</td>
-                <td><span class="status-tag ${statusClass}">${statusText}</span></td>
-                <td>${esc(evt.device_source) || 'orange_pi'}</td>
+                <td><span class="status-tag ${statusClass}">${statusText}</span>${
+                    evt.deny_reason
+                        ? `<div class="evt-reason">${esc(reasonText(evt.deny_reason))}</div>`
+                        : ''}</td>
+                <td class="evt-source">${esc(sourceText(evt.device_source))}</td>
             </tr>
         `;
     });
@@ -525,8 +689,8 @@ async function loadAccessLogs() {
     let html = '';
 
     logs.forEach(log => {
-        const dt = new Date(log.timestamp);
-        const timeStr = dt.toLocaleString(locale);
+        const dt = serverDate(log.timestamp);
+        const timeStr = dt ? dt.toLocaleString(locale) : '--';
         const statusClass = log.status === 'granted' ? 'granted' : 'denied';
         const statusText = log.status === 'granted' ? t('access.log_granted') : t('access.log_denied');
         const method = (lang === 'zh' ? ACCESS_METHOD_ZH : ACCESS_METHOD_EN)[log.access_type]
@@ -538,11 +702,13 @@ async function loadAccessLogs() {
                 <td>${esc(log.person_name)}</td>
                 <td>${esc(method)}</td>
                 <td><span class="status-tag ${statusClass}">${statusText}</span></td>
+                <td class="log-reason">${esc(log.status === 'granted'
+                    ? '' : reasonText(log.deny_reason))}</td>
             </tr>
         `;
     });
 
-    body.innerHTML = html || '<tr><td colspan="4">' + t('access.no_records') + '</td></tr>';
+    body.innerHTML = html || '<tr><td colspan="5">' + t('access.no_records') + '</td></tr>';
 }
 
 const ACCESS_METHOD_ZH = { face: '人脸识别', rfid: '刷房卡', keypad: '键盘密码' };

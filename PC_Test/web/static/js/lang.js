@@ -130,6 +130,7 @@ const I18N = {
             'history.stat_min': '最低温度',
             'history.stat_avg': '平均温度',
             'history.stat_count': '数据点数',
+            'history.stat_count_unit': '条',
             'history.chart_title': '温度历史趋势',
             'history.chart_humidity': '湿度历史趋势',
             'history.chart_door': '门窗状态历史',
@@ -164,17 +165,70 @@ const I18N = {
             'access.log_denied': '拒绝',
             'access.refresh': '刷新',
             'access.no_records': '暂无记录',
+            'access.log_reason': '原因',
+            // 识别哨兵状态条：把后端每轮判定翻成人话，省得对着「等待推送」猜
+            'access.watcher_unknown': '正在读取识别状态...',
+            'access.watcher_off': '识别哨兵未启用（face.watcher.enabled = false）',
+            'access.watcher_stopped': '识别哨兵已停止',
+            'access.watcher_no_camera': '未配置摄像头地址，无法识别',
+            'access.watcher_camera': '摄像头取不到画面，识别已暂停',
+            'access.watcher_no_model': '识别器未就绪（人脸模型没加载）',
+            'access.watcher_no_identity': '人脸库是空的，先给人员录入人脸',
+            'access.watcher_wait_motion': '门口没人，等人经过（PIR）再识别',
+            'access.watcher_watch': '识别中：每 {0} 秒看一次画面',
+            'access.watcher_counts': '本次运行：通过 {0} · 拒绝 {1} · 陌生人 {2}',
+            'access.last_granted': '刚放行',
+            'access.last_denied': '刚拒绝',
+            'access.last_no_face': '画面里没有人',
+            'access.last_too_far': '人脸太小，靠得太远',
+            'access.last_cooldown': '这个身份刚识别过，先等一会',
+            'access.last_duplicate': '同一凭证短时间内重复，已合并',
+            'access.last_throttled': '识别被限流，本轮跳过',
+            'access.last_error': '识别出错',
+            'access.last_idle': '空闲等待中',
+            'access.last_no_camera': '摄像头不可用',
+            'access.last_no_identity': '没有已录身份，跳过识别',
+            'access.last_at': '{0}（{1} 秒前）',
+            // 被拒原因：与 web/access_guard.py 的 DENY_REASONS 保持一致
+            'access.reason_no_such_identity': '凭证未登记',
+            'access.reason_disabled': '人员已停用',
+            'access.reason_ambiguous': '多个人员共用该凭证',
+            'access.reason_bad_credential': '凭证无效',
+            'access.reason_identity_not_in_list': '人脸库有此身份，名单里没有对应人员',
+            'access.reason_unmatched_face': '有人脸，但没匹配到任何已录身份',
+            // 门禁体检
+            'access.diag_orphan': '人脸库里有「{0}」，但名单里查不到对应人员',
+            'access.diag_no_photo': '「{0}」还没有注册照，刷脸永远不会通过',
+            'access.diag_ambiguous': '人脸ID「{0}」被多个人员共用',
+            'access.diag_aliases': '已失效的历史人脸ID：{0}',
+            'access.diag_repeat': '{0} 已重复触发 {1} 次，只开一次门',
             // 人脸识别展示面板
             'access.live_face': '实时人脸识别',
             'access.listening': '监听中',
             'access.stream_loading': '正在连接摄像头实时画面...',
             'access.stream_unavailable': '摄像头画面不可用（检查摄像头服务是否运行）',
-            'access.waiting_push': '等待香橙派推送识别结果...',
-            'access.waiting_sub': '人脸识别在香橙派上独立运行',
+            'access.waiting_push': '等待识别结果...',
+            'access.waiting_sub': '识别在 web 后端常驻运行，门口有人时被 PIR 触发',
+            // 库里最后一条事件可能是几天前（甚至测试脚本塞进去的假数据）。
+            // 过去页面会把它当「刚刚发生的判定」常驻显示，看着就像摄像头前有人被放行。
+            'access.waiting_stale': '这一轮还没有新的识别结果',
+            'access.waiting_stale_sub': '最后一条记录是 {0}前，不是刚发生的判定',
+            'access.ago_s': '{0} 秒',
+            'access.ago_m': '{0} 分钟',
+            'access.ago_h': '{0} 小时',
+            'access.ago_d': '{0} 天',
             'access.confidence': '置信度',
             'access.time': '识别时间',
             'access.source': '识别来源',
             'access.unknown': '未知',
+            'access.unknown_person': '陌生人',
+            'access.unbound': '认出了脸，名单里没人',
+            'access.unmatched': '未登记',
+            // 识别来源
+            'access.source_face_watcher': '门口摄像头',
+            'access.source_orange_pi': '香橙派',
+            'access.source_web': '网页',
+            'access.source_unknown': '未知',
             'access.face_events': '人脸识别事件',
             'access.event_time': '时间',
             'access.event_person': '人员',
@@ -224,7 +278,7 @@ const I18N = {
             // 通知
             'notify.enter_name': '请输入姓名',
             'notify.access_granted': '门禁验证通过: {0}',
-            'notify.access_denied': '门禁验证失败: 未授权人员',
+            'notify.access_denied': '门禁验证失败：{0}',
 
             // 硬件管理
             'nav.hardware': '硬件管理',
@@ -420,6 +474,7 @@ const I18N = {
             'history.stat_min': 'Min Temp',
             'history.stat_avg': 'Avg Temp',
             'history.stat_count': 'Data Points',
+            'history.stat_count_unit': 'pts',
             'history.chart_title': 'Temperature History',
             'history.chart_humidity': 'Humidity History',
             'history.chart_door': 'Door/Window History',
@@ -454,17 +509,68 @@ const I18N = {
             'access.log_denied': 'Denied',
             'access.refresh': 'Refresh',
             'access.no_records': 'No records',
+            'access.log_reason': 'Reason',
+            // Watcher status bar: turn each backend decision into a plain sentence
+            'access.watcher_unknown': 'Reading recognition status...',
+            'access.watcher_off': 'Recognition watcher disabled (face.watcher.enabled = false)',
+            'access.watcher_stopped': 'Recognition watcher stopped',
+            'access.watcher_no_camera': 'No camera address configured, cannot recognize',
+            'access.watcher_camera': 'Camera returns no frame, recognition paused',
+            'access.watcher_no_model': 'Recognizer not ready (face model not loaded)',
+            'access.watcher_no_identity': 'Face library is empty - enroll a person first',
+            'access.watcher_wait_motion': 'Nobody at the door, waiting for the PIR trigger',
+            'access.watcher_watch': 'Watching: checking the frame every {0}s',
+            'access.watcher_counts': 'This run: {0} granted · {1} denied · {2} strangers',
+            'access.last_granted': 'Last: granted',
+            'access.last_denied': 'Last: denied',
+            'access.last_no_face': 'Last: no face in frame',
+            'access.last_too_far': 'Last: face too small, stand closer',
+            'access.last_cooldown': 'Last: this identity was just checked, waiting',
+            'access.last_duplicate': 'Last: same credential repeated within the window, merged',
+            'access.last_throttled': 'Last: recognizer rate-limited, round skipped',
+            'access.last_error': 'Last: recognition error',
+            'access.last_idle': 'Last: idle, waiting for motion',
+            'access.last_no_camera': 'Last: camera unavailable',
+            'access.last_no_identity': 'Last: no enrolled identity, skipped',
+            'access.last_at': '{0} ({1}s ago)',
+            // Deny reasons - kept in sync with DENY_REASONS in web/access_guard.py
+            'access.reason_no_such_identity': 'Credential not enrolled',
+            'access.reason_disabled': 'Person disabled',
+            'access.reason_ambiguous': 'Credential shared by several persons',
+            'access.reason_bad_credential': 'Invalid credential',
+            'access.reason_identity_not_in_list': 'Face identity exists but no matching person',
+            'access.reason_unmatched_face': 'Face detected but matched no enrolled identity',
+            // Access diagnostics
+            'access.diag_orphan': 'Face library holds "{0}" but no person owns that identity',
+            'access.diag_no_photo': '"{0}" has no enrollment photos, face unlock can never pass',
+            'access.diag_ambiguous': 'Face ID "{0}" is shared by several persons',
+            'access.diag_aliases': 'Stale historical face IDs: {0}',
+            'access.diag_repeat': '{0} fired {1} times, door opened once',
             // Face Recognition Display Panel
             'access.live_face': 'Live Face Recognition',
             'access.listening': 'Listening',
             'access.stream_loading': 'Connecting to live camera...',
             'access.stream_unavailable': 'Camera stream unavailable (check the camera service)',
-            'access.waiting_push': 'Waiting for Orange Pi to push recognition result...',
-            'access.waiting_sub': 'Face recognition runs independently on Orange Pi',
+            'access.waiting_push': 'Waiting for a recognition result...',
+            'access.waiting_sub': 'Recognition runs in the web backend, triggered by the PIR when someone approaches',
+            'access.waiting_stale': 'No new recognition result in this round',
+            'access.waiting_stale_sub': 'Last record is {0} old — not a verdict that just happened',
+            'access.ago_s': '{0}s',
+            'access.ago_m': '{0}min',
+            'access.ago_h': '{0}h',
+            'access.ago_d': '{0}d',
             'access.confidence': 'Confidence',
             'access.time': 'Recognition Time',
             'access.source': 'Source',
             'access.unknown': 'Unknown',
+            'access.unknown_person': 'Stranger',
+            'access.unbound': 'Recognized, but no person owns it',
+            'access.unmatched': 'Not enrolled',
+            // Recognition sources
+            'access.source_face_watcher': 'Door camera',
+            'access.source_orange_pi': 'Orange Pi',
+            'access.source_web': 'Web test',
+            'access.source_unknown': 'Unknown',
             'access.face_events': 'Face Recognition Events',
             'access.event_time': 'Time',
             'access.event_person': 'Person',
@@ -514,7 +620,7 @@ const I18N = {
             // Notifications
             'notify.enter_name': 'Please enter a name',
             'notify.access_granted': 'Access granted: {0}',
-            'notify.access_denied': 'Access denied: Unauthorized person',
+            'notify.access_denied': 'Access denied: {0}',
 
             // Hardware Management
             'nav.hardware': 'Hardware',
@@ -643,6 +749,16 @@ const I18N = {
 // 简写函数
 function t(key, ...args) { return I18N.t(key, ...args); }
 function setLang(lang) { I18N.setLang(lang); }
+
+// 后端所有 timestamp 都是 UTC naive（不带 Z），裸串交给 new Date 会被当成本地时间，
+// 页面时间就比墙上钟差一整个时区。每个页面都要过这里，别在各自脚本里再写一遍。
+function serverDate(raw) {
+    const text = String(raw || '').trim();
+    if (!text) return null;
+    const iso = /Z$|[+-]\d{2}:?\d{2}$/.test(text) ? text : text.replace(' ', 'T') + 'Z';
+    const dt = new Date(iso);
+    return isNaN(dt.getTime()) ? null : dt;
+}
 
 // 初始化
 I18N.init();

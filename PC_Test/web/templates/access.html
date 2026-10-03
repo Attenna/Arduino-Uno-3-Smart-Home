@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title data-i18n="access.title">门禁管理 - 智能家居</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=20261003b">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=20261003e">
 </head>
 <body>
     <nav class="navbar">
@@ -71,8 +71,8 @@
                                 <circle cx="12" cy="12" r="10"/>
                                 <path d="M12 8v4l3 3"/>
                             </svg>
-                            <p data-i18n="access.waiting_push">等待香橙派推送识别结果...</p>
-                            <p class="face-waiting-sub" data-i18n="access.waiting_sub">人脸识别在香橙派上独立运行</p>
+                            <p id="faceWaitingTitle" data-i18n="access.waiting_push">等待识别结果...</p>
+                            <p class="face-waiting-sub" id="faceWaitingSub" data-i18n="access.waiting_sub">识别在 web 后端常驻运行，门口有人时被 PIR 触发</p>
                         </div>
                         <div class="face-result-content hidden" id="faceResultContent">
                             <div class="face-result-status" id="faceResultStatus">
@@ -102,6 +102,14 @@
                             </div>
                         </div>
                     </div>
+
+                    <!-- 识别哨兵状态：一句话说清现在为什么在/不在识别 -->
+                    <div class="watcher-bar tone-off" id="watcherBar">
+                        <span class="watcher-dot"></span>
+                        <span id="watcherText" data-i18n="access.watcher_unknown">正在读取识别状态...</span>
+                        <span class="watcher-sub" id="watcherSub"></span>
+                    </div>
+                    <div class="access-diag hidden" id="accessDiag"></div>
 
                     <!-- 录入人脸：点人员条目上的「录入人脸」后，从这里截实时画面帧 -->
                     <div class="enroll-face hidden" id="enrollFacePanel">
@@ -219,10 +227,11 @@
                                 <th data-i18n="access.log_person">人员</th>
                                 <th data-i18n="access.log_method">验证方式</th>
                                 <th data-i18n="access.log_status">状态</th>
+                                <th data-i18n="access.log_reason">原因</th>
                             </tr>
                         </thead>
                         <tbody id="accessLogBody">
-                            <tr><td colspan="4" data-i18n="history.loading">加载中...</td></tr>
+                            <tr><td colspan="5" data-i18n="history.loading">加载中...</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -230,7 +239,7 @@
         </div>
     </main>
 
-    <script src="{{ url_for('static', filename='js/lang.js') }}?v=20261003b"></script>
-    <script src="{{ url_for('static', filename='js/access.js') }}?v=20261003b"></script>
+    <script src="{{ url_for('static', filename='js/lang.js') }}?v=20261003e"></script>
+    <script src="{{ url_for('static', filename='js/access.js') }}?v=20261003e"></script>
 </body>
 </html>

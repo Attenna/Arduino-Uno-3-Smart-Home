@@ -112,7 +112,18 @@ if (temperature > 30) { ... }   // 判断是业务
 ALARM:SMOKE                      // 场景命令是业务
 ```
 
-## 9. Git 开发规范
+## 9. PC_Test（Python / Web / 前端）约定
+
+下面每条都是踩过坑之后钉在 `pi-staging/` 回归里的硬约束，改 web 或前端前先照着过一遍。
+
+1. **时间戳统一 UTC naive**。`web/database.py` 写入用 `datetime.now(timezone.utc)` 格式化，串里不带时区标记。所有前端显示必须过 `static/js/lang.js` 的 `serverDate(raw)`（它补上 `Z`），**不要**在页面脚本里直接 `new Date(row.timestamp)` —— 那会把 UTC 当本地时间，整页时间差一个时区。`test_frontend_blocks.py` 扫这条。
+2. **新鲜度由后端算**。库里「最新一条」不等于「刚刚发生」。任何「实时判定」面板都要展示这条距今多久（后端给 `age_s`），超过窗口就宁可显示等待状态，也不能把很久以前的记录冒充成当前结果。参考 `GET /api/face/events/latest` 与 `access.js` 的 `FACE_FRESH_WINDOW_S`。
+3. **i18n 键必须双语齐全**。模板里的每个 `data-i18n` 与 JS 里的每个 `t('key')` 都要同时存在于 `lang.js` 的 `zh` 和 `en`，带 `{0}` 占位的两边都要带；缺键不会报错，页面直接把键名显示出来。`test_frontend_blocks.py` 抓取全部模板做覆盖校验。
+4. **改了 JS / CSS 必须抬缓存版本号**。各模板引用的 `?v=YYYYMMDDx` 要一起抬，且跨模板共享的 `lang.js` 版本号必须处处相等，否则部分页面吃旧缓存、新旧脚本混用。
+5. **写库的联调脚本要自己擦干净**。用 curl 伪造识别/通行结果的脚本（如 `pi-staging/pi_face_door_check.sh`）落库后与真实事件完全同形，跑完必须删掉自己插入的行。
+6. **浏览器验证只指向临时副本**。`web/config.py` 的 `DB_PATH` / `AUTHORIZED_DIR` 是从 `PC_TEST_DIR` 推出的常量，不认环境变量，直接 `run_web.py` 操作的就是真库和真人脸照片。做页面级验证要把 `PC_Test` 拷一份到临时目录再跑。
+
+## 10. Git 开发规范
 
 分支：
 
@@ -136,7 +147,7 @@ docs: update serial protocol
 
 禁止：`改了一点`、`最终版`、`真的最终版`、`final_final`。
 
-## 10. README 规范
+## 11. README 规范
 
 每个模块必须有 `README.md`，至少包含：
 

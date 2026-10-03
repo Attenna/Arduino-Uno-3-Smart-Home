@@ -685,8 +685,8 @@ async function loadTemperatureChart() {
     if (!ctx) return;
 
     const labels = data.slice(0, 20).reverse().map(d => {
-        const dt = new Date(d.timestamp);
-        return dt.getHours() + ':' + dt.getMinutes().toString().padStart(2, '0');
+        const dt = serverDate(d.timestamp);
+        return dt ? dt.getHours() + ':' + dt.getMinutes().toString().padStart(2, '0') : '--';
     });
     const temps = data.slice(0, 20).reverse().map(d => d.temperature);
     const hums = data.slice(0, 20).reverse().map(d => d.humidity);

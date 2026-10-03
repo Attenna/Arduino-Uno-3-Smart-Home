@@ -46,7 +46,7 @@
 |----|------|------|
 | `sensor_poll_interval` | `2.0` | 后台轮询 MCP `get_sensor_status` 的间隔（秒） |
 | `voice.url` | `http://127.0.0.1:8101` | 语音助手 HTTP 地址：面板「语音」页与自动化「唤醒/播报」动作的代理目标（与硬件链路无关）。环境变量 `SMART_HOME_VOICE_URL` 优先，容器内为 `http://voice:8101` |
-| `camera.stream_url` | `http://127.0.0.1:8080/video_feed` | 摄像头 MJPEG 上游地址 |
+| `camera.stream_url` | `http://127.0.0.1:8080/video_feed` | 摄像头 MJPEG 上游地址；识别哨兵的单帧地址由它推出（同服务的 `/snapshot`），环境变量 `SMART_HOME_CAMERA_URL` 优先 |
 
 ### 2.4 `face` — 人脸识别
 
@@ -62,6 +62,25 @@
 | `recognition.model_path` | `models/face/recognition.onnx` | ArcFace 模型 |
 | `recognition.similarity_threshold` | `0.5` | 身份判定相似度阈值 |
 | `recognition.image_size` | `112` | 识别输入尺寸 |
+| `recognition_interval` | `1.5` | 识别节流：两次推理的最小间隔（秒），过频返回 `mode: throttled` |
+
+### 2.5 `face.watcher` — 门口识别哨兵
+
+web 进程内的常驻线程：取 `<摄像头服务>/snapshot` 的一帧去识别，认出后交
+`access_guard` 鉴权（见 [api.md](api.md) §2.5）。没有它，录进的人脸永远不会自己开门。
+
+| 键 | 默认 | 说明 |
+|----|------|------|
+| `enabled` | `true` | 关掉 = 只保留手动自测与边缘设备推送，刷脸不再自动开门 |
+| `interval` | `2.0` | 取帧间隔（秒），下限 0.5；应大于 `recognition_interval`，否则每轮被节流 |
+| `motion_gate` | `true` | 只在 A 板 PIR 报「有人」后识别；**从未收到过 motion 时自动退化为常转**（纯看板/没接 A 板） |
+| `motion_hold` | `20` | 最后一次 motion 之后继续识别的秒数（人从椅子走到门口要时间） |
+| `cooldown` | `60` | 同一张脸放行后多久内不再重复开门（人站在门口不该连开）；被拒不进冷却 |
+| `min_face_px` | `60` | 人脸短边小于此像素只报「离得太远」，不进识别也不记日志 |
+
+> 派上只有一个可用核：`motion_gate: false` + `interval: 1` 会和语音、传感器轮询抢 CPU。
+> 哨兵的实时状态（门控开没开、最近一轮判定、通过/拒绝/陌生人计数）显示在 /access 页
+> 顶部状态栏，接口是 `GET /api/access/diagnostics`。
 
 ---
 

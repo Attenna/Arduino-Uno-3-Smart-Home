@@ -370,6 +370,7 @@ GET 与 POST 等价（便于浏览器地址栏直接点）。
 | GET | `/api/access/enroll/rfid/<sid>` | 轮询录入会话状态 |
 | DELETE | `/api/access/enroll/rfid/<sid>` | 取消录入会话 |
 | GET | `/api/access/logs` | 通行记录列表 |
+| GET | `/api/access/diagnostics` | 门禁体检 + 识别哨兵状态（页顶状态栏的数据源） |
 | POST | `/api/access/test` | 链路自测：拿名单里的真实人员走完整鉴权（不碰硬件） |
 
 `GET /api/access/persons` 返回：
@@ -416,10 +417,64 @@ GET 与 POST 等价（便于浏览器地址栏直接点）。
 
 ```json
 { "granted": true, "person": "张三", "method": "face", "credential": "张三",
+  "reason": null,
   "message": "验证通过，欢迎 张三!", "message_en": "Verified, Welcome 张三!" }
 ```
 
+被拒时 `granted=false`、`reason` 是下面表里的代码，`message` 直接带上中文原因
+（`未放行：人员已停用`）。自测**不去抖**：连点两次就该有两条日志。
+
 > 该人员没有对应凭证时返回 400（`该人员还没有录入人脸/房卡`）。
+
+### 拒绝原因（`deny_reason`）
+
+鉴权不再只留一句「未知人员」：`access_logs.deny_reason` 与 `face_events.deny_reason`
+存的是代码，双语文案在 `web/access_guard.py: DENY_REASONS`（前端词典
+`access.reason_*` 与之一一对应）。
+
+| 代码 | 含义 |
+|------|------|
+| `no_such_identity` | 凭证没登记过（刷脸时 = 这张脸没录过） |
+| `identity_not_in_list` | 人脸库认得出这张脸，名单里没有对应人员 |
+| `unmatched_face` | 画面里有人脸，但没匹配到任何已录身份（陌生人） |
+| `disabled` | 人员已停用：凭证还在，但不放行 |
+| `ambiguous` | 同一凭证挂在多个生效人员身上，一律拒绝 |
+| `bad_credential` | 卡号格式非法 / 鉴权方式不支持 |
+
+同一 `(method, credential)` 在 8 秒内重复读数只记一次：读卡器抖一下（实测 51ms 内
+两次读数会开两次门）、人站在门口被连拍，都不会刷出一串日志。被合并的次数在
+`/api/access/diagnostics` 的 `recent_repeats` 里能看到；`POST /api/access/test`
+与 `handle_face_result(debounce=False)` 显式绕过去抖，用于链路自测。
+
+### 体检：名单、人脸库、哨兵三方对齐
+
+`GET /api/access/diagnostics` 只读，把「录了脸却不开门」的可能原因一次列全 ——
+这些原因过去散在三处（库里没这张脸、名单里没这个人、哨兵没在跑），逐处排查太慢。
+
+```json
+{ "orphan_identities": ["person_02"],
+  "persons_without_photos": [{"id": 1, "name": "管理员"}],
+  "ambiguous_face_ids": [], "dead_aliases": ["FACE002"],
+  "library_count": 1, "persons_count": 3,
+  "watcher": { "enabled": true, "running": true, "interval": 2.0, "cooldown": 60.0,
+               "min_face_px": 60, "snapshot_url": "http://…/snapshot",
+               "camera_error": null, "model_ready": true, "identities": 1,
+               "gate": {"open": false, "mode": "motion_idle", "motion": false,
+                        "motion_age_s": 3.2, "gated": true},
+               "last": {"kind": "granted", "person": "张三", "age_s": 4.1},
+               "counts": {"attempts": 12, "granted": 1, "denied": 2, "strangers": 0} },
+  "recent_repeats": [{"method": "face", "credential": "张三", "repeats": 1, "age_s": 2.4}],
+  "recognition": { "method": "arcface_onnx", "similarity_threshold": 0.5 } }
+```
+
+- `orphan_identities`：人脸库有目录、名单里却没这个人 → 刷脸必然按
+  `identity_not_in_list` 拒绝（旧演示数据或删人没清目录留下的）。
+- `persons_without_photos`：生效人员一张注册照都没有 → 永远认不到他。
+- `dead_aliases`：`known_faces` 里既不在名单也不在库里的别名（模拟模式演示残留）。
+- `watcher.gate.mode`：`always`（没接 A 板 / 不门控）/ `motion_active` / `motion_idle`。
+- `watcher.last.kind`：哨兵最近一轮的判定，取值 `granted` `denied` `no_face` `too_far`
+  `cooldown` `duplicate` `throttled` `no_camera` `no_identity` `idle` `error`；
+  门禁页顶部那条状态栏就是把它连同计数翻成一句人话。
 
 ## 2.5 人脸（Face）
 
@@ -435,7 +490,13 @@ GET 与 POST 等价（便于浏览器地址栏直接点）。
 | DELETE | `/api/face/known/<face_id>` | 删除已知人脸 |
 | POST | `/api/face/notify` | 边缘设备推送识别结果：**鉴权 + 记录 + 发事件**（开门由积木规则做） |
 | GET | `/api/face/events?limit=20` | 识别事件 |
-| GET | `/api/face/events/latest` | 最近一次识别事件 |
+| GET | `/api/face/events/latest` | 最近一次识别事件，额外带 `age_s`（距今秒数，后端按 UTC 算） |
+
+`/api/face/events/latest` 的 `age_s` 是给门禁页判新鲜度用的：库里存的是 UTC naive
+时间串，浏览器自己按本地时区减会差一个时区，所以「这条多久前」只能由后端算。
+页面拿到 `age_s > 90` 就当它不是刚发生的判定（等待态 +「最后一条记录是 X 前」），
+因为 `POST /api/face/notify` 是开放通道，任何脚本都能塞进一条 FACE001/95% 的假放行，
+过去面板会把它当实时结果常驻显示。
 
 `POST /api/face/recognize` 命中节流时不改状态、不报错，返回 200：
 
@@ -443,6 +504,23 @@ GET 与 POST 等价（便于浏览器地址栏直接点）。
 { "detected": false, "face_id": null, "confidence": 0, "faces": [],
   "mode": "throttled", "message": "请求过于频繁，请等待 1.2 秒" }
 ```
+
+> 识别节流在 `web/face/engine.py`（`face.recognition_interval`，默认 1.5 秒），
+> 门口哨兵的取帧间隔（`face.watcher.interval`）应大于它，否则每轮都会被挡掉一次。
+
+### 谁在跑识别：内置哨兵
+
+`face_events.device_source` 说明这条结果是谁产生的：`face_watcher`（web 内置的门口
+识别哨兵，默认来源）、`orange_pi`（边缘设备经 `/api/face/notify` 推送）、
+`web`（网页自测/单帧识别）。
+
+哨兵在 `web/face_watcher.py`：摄像头只出流、模型只装在 web 进程里，过去没有任何一方
+取帧，所以「录进人脸也不会自动开门」。它按 `face.watcher.interval` 取
+`<摄像头服务>/snapshot` 的一帧 → `FaceEngine.recognize_jpeg` →
+`AccessGuard.handle_face_result()`，识别与鉴权走的正是 `/api/face/notify` 那条路径。
+默认只在 A 板 PIR 报「有人」后的 `motion_hold` 秒内抓帧（派上单核，常驻 YOLO 会拖死
+语音与传感器轮询）；从未收到过 motion 时退化为常转。参数与开关见
+[configuration.md](configuration.md) 的 `face.watcher.*`。
 
 `POST /api/face/notify` 请求：
 
@@ -455,7 +533,8 @@ GET 与 POST 等价（便于浏览器地址栏直接点）。
 }
 ```
 
-授权通过时返回 `{"granted": true, "person": "张三", "event_id": 12}`，并：
+授权通过时返回 `{"granted": true, "person": "张三", "face_id": "…", "event_id": 12,
+"reason": "matched", "message": "欢迎 张三!"}`，并：
 写 `access_logs`（granted）+ 更新 `face_events` 状态 → 向自动化引擎投递
 `{"event":"access","status":"granted","method":"face",…}` 事件（积木里对应
 `access_granted`，可按 `method` 筛选）。**开门动作不写死在这里**，
@@ -729,7 +808,11 @@ curl http://<host>:8000/v1/chat/completions \
 |------|------|------|
 | GET | `/` | 内嵌查看页（引用 `/video_feed`，附 `/health` 链接） |
 | GET | `/video_feed` | **MJPEG 视频流**（`multipart/x-mixed-replace; boundary=frame`）；无画面时发「NO CAMERA」占位帧 |
+| GET | `/snapshot` | **最新一帧 JPEG**（`Cache-Control: no-store`）；没有新鲜画面时 503 + `{"error": "摄像头当前无新鲜画面"}`，不拿占位帧冒充 |
 | GET | `/health` | `{online, device, frame_age_s, error, capture_alive}`；采集线程活着=200，线程死了=503 |
+
+`/snapshot` 是给 web 里的门口识别哨兵取单帧用的（见 §2.5）：它要的是「现在这一帧」，
+不是占位图，所以宁可 503 让哨兵报 `no_camera`，也不能让识别器把「NO CAMERA」当画面认。
 
 浏览器直接打开 `http://<host>:8080/video_feed` 或 `http://<host>:8080/` 即可查看。
 

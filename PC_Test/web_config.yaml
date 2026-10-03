@@ -57,3 +57,13 @@ face:
     model_path: "models/face/recognition.onnx"
     similarity_threshold: 0.5
     image_size: 112
+  # ── 门口识别哨兵：让「录了脸 → 自动开门」真的成立 ──────────────────────
+  # 过去摄像头只出流、识别只装在 web 里，没人取帧，所以录完脸也不会开门。
+  # 帧地址由上面的 camera.stream_url 推出（同服务的 /snapshot），不用单独配。
+  watcher:
+    enabled: true
+    interval: 2.0          # 取帧间隔（秒）：派上只有一个可用核，别往 1 以下调
+    motion_gate: true      # 只在 PIR 报「有人」后识别；从未收到过 motion 时自动退化为常转
+    motion_hold: 20        # 最后一次 motion 之后继续识别的秒数（人走到门口要时间）
+    cooldown: 60           # 同一张脸放行后多久内不再重复开门（人站在门口不该连开）
+    min_face_px: 60        # 人脸短边小于此像素只报「离得太远」，不进识别也不记日志

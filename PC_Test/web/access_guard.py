@@ -27,9 +27,31 @@ logger = logging.getLogger(__name__)
 CARD_ENROLL_TTL_S = 45.0
 # 录入结果（成功/冲突/超时）在内存里留多久供前端轮询取走
 CARD_RESULT_KEEP_S = 300.0
+# 同一凭证在这段窗口内的重复读数只算一次通行。实测一张卡放在 RC522 上会连着
+# 上报两次（间隔 51ms），不去抖就是「一次放卡开两次门」。
+REPEAT_WINDOW_S = 8.0
 
 GRANTED_EVENT = {"event": "access", "status": "granted"}
 DENIED_EVENT = {"event": "access", "status": "denied"}
+
+# 被拒原因的双语说法：通行日志与门禁页直接用它，不再统一写成「未知人员」
+DENY_REASONS = {
+    "no_such_identity": ("凭证未登记", "Credential not enrolled"),
+    "disabled": ("人员已停用", "Person disabled"),
+    "ambiguous": ("多个人员共用该凭证", "Credential shared by several persons"),
+    "bad_credential": ("凭证无效", "Invalid credential"),
+    "identity_not_in_list": ("人脸库有此身份，名单里没有对应人员",
+                             "Face identity exists but no matching person"),
+    "unmatched_face": ("有人脸，但没匹配到任何已录身份",
+                       "Face detected but matched no enrolled identity"),
+}
+
+
+def deny_texts(reason: str | None) -> tuple[str, str]:
+    """被拒原因的中英文案；未知代码原样返回，免得页面显示空白。"""
+    if not reason:
+        return ("", "")
+    return DENY_REASONS.get(reason, (reason, reason))
 
 
 class AccessGuard:
@@ -38,7 +60,12 @@ class AccessGuard:
         # 事件出口（extensions 接线时指向 automation.on_event）；
         # 纯看板模式没有串口时是 None —— 照样记账，只是没有规则可触发。
         self.event_sink = None
+        # 「人脸库里有没有这个身份」的探针（extensions 接线成 face_engine.has_identity）：
+        # 用来把「这张脸没录过」和「录过但名单里查不到人」分开说。
+        self.identity_check = None
         self._sessions: dict[str, dict] = {}
+        # (method, credential) → {"ts":..., "repeats":n}：短窗口内重复读数的合并账
+        self._recent: dict[tuple[str, str], dict] = {}
         self._lock = threading.Lock()
 
     # ==================== 事件出口 ====================
@@ -54,15 +81,44 @@ class AccessGuard:
         except Exception as e:                        # noqa: BLE001
             logger.warning("[门禁] 事件广播失败: %s", e)
 
+    # ==================== 重复读数合并 ====================
+
+    def merge_repeat(self, method: str, credential: str) -> int:
+        """返回本次之前同一凭证已合并掉的次数；0 表示这是窗口内的第一次。"""
+        key = (method, credential or "")
+        now = time.time()
+        with self._lock:
+            for stale in [k for k, v in self._recent.items()
+                          if now - v["ts"] > REPEAT_WINDOW_S]:
+                self._recent.pop(stale, None)
+            entry = self._recent.get(key)
+            if entry is None:
+                self._recent[key] = {"ts": now, "repeats": 0}
+                return 0
+            entry["repeats"] += 1
+            return entry["repeats"]
+
+    def recent_repeats(self) -> list[dict]:
+        """当前还在去抖窗口里的凭证（门禁页用来解释「为什么没再开一次门」）。"""
+        now = time.time()
+        with self._lock:
+            return [{"method": m, "credential": c, "repeats": v["repeats"],
+                     "age_s": round(now - v["ts"], 1)}
+                    for (m, c), v in self._recent.items()
+                    if now - v["ts"] <= REPEAT_WINDOW_S]
+
     # ==================== 鉴权 ====================
 
-    def verify(self, method: str, credential: str):
+    def verify(self, method: str, credential: str, debounce: bool = True):
         """按白名单鉴权一个凭证，写通行日志并广播结果；返回命中的人员或 None。"""
-        person = self.db.find_authorized(credential, method)
-        if person:
+        reason, person = self.db.diagnose(credential, method)
+        matched = reason == "matched"
+        if debounce and self.merge_repeat(method, credential):
+            return person if matched else None
+        if matched:
             self.grant(method, credential, person)
             return person
-        self.deny(method, credential)
+        self.deny(method, credential, reason=reason, person=person)
         return None
 
     def grant(self, method: str, credential: str, person: dict) -> None:
@@ -72,33 +128,52 @@ class AccessGuard:
                        credential=credential)
         logger.info("[门禁] %s 通过：%s（%s）", method, person["name"], credential)
 
-    def deny(self, method: str, credential: str, person_name: str | None = None) -> None:
-        self.db.add_access_log(person_name or "未知人员", method, "denied",
-                               credential=credential)
+    def deny(self, method: str, credential: str, reason: str | None = None,
+             person: dict | None = None) -> None:
+        """被拒也要说清为什么：只写「未知人员」时用户没法判断该录脸还是该启用人员。"""
+        label = (person or {}).get("name") or "未知人员"
+        self.db.add_access_log(label, method, "denied", credential=credential,
+                               deny_reason=reason)
         self.broadcast(DENIED_EVENT, method=method, credential=credential)
-        logger.info("[门禁] %s 被拒：%s", method, credential)
+        logger.info("[门禁] %s 被拒：%s（%s）", method, credential,
+                    reason or "unspecified")
 
     def handle_face_result(self, face_id: str, confidence=None, image_path: str = "",
-                           device_source: str = "web") -> dict:
+                           device_source: str = "web", debounce: bool = True) -> dict:
         """识别结果统一入口：记一次识别事件 → 鉴权 → 广播。
 
-        调用方是 ``POST /api/face/notify``（边缘设备推送）与 ``POST /api/face/recognize``
-        的下游使用者；网页端不再猜身份。
+        调用方是 ``POST /api/face/notify``（边缘设备推送）、``web/face_watcher.py``
+        的门口识别哨兵，以及 ``POST /api/face/recognize`` 的下游使用者；网页端不猜身份。
+
+        ``face_id`` 为空表示「画面里有人脸但没匹配到任何已录身份」（陌生人）。
         """
-        person = self.db.find_authorized(face_id, "face")
+        face_id = face_id or ""
+        if face_id:
+            reason, person = self.db.diagnose(face_id, "face")
+            if (reason == "no_such_identity" and self.identity_check
+                    and self.identity_check(face_id)):
+                reason = "identity_not_in_list"
+        else:
+            reason, person = "unmatched_face", None
+        matched = reason == "matched"
+        if debounce and self.merge_repeat("face", face_id):
+            return {"granted": False, "duplicate": True, "reason": reason,
+                    "person": person["name"] if person else None,
+                    "face_id": face_id}
         event_id = self.db.add_face_event(
-            face_id=face_id, person_name=person["name"] if person else None,
+            face_id=face_id, person_name=(person or {}).get("name"),
             confidence=confidence, image_path=image_path,
             device_source=device_source)
-        if person:
+        if matched:
             self.grant("face", face_id, person)
             self.db.update_face_event_status(event_id, "granted", verified=True)
         else:
-            self.deny("face", face_id)
-            self.db.update_face_event_status(event_id, "denied", verified=False)
-        return {"granted": bool(person),
-                "person": person["name"] if person else None,
-                "face_id": face_id, "event_id": event_id}
+            self.deny("face", face_id, reason=reason, person=person)
+            self.db.update_face_event_status(event_id, "denied", verified=False,
+                                             deny_reason=reason)
+        return {"granted": matched,
+                "person": person["name"] if matched else None,
+                "face_id": face_id, "event_id": event_id, "reason": reason}
 
     # ==================== A 板事件（刷卡 / 键盘密码） ====================
 

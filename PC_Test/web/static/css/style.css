@@ -1092,7 +1092,7 @@ body {
 /* ==================== 数据表格 ==================== */
 .table-wrapper {
     max-height: 400px;
-    overflow-y: auto;
+    overflow: auto;
     border-radius: 8px;
 }
 
@@ -1100,6 +1100,8 @@ body {
     width: 100%;
     border-collapse: collapse;
     font-size: 13px;
+    /* 窄窗口下不给最小宽度的话，六列表格会被压成一列一个字（人员/状态竖排） */
+    min-width: 620px;
 }
 
 .data-table thead {
@@ -1290,6 +1292,105 @@ body {
     border: 1px dashed var(--accent-cyan);
     background: rgba(0, 229, 255, 0.08);
     font-size: 12px;
+}
+
+/* 识别哨兵状态条：把「为什么现在能/不能刷脸开门」说清 */
+.watcher-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 12px;
+    margin-bottom: 10px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-color);
+    background: var(--bg-secondary);
+    font-size: 13px;
+}
+
+.watcher-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    flex: none;
+    background: var(--text-muted);
+}
+
+.watcher-sub {
+    color: var(--text-muted);
+    font-size: 11px;
+    margin-left: auto;
+    text-align: right;
+}
+
+.watcher-bar.tone-ok .watcher-dot {
+    background: var(--accent-green);
+    box-shadow: 0 0 8px rgba(0, 230, 118, 0.6);
+    animation: watcher-pulse 2s ease-in-out infinite;
+}
+
+.watcher-bar.tone-wait .watcher-dot { background: var(--accent-cyan); }
+.watcher-bar.tone-bad { border-color: rgba(255, 23, 68, 0.5); }
+.watcher-bar.tone-bad .watcher-dot { background: var(--accent-red); }
+.watcher-bar.tone-bad #watcherText { color: var(--accent-red); }
+.watcher-bar.tone-off .watcher-dot { background: var(--text-muted); }
+.watcher-bar.tone-off #watcherText { color: var(--text-muted); }
+
+@keyframes watcher-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.35; }
+}
+
+/* 门禁体检：人脸库与名单对不上的地方逐条列出 */
+.access-diag {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    margin-bottom: 12px;
+    padding: 10px 12px;
+    border-radius: var(--radius-sm);
+    border: 1px dashed var(--border-color);
+    background: rgba(0, 229, 255, 0.04);
+}
+
+.diag-item {
+    font-size: 12px;
+    line-height: 1.5;
+    padding-left: 10px;
+    border-left: 2px solid var(--text-muted);
+}
+
+.diag-item.diag-warn {
+    color: var(--accent-orange);
+    border-left-color: var(--accent-orange);
+}
+
+.diag-item.diag-bad {
+    color: var(--accent-red);
+    border-left-color: var(--accent-red);
+}
+
+.diag-item.diag-muted {
+    color: var(--text-muted);
+}
+
+/* 通行日志的拒绝原因列 */
+.log-reason {
+    color: var(--text-secondary);
+    font-size: 12px;
+}
+
+/* 识别事件表：状态标签下面补一行被拒原因 */
+.evt-reason {
+    color: var(--text-secondary);
+    font-size: 11px;
+    margin-top: 3px;
+    line-height: 1.4;
+}
+
+/* 来源列窄，标签换行会竖着一排字 */
+.evt-source {
+    white-space: nowrap;
+    color: var(--text-secondary);
 }
 
 /* 录入人脸：实时画面下方的截帧暂存区 */

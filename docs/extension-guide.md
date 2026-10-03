@@ -269,6 +269,7 @@ py -3.13 pi-staging/test_reset_reconcile.py     # 复位对账
 py -3.13 pi-staging/test_camera_hotplug.py      # 摄像头枚举 / 重开 / 占位帧 / health
 py -3.13 pi-staging/test_access_guard.py        # 门禁白名单鉴权 / 通行日志 / 房卡录入会话
 py -3.13 pi-staging/test_face_enrollment.py     # 运行时录入：检脸→存照→重算原型→热加载
+py -3.13 pi-staging/test_face_watcher.py        # 门口哨兵：PIR 门控 / 节流 / 按身份冷却 / 判定分类
 ```
 
 部署到香橙派（形态 B）：

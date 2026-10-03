@@ -10,6 +10,7 @@ from .config import DATA_DIR
 from .database import SmartHomeDB
 from .database import utcnow
 from .face.engine import FaceEngine
+from .face_watcher import FaceWatcher
 from .ha_client import HomeAssistantClient
 from .hardware import McpHardwareBridge
 
@@ -19,6 +20,8 @@ face_engine = FaceEngine()
 ha_client = HomeAssistantClient()
 # 门禁鉴权 + 房卡录入会话；事件出口与桥订阅由 init_bridge() 接上
 access_guard = AccessGuard(db)
+# 门口识别哨兵：摄像头帧 → 识别 → access_guard（不碰串口，纯看板模式也要跑）
+face_watcher = FaceWatcher(face_engine, access_guard)
 
 # 硬件桥/自动化引擎由 create_app() 按配置启动
 bridge: McpHardwareBridge | None = None
@@ -49,6 +52,8 @@ def init_bridge(cfg: dict) -> McpHardwareBridge:
             # 门禁：刷卡/键盘密码事件进鉴权，鉴权结果走积木（开门不再有硬编码）
             bind_automation(automation)
             access_guard.attach_bridge(bridge)
+            # PIR 是识别哨兵的门控：没人时一帧都不抓
+            face_watcher.attach_bridge(bridge)
 
             # B 板不主动上报 state：执行器指令收到 ACK 即刷新 output_last_seen，
             # 使 output_online 反映"最近能否成功应答"
@@ -60,14 +65,30 @@ def init_bridge(cfg: dict) -> McpHardwareBridge:
         return bridge
 
 
+def start_watchers(cfg: dict) -> bool:
+    """起门口识别哨兵。
+
+    与串口无关的两条接线放在这里：identity_check 让被拒原因能区分「这张脸没录过」
+    和「录过但名单里没这个人」；摄像头地址从 cfg 解析，Docker 里指向 camera 容器。
+    """
+    access_guard.identity_check = face_engine.has_identity
+    return face_watcher.start(cfg)
+
+
+def shutdown_watchers() -> None:
+    face_watcher.stop()
+
+
 def shutdown_bridge() -> None:
     global bridge, automation
     with _bridge_lock:
+        face_watcher.stop()
         bind_automation(None)
         if automation is not None:
             automation.stop()
             automation = None
         if bridge is not None:
             bridge.remove_listener("event", access_guard.on_hardware_event)
+            bridge.remove_listener("snapshot", face_watcher.on_snapshot)
             bridge.stop()
             bridge = None

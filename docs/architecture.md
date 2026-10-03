@@ -160,20 +160,25 @@ Module B:  main → Protocol → Parser/Dispatcher → Drivers → Arduino Hardw
 ### 7.1 门禁鉴权 → 自动开门（形态 B）
 
 ```text
-camera ──MJPEG──▶ web 人脸引擎(YOLO+ArcFace)   Module A RC522 ──串口──▶ web 硬件桥
-                      │ 识别结果                       │ rfid 事件（录入会话优先取卡）
-                      ▼                               ▼
-                 access_guard 白名单鉴权（凭证 → 人员 + 通行日志）
-                      │ access_granted{method: face|rfid|keypad}
-                      ▼
-                 积木规则 access_open_door ──▶ web 硬件桥(MCP) ──▶ Module B 开门
-                      │                                    └─ 延时关门 access_auto_close
-                      └── 与面板动作同一套记账：更新状态 / 写历史 / manual_control
+camera ──/snapshot 单帧──▶ web 识别哨兵(PIR 门控) ──▶ web 人脸引擎(YOLO+ArcFace) ─┐
+边缘设备 ──POST /api/face/notify 识别结果────────────────────────────────────────┤
+Module A RC522 ──串口 rfid 事件（录入会话优先取卡）──────────────────────────────┤
+                                                                                 ▼
+                                    access_guard 白名单鉴权（8 秒去抖 + 通行日志 + deny_reason）
+                                                                                 │ access_granted / access_denied{method: face|rfid|keypad}
+                                                                                 ▼
+                                    积木规则 access_open_door ──▶ web 硬件桥(MCP) ──▶ Module B 开门
+                                                                         └─ 延时关门 access_auto_close
 ```
 
 > 后端只做「凭证 → 人员」的白名单判定与通行日志，开门/延时关门/被拒报警全由积木规则
 > 决定（预设 `access_open_door` / `access_auto_close` / `access_denied_buzzer`），
 > 事件按 `method`（face / rfid / keypad）可分别筛选；在 /automation 页可改可停用。
+>
+> 识别的**生产者**是 `web/face_watcher.py`：摄像头只出流、模型只在 web 进程里，
+> 两边过去没人取帧，所以「录了脸也不开门」。哨兵默认只在 A 板 PIR 报「有人」后的
+> 保持窗口里抓帧（单核派上常驻 YOLO 会拖死语音与轮询），放行后按身份冷却；
+> 它的实时状态由 `GET /api/access/diagnostics` 出给 /access 页顶部状态栏。
 
 ### 7.2 语音指令 → 工具调用（形态 B）
 

@@ -3,6 +3,7 @@ import base64
 
 from flask import Blueprint, jsonify, request
 
+from ..access_guard import deny_texts
 from ..extensions import access_guard, db, face_engine
 from ..utils import safe_base64_decode
 
@@ -107,10 +108,12 @@ def face_notify():
         image_path=data.get("image_path", ""),
         device_source=data.get("device_source", "orange_pi"))
     granted, person = result["granted"], result["person"]
+    reason_zh, reason_en = (("", "") if granted
+                            else deny_texts(result.get("reason")))
     result.update({
-        "message": f"欢迎 {person}!" if granted else "人脸未识别，访问被拒绝",
+        "message": f"欢迎 {person}!" if granted else f"刷脸未通过：{reason_zh}",
         "message_en": f"Welcome {person}!" if granted
-                      else "Face not recognized, access denied"})
+                      else f"Face not authorized: {reason_en}"})
     return jsonify(result)
 
 

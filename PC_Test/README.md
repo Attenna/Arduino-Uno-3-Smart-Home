@@ -38,6 +38,8 @@ PC_Test/
 │   ├── config.py           #    路径常量 + web_config.yaml 装载
 │   ├── database.py         #    SQLite 持久层（仅真实硬件数据，含迁移/WAL/校验）
 │   ├── hardware.py         #    MCP 硬件桥（stdio 拉起 mcp_home_server 独占串口，轮询入库 + 健康度）
+│   ├── access_guard.py     #    门禁鉴权：白名单判定 + 8 秒去抖 + 拒绝原因 + 房卡录入会话（只广播，不开门）
+│   ├── face_watcher.py     #    门口识别哨兵：PIR 门控下取 /snapshot → 识别 → 交 access_guard
 │   ├── ha_client.py        #    可选 Home Assistant REST 客户端（硬件管理页）
 │   ├── voice_client.py     #    语音助手 HTTP 客户端（唤醒/文本指令/对话实况 SSE 代理，与硬件无关）
 │   ├── utils.py            #    节流 / 安全 Base64 / 连接健康 / 重试
@@ -174,6 +176,8 @@ py -3.13 camera_stream.py --cam "Web Cam"     # 按名称（Windows/DSHOW）
 **热插拔**：没插摄像头也照常起服务；采集线程读帧失败就释放旧句柄、退避后重新枚举重开
 （1s 起指数增长，封顶 10s）。`GET /health` 给出 `{online, device, frame_age_s, error, capture_alive}`；
 没有新鲜帧时 `/video_feed` 发「NO CAMERA」占位帧，因此页面能看到原因而不是白屏空转。
+`GET /snapshot` 返回最新一帧 JPEG（给 web 里的门口识别哨兵取单帧用），没有新鲜帧时
+返回 503 而**不**发占位帧——识别器不能把「NO CAMERA」当成画面。
 注意这台 UVC 摄像头**同一时刻只允许一个进程打开**：被别的容器/进程占着时会持续重试，
 等对方释放后自动接上。
 
@@ -494,7 +498,7 @@ h ēi b ō t ǎ @Hey_Bota
 | 页面 | 路由 | 功能 |
 |------|------|------|
 | 仪表盘 | `/` | 实时传感器卡片、门/窗/灯/风扇控制、温湿度曲线 |
-| 门禁管理 | `/access` | 授权人员管理（网页上直接「录入人脸」/「录入房卡」、停用、删除）、识别记录与通行日志、链路自测。**只鉴权不开门**：开门策略在 `/automation` 的积木规则里 |
+| 门禁管理 | `/access` | 识别哨兵实时状态栏 + 门禁体检、授权人员管理（网页上直接「录入人脸」/「录入房卡」、停用、删除）、识别记录与通行日志（含被拒原因）、链路自测。**只鉴权不开门**：开门策略在 `/automation` 的积木规则里 |
 | 历史记录 | `/history` | 传感器历史、设备操作日志、图表查询 |
 | 硬件管理 | `/hardware` | 硬件桥状态、可选 Home Assistant 对接配置 |
 
@@ -544,8 +548,8 @@ full_test.py / Arduino IDE 串口监视器`抢口**。④ `voice_assistant.py` �
 
 - 检测：YOLOv8n-face（`models/face/yolov8n-face.pt`，ultralytics 推理，CPU 即可）。
 - 身份识别：ArcFace ONNX（`models/face/recognition.onnx`，~174MB，onnxruntime CPU 推理）。
-- 已注册 `person_01`、`person_02`（`data/face/authorized/`，各 10 张），
-  实测 20/20 检出、20/20 身份正确，相似度 0.61~0.82（阈值 0.5）。
+- 身份 = `data/face/authorized/<目录名>` = `face_id` = 清洗后的姓名，原型是该目录最新
+  20 张注册照的均值嵌入；相似度阈值默认 0.5（10 张注册照的实测相似度 0.61~0.82）。
 
 依赖安装（首次启用时）：
 
@@ -573,6 +577,18 @@ py -3.13 scripts/enroll_faces.py
 
 - 鉴权只回答「这张脸/这张卡是谁」：命中白名单才广播 `access_granted`，
   开不开门由积木规则决定（见 ② 节）；房卡同样要经过白名单，未登记的卡只会记一条拒绝。
+- **谁去取帧做识别**：`web/face_watcher.py` 的门口识别哨兵。摄像头服务只出流、模型只在
+  web 进程里，两边过去都不主动取帧，所以「录进人脸也不会开门」。哨兵按
+  `face.watcher.interval` 取 `<摄像头服务>/snapshot` 的一帧去检测+识别，结果交
+  `access_guard`；默认只在 A 板 PIR 报「有人」后的 `motion_hold` 秒内抓帧（单核派上常驻
+  YOLO 会拖死语音与轮询），没接 A 板时自动退化为常转，同一张脸放行后 `cooldown` 秒内
+  不再重复开门。
+- 同一 `(方式, 凭证)` 8 秒内的重复读数只记一次、只广播一次（读卡器抖动实测 51ms 内会
+  报两次）；被合并的次数在 `recent_repeats` 里看得到。页面「自测鉴权」显式绕过去抖。
+- /access 页顶部的状态栏说明**现在为什么在/不在识别**（没摄像头、人脸库空的、门口没人、
+  模型没起来、被限流…），旁边是本次运行的通过/拒绝/陌生人计数；下面的体检条列出名单与
+  人脸库对不上的地方（孤儿身份、没注册照的生效人员、共用人脸ID、演示残留别名）。
+  数据来自 `GET /api/access/diagnostics`。
 - 一次录入最多处理 12 帧、单帧 ≤4MB，人脸太小（边长 <56px）的帧会丢弃并在结果里说明；
   每个身份最多用最新的 20 张照片算原型。
 - 「录入房卡」点开一个 45 秒的等待会话，这期间贴上的卡被录入流程取走（不当作一次鉴权）；
