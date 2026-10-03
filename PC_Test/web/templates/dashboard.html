@@ -201,10 +201,11 @@
                         </div>
                     </div>
                     <div class="btn-group">
-                        <button class="btn btn-sm" onclick="setLight('on', 100)" data-i18n="light.full">全亮</button>
-                        <button class="btn btn-sm" onclick="setLight('on', 50)" data-i18n="light.half">半亮</button>
-                        <button class="btn btn-sm" onclick="setLight('on', 25, 'night')" data-i18n="light.night">夜灯</button>
-                        <button class="btn btn-sm btn-danger" onclick="setLight('off', 0)" data-i18n="light.off">关闭</button>
+                        <button class="btn btn-sm" onclick="setLightBrightness(100)" data-i18n="light.full">全亮</button>
+                        <button class="btn btn-sm" onclick="setLightBrightness(50)" data-i18n="light.half">半亮</button>
+                        <button class="btn btn-sm" onclick="setLightWhite()" data-i18n="light.white">白光</button>
+                        <button class="btn btn-sm" onclick="setLightNight()" data-i18n="light.night">夜灯</button>
+                        <button class="btn btn-sm btn-danger" onclick="turnLightOff()" data-i18n="light.off">关闭</button>
                     </div>
                     <div class="control-row">
                         <label data-i18n="light.color">自定义颜色</label>
@@ -350,7 +351,7 @@
         </div>
     </main>
 
-    <script src="{{ url_for('static', filename='js/lang.js') }}?v=20261003e"></script>
-    <script src="{{ url_for('static', filename='js/main.js') }}?v=20261003e"></script>
+    <script src="{{ url_for('static', filename='js/lang.js') }}?v=20261004a"></script>
+    <script src="{{ url_for('static', filename='js/main.js') }}?v=20261004a"></script>
 </body>
 </html>
