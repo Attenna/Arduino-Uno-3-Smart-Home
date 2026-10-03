@@ -284,6 +284,28 @@ async function loadStatus() {
     updateDashboard(data);
 }
 
+// 传感器数据新鲜度：值停更时必须看得出来，而不是拿旧值冒充实时
+function updateSensorFreshness(data) {
+    const el = document.getElementById('sensorFreshness');
+    if (!el) return;
+    const parts = [];
+    let stale = false;
+    if (data.sensor_online && data.sensor_last_seen) {
+        const dt = serverDate(data.sensor_last_seen);
+        if (dt) {
+            const locale = currentLang === 'zh' ? 'zh-CN' : 'en-US';
+            parts.push(t('temp.updated', dt.toLocaleTimeString(locale, { hour12: false })));
+        }
+    } else {
+        stale = true;
+        parts.push(t('temp.stale'));
+    }
+    const ingest = data.hardware_bridge && data.hardware_bridge.ingest;
+    if (ingest && ingest.fail > 0) parts.push(t('temp.ingest_fail', ingest.fail));
+    el.textContent = parts.join(' · ');
+    el.classList.toggle('stale', stale);
+}
+
 function updateDashboard(data) {
     // 温度
     const tempEl = document.getElementById('tempValue');
@@ -291,6 +313,8 @@ function updateDashboard(data) {
 
     const humEl = document.getElementById('humidityValue');
     if (humEl) humEl.textContent = data.humidity ? data.humidity.toFixed(0) : '--';
+
+    updateSensorFreshness(data);
 
     // 风扇（fanSpeed 是滑块 input，fanSpeedValue 是数值标签，扇叶按转速分档旋转）
     const fanSpeed = Number(data.fan_speed) || 0;
@@ -711,25 +735,46 @@ function updateClock() {
 
 // ==================== 图表 ====================
 
+let tempChartInstance = null;
+const CHART_REFRESH_MS = 60000;
+
 function initCharts() {
     loadTemperatureChart();
+    // 图表必须周期重取：以前只在页面加载时拉一次，17:00 打开的页面到 19:00
+    // 还显示 17:00 的曲线，用户以为数据断了
+    setInterval(loadTemperatureChart, CHART_REFRESH_MS);
+    // 后台标签页的 setInterval 会被浏览器节流，回前台立即补一次
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) loadTemperatureChart();
+    });
 }
 
 async function loadTemperatureChart() {
     const data = await apiGet('/api/temperature?hours=24');
-    if (!data || data.length === 0) return;
+    if (!data) return;
 
     const ctx = document.getElementById('tempChart');
     if (!ctx) return;
 
-    const labels = data.slice(0, 20).reverse().map(d => {
+    const rows = data.slice(0, 20).reverse();
+    const labels = rows.map(d => {
         const dt = serverDate(d.timestamp);
         return dt ? dt.getHours() + ':' + dt.getMinutes().toString().padStart(2, '0') : '--';
     });
-    const temps = data.slice(0, 20).reverse().map(d => d.temperature);
-    const hums = data.slice(0, 20).reverse().map(d => d.humidity);
+    const temps = rows.map(d => d.temperature);
+    const hums = rows.map(d => d.humidity);
 
-    new Chart(ctx, {
+    if (tempChartInstance) {
+        tempChartInstance.data.labels = labels;
+        tempChartInstance.data.datasets[0].data = temps;
+        tempChartInstance.data.datasets[1].data = hums;
+        tempChartInstance.data.datasets[0].label = t('chart.temp');
+        tempChartInstance.data.datasets[1].label = t('chart.humidity');
+        tempChartInstance.update('none');
+        return;
+    }
+
+    tempChartInstance = new Chart(ctx, {
         type: 'line',
         data: {
             labels: labels,
