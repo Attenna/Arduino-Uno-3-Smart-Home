@@ -148,6 +148,12 @@ class McpHardwareBridge:
         self._online = False
         self._last_error = ""
         self._last_sensor_ts = None
+        # 传感器入库可见性：成功/失败计数 + 最近失败原因。以前失败只写 debug，
+        # 「DB 停在几小时前」完全无声；这里计数经 /api/status 暴露给看板。
+        self._ingest_ok = 0
+        self._ingest_fail = 0
+        self._ingest_last_error = ""
+        self._ingest_warned_at = 0.0
         # 事件去重：MCP 的 get_sensor_status 每轮返回 recent_events 全量（有界 50 条），
         # 这里必须按稳定身份记住「已处理过」的事件。旧实现用容量 30 的 set + pop()
         # （无序淘汰）：50 条全量里总有 ≥20 条被淘汰后又当新事件，导致历史红外/键盘
@@ -437,11 +443,26 @@ class McpHardwareBridge:
                 {"module": "sensor", "type": "data",
                  "timestamp": ts, "data": data})
             self._last_sensor_ts = ts
+            self._ingest_ok += 1
         except Exception as e:
-            # NaN/越界等脏数据：忽略本帧，不能杀死轮询循环
-            logger.debug("[硬件桥] 传感器数据入库失败: %s", e)
+            # 列级容错后到这里只剩 SQLite/编程级错误：必须可见（限流 warning），
+            # 否则就是「无声丢数据」。仍然不能杀死轮询循环。
+            self._ingest_fail += 1
+            self._ingest_last_error = str(e)
+            now = time.monotonic()
+            if now - self._ingest_warned_at >= 30:
+                self._ingest_warned_at = now
+                logger.warning("[硬件桥] 传感器入库失败（近 30s 首次，累计 %d 次）: %s",
+                               self._ingest_fail, e)
             return
         self._fire("snapshot", data)
+
+    @property
+    def ingest_stats(self) -> dict:
+        """A 板快照入库计数：dashboard 与运维据此发现「桥在线但在丢数据」。"""
+        return {"ok": self._ingest_ok, "fail": self._ingest_fail,
+                "last_error": self._ingest_last_error or None,
+                "last_sensor_ts": self._last_sensor_ts}
 
     @staticmethod
     def _event_identity(event: dict) -> str:

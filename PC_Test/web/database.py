@@ -9,6 +9,7 @@ import math
 import os
 import re
 import sqlite3
+import time
 from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -71,6 +72,11 @@ def boolean(value):
 
 
 class SmartHomeDB:
+    # 原始遥测 2 秒一行 ≈ 8.6 万行/天；超过保留期的先聚合进 sensor_hourly
+    # 再删原始行，防派上磁盘写满导致入库整体停摆。
+    HISTORY_RETENTION_DAYS = 7
+    _MAINTENANCE_INTERVAL_S = 3600.0
+
     def __init__(self, db_path=None):
         configured = db_path or os.environ.get('SMART_HOME_DB')
         if configured:
@@ -83,7 +89,14 @@ class SmartHomeDB:
             selected = local if local.exists() or not previous.exists() else previous
         self.db_path = str(selected.resolve())
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
+        self._last_maintenance = 0.0
         self.init_database()
+        # 不能在 init_database 的事务里调：同一进程第二个连接会被
+        # 自己的 BEGIN IMMEDIATE 锁到超时
+        try:
+            self.run_history_maintenance()
+        except Exception:                                # noqa: BLE001
+            logger.exception('[历史维护] 启动时清理失败（不影响运行）')
 
     def get_connection(self):
         c = sqlite3.connect(self.db_path, timeout=15)
@@ -160,6 +173,7 @@ class SmartHomeDB:
                 'sensor_history': 'id INTEGER PRIMARY KEY AUTOINCREMENT, received_at TEXT NOT NULL, device_uptime_ms INTEGER, temperature REAL, humidity REAL, light_raw INTEGER, smoke INTEGER, rain INTEGER, distance INTEGER, touch INTEGER, motion INTEGER, soil_moisture INTEGER, soil_dry INTEGER',
                 'hardware_events': 'id INTEGER PRIMARY KEY AUTOINCREMENT, received_at TEXT NOT NULL, module TEXT NOT NULL, event_type TEXT NOT NULL, payload_json TEXT NOT NULL',
                 'automation_logs': 'id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT DEFAULT CURRENT_TIMESTAMP, rule_id TEXT NOT NULL, rule_name TEXT NOT NULL, triggered INTEGER NOT NULL, conditions_hold INTEGER NOT NULL, reason TEXT, success INTEGER NOT NULL DEFAULT 0, detail_json TEXT',
+                'sensor_hourly': 'hour_start TEXT PRIMARY KEY, temperature REAL, humidity REAL, samples INTEGER NOT NULL',
             }
             for table, definition in definitions.items():
                 c.execute(f'CREATE TABLE IF NOT EXISTS {table} ({definition})')
@@ -256,23 +270,81 @@ class SmartHomeDB:
         if message.get('module') != 'sensor' or message.get('type') != 'data':
             raise ValueError('非 A 板数据')
         data = message['data']
-        # V2.1 固件已移除超声波(distance)/土壤(soil_*)；缺失字段写 NULL，
-        # 绝不能因单个字段缺失丢掉整帧（否则仪表盘与自动化引擎全部断粮）。
-        values = {k: number(data.get(k), *bounds)
-                  for k, bounds in {'temperature': (-50, 100), 'humidity': (0, 100)}.items()}
+        # 列级容错：单字段越界/类型错只把该列写 NULL，整帧必须入库并照常
+        # 喂给仪表盘与自动化引擎。丢整帧等于无声丢数据，排查不到。
+        rejected = []
+
+        def clean(value, low, high, integer=False, field=''):
+            try:
+                return number(value, low, high, integer)
+            except ValueError as exc:
+                rejected.append(f'{field}:{exc}')
+                return None
+
+        values = {'temperature': clean(data.get('temperature'), -50, 100, field='temperature'),
+                  'humidity': clean(data.get('humidity'), 0, 100, field='humidity')}
         for name, source, maximum in [('light_raw', 'light', 1023),
                                       ('distance', 'distance', 400),
                                       ('soil_moisture', 'soil_moisture', 1023)]:
-            values[name] = number(data[source], 0, maximum, True) if source in data else None
+            values[name] = clean(data.get(source), 0, maximum, True, field=name) if source in data else None
         for name in ('smoke', 'rain', 'touch', 'motion', 'soil_dry'):
-            values[name] = boolean(data[name]) if name in data else None
-        uptime = number(message['timestamp'],0,4294967295,True)
+            if name in data:
+                try:
+                    values[name] = boolean(data[name])
+                except ValueError as exc:
+                    rejected.append(f'{name}:{exc}')
+                    values[name] = None
+            else:
+                values[name] = None
+        uptime = clean(message.get('timestamp'), 0, 4294967295, True, field='timestamp')
+        if rejected:
+            logger.warning('[入库] 丢弃坏字段但保留整帧: %s', '; '.join(rejected))
         seen = utcnow()
         with self.connection() as c:
             sample = {'received_at':seen,'device_uptime_ms':uptime,**values}
             c.execute('INSERT INTO sensor_history('+','.join(sample)+') VALUES('+','.join('?' for _ in sample)+')',tuple(sample.values()))
             c.execute('INSERT INTO temperature_history(timestamp,temperature,humidity) VALUES(?,?,?)',(seen,values['temperature'],values['humidity']))
             self._update(c, {**values,'sensor_last_seen':seen,'device_uptime_ms':uptime,'last_updated':seen})
+        self._maybe_maintenance()
+
+    def run_history_maintenance(self):
+        """把超过保留期的原始遥测聚合进 sensor_hourly，然后删除原始行。
+
+        每小时最多跑一次（_maybe_maintenance 触发 + 启动时一次）。聚合幂等：
+        同一小时重算用 INSERT OR REPLACE 覆盖，先聚合后删除，中途崩溃不丢数据。
+        """
+        cutoff = (datetime.now(timezone.utc) - timedelta(
+            days=self.HISTORY_RETENTION_DAYS)).strftime('%Y-%m-%d %H:00:00')
+        self._last_maintenance = time.monotonic()
+        with self.connection() as c:
+            c.execute('BEGIN IMMEDIATE')
+            c.execute(
+                "INSERT OR REPLACE INTO sensor_hourly"
+                "(hour_start,temperature,humidity,samples) "
+                "SELECT strftime('%Y-%m-%d %H:00:00',timestamp),"
+                "AVG(temperature),AVG(humidity),COUNT(*) "
+                "FROM temperature_history "
+                "WHERE source='hardware' AND timestamp<? GROUP BY 1",
+                (cutoff,))
+            deleted_th = c.execute(
+                "DELETE FROM temperature_history "
+                "WHERE source='hardware' AND timestamp<?", (cutoff,)).rowcount
+            deleted_sh = c.execute(
+                'DELETE FROM sensor_history WHERE received_at<?',
+                (cutoff,)).rowcount
+        if deleted_th or deleted_sh:
+            logger.info('[历史维护] 聚合截止 %s：temperature_history 删 %d 行、'
+                        'sensor_history 删 %d 行（原始保留 %d 天）',
+                        cutoff, deleted_th, deleted_sh,
+                        self.HISTORY_RETENTION_DAYS)
+
+    def _maybe_maintenance(self):
+        if (time.monotonic() - self._last_maintenance
+                >= self._MAINTENANCE_INTERVAL_S):
+            try:
+                self.run_history_maintenance()
+            except Exception:                            # noqa: BLE001
+                logger.exception('[历史维护] 周期清理失败（不影响入库）')
 
     def add_hardware_event(self, message):
         with self.connection() as c:
@@ -305,7 +377,13 @@ class SmartHomeDB:
         return self._rows(f'SELECT * FROM {table} WHERE {col}>?{where} ORDER BY {col} DESC,id DESC LIMIT 5000',(since,))
 
     def get_temperature_history(self, hours=24):
-        since = (datetime.now(timezone.utc)-timedelta(hours=max(1,min(int(hours),720)))).strftime('%Y-%m-%d %H:%M:%S')
+        hours = max(1, min(int(hours), 720))
+        since = (datetime.now(timezone.utc)-timedelta(hours=hours)).strftime('%Y-%m-%d %H:%M:%S')
+        if hours > self.HISTORY_RETENTION_DAYS * 24:
+            # 超出原始保留期：直接读小时聚合（24 行/天，含 NULL 均值）
+            return self._rows("SELECT hour_start AS timestamp, temperature, humidity,"
+                              " samples FROM sensor_hourly WHERE hour_start>? "
+                              "ORDER BY hour_start DESC LIMIT 5000", (since,))
         # Bucket the full requested range into <= 1440 intervals, ignoring NULLs.
         bucket_seconds = max(60, int(hours)*3600//1440)
         return self._rows("SELECT MIN(timestamp) timestamp, AVG(temperature) temperature, AVG(humidity) humidity FROM temperature_history WHERE timestamp>? AND source='hardware' GROUP BY CAST(strftime('%s',timestamp) AS INTEGER)/? ORDER BY timestamp DESC",(since,bucket_seconds))

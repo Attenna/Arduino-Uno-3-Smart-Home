@@ -20,6 +20,7 @@ def get_status():
         "enabled": bridge is not None and bridge.enabled,
         "online": bridge.online if bridge else False,
         "last_error": bridge.last_error if bridge else None,
+        "ingest": bridge.ingest_stats if bridge else None,
     }
     status["device_mismatch"] = output_mismatch(status)
     # 串口链路健康度（A/B 是否连着、重连/复位/告警计数），由硬件桥低频刷新
