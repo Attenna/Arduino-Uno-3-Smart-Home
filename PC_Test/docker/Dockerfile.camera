@@ -11,8 +11,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 COPY docker/requirements-camera.txt /tmp/requirements-camera.txt
+COPY docker/requirements-camera.lock /tmp/constraints.txt
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install -r /tmp/requirements-camera.txt
+    pip install -c /tmp/constraints.txt -r /tmp/requirements-camera.txt
 
 COPY . /app
 
@@ -26,4 +27,6 @@ HEALTHCHECK --interval=20s --timeout=8s --start-period=20s --retries=3 \
 ENTRYPOINT ["tini", "--"]
 # 不写死 --cam：由 camera_stream.py 枚举 /dev/video*（CAMERA_DEVICE 只作优先候选），
 # 拔插换序号后下一轮重开就能找到
-CMD ["python", "-u", "camera_stream.py", "--mode", "web", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["python", "-u", "camera_stream.py", "--mode", "web", "--no-detect", "--host", "0.0.0.0", "--port", "8080"]
+
+ENV PYTHONDONTWRITEBYTECODE=1 HOME=/tmp

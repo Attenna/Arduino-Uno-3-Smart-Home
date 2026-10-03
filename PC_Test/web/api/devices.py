@@ -4,6 +4,7 @@
 JSON 命令；只有收到 B 板 ACK 后才更新 system_status 并写历史，保证 UI 状态
 与真实硬件一致。串口离线时返回 503，不产生虚假状态。
 """
+from contextlib import nullcontext
 import logging
 import threading
 import time
@@ -13,7 +14,7 @@ from flask import Blueprint, jsonify, request
 import midea_ac
 
 from .. import extensions
-from ..ac_state import AC_KEYS, ac_state_from_db, write_ac_state
+from ..ac_state import AC_KEYS, AC_LOCK, serialized_ac, ac_state_from_db, write_ac_state
 from ..extensions import db
 
 logger = logging.getLogger(__name__)
@@ -422,10 +423,11 @@ def control_fan():
 
 @bp.route("/api/ac", methods=["GET"])
 def get_ac_status():
-    return jsonify(_ac_state_from_db().snapshot())
+    return jsonify({**_ac_state_from_db().snapshot(), "state_source": "last_sent", "confirmed": False})
 
 
 @bp.route("/api/ac", methods=["POST"])
+@serialized_ac
 def control_ac():
     """只传要改的字段；其余按数据库里的当前状态补齐后整帧下发。
 
@@ -448,9 +450,6 @@ def control_ac():
                         "error_en": f"Invalid AC parameter: {e}"}), 400
 
     payload = target.snapshot()
-    if not changed:
-        return jsonify({**payload, "message": "空调状态未变化",
-                        "message_en": "No change"})
     cid, seq = _client_token(data)
 
     def _run(v):
@@ -512,15 +511,22 @@ def hardware_tool():
     except (TypeError, ValueError):
         timeout = 10.0
 
-    ok, text = bridge.call_tool(name, arguments, timeout=timeout)
-    if ok:
-        report = _tool_state_report(name, arguments)
-        if report is not None:
-            who = _SOURCES.get(str(data.get("source") or ""), "外部")
+    with AC_LOCK if name == "ac" else nullcontext():
+        if name == "ac":
             try:
-                _bookkeep(report, who)
-            except Exception:                                # noqa: BLE001
-                logger.debug("工具网关记账失败: %s", report, exc_info=True)
+                target, _ = midea_ac.apply_overrides(_ac_state_from_db(), **arguments)
+                arguments = target.snapshot()
+            except (TypeError, ValueError) as exc:
+                return jsonify(ok=False, error=str(exc)), 400
+        ok, text = bridge.call_tool(name, arguments, timeout=timeout)
+        if ok:
+            report = _tool_state_report(name, arguments)
+            if report is not None:
+                who = _SOURCES.get(str(data.get("source") or ""), "外部")
+                try:
+                    _bookkeep(report, who)
+                except Exception:                                # noqa: BLE001
+                    logger.debug("工具网关记账失败: %s", report, exc_info=True)
     return jsonify({"ok": ok, "name": name, "result": text}), (200 if ok else 502)
 
 
@@ -576,6 +582,7 @@ def _tool_state_report(name, args):
     return None
 
 
+@serialized_ac
 def _bookkeep(data, who):
     """按 manual_report 形态做面板等效记账（只写库/发事件，不下发硬件）。
 

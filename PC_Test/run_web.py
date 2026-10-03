@@ -55,7 +55,8 @@ def main():
         print("  硬件链路: 已禁用 (--no-serial)，设备控制将返回 503")
     print("=" * 56)
     # threaded + 关闭 reloader：保证 MCP 子进程只拉起一次，摄像头/轮询不被重复初始化
-    app.run(host=host, port=port, threaded=True, debug=False, use_reloader=False)
+    from waitress import serve
+    serve(app, host=host, port=port, threads=12)
 
 
 if __name__ == "__main__":

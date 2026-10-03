@@ -189,7 +189,8 @@ def access_test():
         label = "人脸" if method == "face" else "房卡"
         return _fail(f"该人员还没有录入{label}", f"Person has no {method} credential",
                      400)
-    matched = access_guard.verify(method, credential, debounce=False)
+    # Dry-run only: do not log a real access grant or broadcast actuator events.
+    matched = db.find_authorized(credential, method)
     granted = matched is not None
     # 被拒时把原因一起带回去：只说「未识别」用户不知道该去录脸还是去启用人员
     reason = None if granted else db.diagnose(credential, method)[0]

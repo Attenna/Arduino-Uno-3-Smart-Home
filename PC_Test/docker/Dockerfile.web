@@ -15,13 +15,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 COPY docker/requirements-web.txt /tmp/requirements-web.txt
+COPY docker/requirements-web.lock /tmp/constraints.txt
 
 # 先走 PyTorch CPU 专用 index 装 torch/torchvision（否则默认轮子带 CUDA，镜像大 2GB+）。
 # x86_64 与 aarch64 的 CPU 轮子均由该 index 提供。
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install torch torchvision \
+    pip install -c /tmp/constraints.txt torch torchvision \
         --index-url https://download.pytorch.org/whl/cpu \
-    && pip install -r /tmp/requirements-web.txt
+    && pip install -c /tmp/constraints.txt -r /tmp/requirements-web.txt
 
 # ultralytics 默认要写 /root/.config（容器内只读根时告警），固定到可写的 /tmp
 ENV PYTHONUNBUFFERED=1 \
@@ -32,8 +33,10 @@ COPY . /app
 
 EXPOSE 5000
 HEALTHCHECK --interval=20s --timeout=8s --start-period=90s --retries=5 \
-    CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:5000/api/health',timeout=5).status==200 else 1)"
+    CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:5000/api/ready',timeout=5).status==200 else 1)"
 
 ENTRYPOINT ["tini", "--"]
 # 默认连串口（compose 已透传 A/B 板 + /dev）；无硬件桌面用 override 换 --no-serial
 CMD ["python", "-u", "run_web.py", "--host", "0.0.0.0", "--port", "5000"]
+
+ENV PYTHONDONTWRITEBYTECODE=1 HOME=/tmp

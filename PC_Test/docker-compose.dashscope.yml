@@ -1,0 +1,21 @@
+# ============================================================================
+# 云端 LLM 覆盖文件（不在香橙派上跑 3B 本地模型，省 CPU/内存）
+#
+#   echo 'DASHSCOPE_API_KEY=sk-xxxx' >> .env
+#   docker compose -f docker-compose.yml -f docker-compose.dashscope.yml up -d --build
+#
+# 效果：qwen 容器不启动；voice 直连阿里云百炼 OpenAI 兼容端点。
+# ============================================================================
+services:
+  qwen:
+    # 加未激活 profile，使该服务在本次编排中被排除
+    profiles: ["disabled-local-llm"]
+
+  voice:
+    # 解除对 qwen 的健康等待
+    depends_on: !reset null
+    environment:
+      - SMART_HOME_LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+      - SMART_HOME_LLM_API_KEY=${DASHSCOPE_API_KEY:?请先在 .env 中设置 DASHSCOPE_API_KEY}
+      # 百炼在线模型名（本地 GGUF 名 qwen2.5-3b-instruct-q4_k_m 在云端不存在）
+      - SMART_HOME_LLM_MODEL=qwen-turbo

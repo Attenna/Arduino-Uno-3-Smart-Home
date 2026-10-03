@@ -7,6 +7,18 @@
 from __future__ import annotations
 
 import midea_ac
+import threading
+from functools import wraps
+
+AC_LOCK = threading.RLock()
+
+def serialized_ac(fn):
+    @wraps(fn)
+    def wrapped(*args, **kwargs):
+        with AC_LOCK:
+            return fn(*args, **kwargs)
+    return wrapped
+
 
 # 空调语义字段白名单（与 MCP 的 ac 工具参数一致）
 AC_KEYS = ("power", "mode", "temperature", "fan", "swing_ud", "swing_lr")

@@ -22,6 +22,8 @@ import logging
 import sys
 import threading
 import time
+import math
+import uuid
 from collections import deque
 
 from .config import MCP_SERVER_PATH, PC_TEST_DIR
@@ -309,8 +311,17 @@ class McpHardwareBridge:
         try:
             health = json.loads(await self._call(session, "get_serial_health", {}))
             self.serial_health = health if isinstance(health, dict) else None
-            state = (json.loads(await self._call(session, "get_output_state", {}))
-                     or {}).get("state") or {}
+            output = (self.serial_health or {}).get("b") or {}
+            age = output.get("last_frame_ago_s")
+            # Cached output state is not evidence of a live device.
+            if (not output.get("connected") or not isinstance(age, (int, float))
+                    or not 0 <= age <= 20):
+                return
+            output_state = json.loads(await self._call(session, "get_output_state", {})) or {}
+            state_age = output_state.get("age_s")
+            if not isinstance(state_age, (int, float)) or not 0 <= state_age <= 20:
+                return
+            state = output_state.get("state") or {}
         except Exception as e:                            # noqa: BLE001
             logger.debug("[硬件桥] 回读/健康度刷新失败: %s", e)
             return
@@ -551,8 +562,12 @@ class McpHardwareBridge:
 
     # ==================== 同步调用 API（供 Flask 路由） ====================
 
-    async def _call(self, session, name: str, args: dict) -> str:
+    async def _call(self, session, name: str, args: dict, state=None) -> str:
         async with self._call_lock:
+            if state is not None:
+                if time.monotonic() >= state["deadline"]:
+                    raise TimeoutError("Command expired before dispatch")
+                state["sent"] = True
             result = await session.call_tool(name, args or {})
         text = ""
         for chunk in (result.content or []):
@@ -561,7 +576,12 @@ class McpHardwareBridge:
                 part = chunk.get("text")
             if part:
                 text += part
-        return text or "(工具无文本输出)"
+        text = text or "(工具无文本输出)"
+        if getattr(result, "isError", False):
+            return "error: " + text
+        if not _looks_like_error(text):
+            self._fire_ack(name, args or {})
+        return text
 
     def call_tool(self, name: str, args: dict | None = None,
                   timeout: float = 10.0) -> tuple[bool, str]:
@@ -574,15 +594,32 @@ class McpHardwareBridge:
         if not self.online or self._session is None or self._loop is None:
             return False, f"硬件服务离线（MCP 未连接：{self.last_error or '串口未连接'}）"
         try:
+            timeout = float(timeout)
+            if not math.isfinite(timeout) or not 0 < timeout <= 30:
+                return False, "硬件超时参数必须在 0 到 30 秒之间"
+        except (TypeError, ValueError):
+            return False, "无效超时参数"
+        state = {"id": uuid.uuid4().hex, "sent": False,
+                 "deadline": time.monotonic() + timeout}
+        try:
             future = asyncio.run_coroutine_threadsafe(
-                self._call(self._session, name, args or {}), self._loop)
+                self._call(self._session, name, args or {}, state), self._loop)
             text = future.result(timeout=timeout)
+        except TimeoutError:
+            # Keep an in-flight call serialized until its actual result arrives.
+            # Cancelling a sent command cannot undo an actuator movement.
+            if not state["sent"]:
+                future.cancel()
+                outcome = "expired_not_sent"
+            else:
+                outcome = "unknown_sent"
+            logger.warning("command=%s tool=%s outcome=%s", state["id"], name, outcome)
+            return False, f"{outcome}: 命令 {state['id']} 超时；请查询设备状态后再操作"
         except Exception as e:
             return False, f"硬件调用失败: {e}"
         if _looks_like_error(text):
             return False, text
         # B 板不自报状态：任何执行器工具成功 ACK 都视为输出板在线
-        self._fire_ack(name, args or {})
         return True, text
 
     # ── 设备语义映射：Web 百分比/状态 → B 板 MCP 工具参数 ──

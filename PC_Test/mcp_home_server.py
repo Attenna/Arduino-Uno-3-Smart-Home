@@ -801,8 +801,9 @@ class HomeController:
                 new_state, changed = midea_ac.apply_overrides(self._ac, **kwargs)
             except ValueError as e:
                 return f"error: {e}"
-            if not changed:
-                return "ok 空调状态无变化"
+            # Reassert the absolute power/state frame even when our cache matches.
+            # Swing uses toggle frames: only include those when explicitly changed.
+            changed = changed | {"power"}
             frames = midea_ac.to_frames(new_state, changed)
             if not frames:
                 return "ok 空调未开机，已忽略本次设置（请先 power=true）"

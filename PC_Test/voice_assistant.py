@@ -66,12 +66,13 @@ class HardwareGateway:
 
     def __init__(self, base_url: str):
         self.base_url = base_url.rstrip("/")
+        self._headers = {"Authorization": "Bearer " + os.environ.get("SMART_HOME_SERVICE_TOKEN", "")}
 
     def _post(self, path: str, payload: dict, timeout: float) -> tuple[bool, str]:
         req = urllib.request.Request(
             f"{self.base_url}{path}",
             data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-            headers={"Content-Type": "application/json",
+            headers={**self._headers, "Content-Type": "application/json",
                      "X-Trigger-Source": "voice"},
             method="POST")
         try:
@@ -91,7 +92,7 @@ class HardwareGateway:
 
     def fetch_tools(self) -> list:
         """拉取全部硬件工具的 OpenAI function schema；网关未就绪时抛异常。"""
-        req = urllib.request.Request(f"{self.base_url}/api/hardware/tools")
+        req = urllib.request.Request(f"{self.base_url}/api/hardware/tools", headers=self._headers)
         with urllib.request.urlopen(req, timeout=10) as resp:
             data = json.loads(resp.read().decode("utf-8"))
         return [{
@@ -114,7 +115,7 @@ class HardwareGateway:
     def health(self) -> tuple[bool, dict]:
         """web /api/status 摘要（在线状态 + 串口健康度），自检/状态页用。"""
         try:
-            with urllib.request.urlopen(f"{self.base_url}/api/status",
+            with urllib.request.urlopen(urllib.request.Request(f"{self.base_url}/api/status", headers=self._headers),
                                         timeout=5) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
             hb = data.get("hardware_bridge") or {}

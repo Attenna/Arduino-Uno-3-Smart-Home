@@ -248,6 +248,7 @@ class SmartHomeDB:
         if not data:
             return
         data['rb_seen_at'] = seen_at or utcnow()
+        data['output_last_seen'] = data['rb_seen_at']
         with self.connection() as c:
             self._update(c, data)
 
@@ -470,4 +471,3 @@ class SmartHomeDB:
         with self.connection() as c:
             return c.execute('UPDATE face_events SET status=?,verified=?,deny_reason=? WHERE id=?',
                              (status, int(verified), deny_reason, event_id)).rowcount > 0
-

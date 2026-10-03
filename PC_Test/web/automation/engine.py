@@ -43,7 +43,7 @@ from .schema import validate_rule, validate_rules
 from . import webhook
 import midea_ac
 from .. import voice_client
-from ..ac_state import AC_KEYS, ac_state_from_db, write_ac_state
+from ..ac_state import AC_LOCK, AC_KEYS, ac_state_from_db, write_ac_state
 # RFID 卡号归一化：规则里存的与事件里带的两侧都归一后再比
 from ..database import normalize_uid
 
@@ -78,6 +78,8 @@ class AutomationEngine:
         self._last_interval: dict[str, float] = {}
         self._last_time_key: dict[str, str] = {}
         self._action_locks: dict[str, threading.Lock] = {}
+        self._running: dict[str, threading.Event] = {}
+        self._execution = threading.local()
         # 红外自发射回声抑制：(address, command) -> 抑制截止时刻。
         # B 板发的 NEC 码会被 A 板接收头当成「有人按了遥控器」，上报的 ir 事件
         # 没有任何来源标记，若不抑制，「发码 X → 收到 X → 再发 X」会永不停止。
@@ -143,6 +145,9 @@ class AutomationEngine:
 
     def stop(self) -> None:
         self._stopping = True
+        with self._lock:
+            for cancelled in self._running.values():
+                cancelled.set()
 
     # ==================== 规则持久化 ====================
 
@@ -411,6 +416,8 @@ class AutomationEngine:
             for rule in clean:
                 if not rule["id"]:
                     rule["id"] = uuid.uuid4().hex[:8]
+            for cancelled in self._running.values():
+                cancelled.set()
             self.rules = clean
             # 页面保存的规则里带 preset 标记的，同样计入「已注入过」
             self._presets_seen |= {r["preset"] for r in clean if r.get("preset")}
@@ -880,8 +887,20 @@ class AutomationEngine:
     def _run_actions(self, rule, actions, hold, reason, lock: threading.Lock) -> None:
         detail: list[dict] = []
         ok_all = True
+        cancelled = threading.Event()
+        with self._lock:
+            self._running[rule["id"]] = cancelled
+        self._execution.cancelled = cancelled
         try:
             for action in actions:
+                with self._lock:
+                    current = next((r for r in self.rules if r["id"] == rule["id"]), None)
+                    if self._stopping or current is not rule:
+                        cancelled.set()
+                if cancelled.is_set():
+                    ok_all = False
+                    detail.append({"cancelled": True, "reason": "规则已更新或服务停止"})
+                    break
                 ok, msg = self._perform(action, rule)
                 detail.append({"action": action, "ok": ok, "result": msg})
                 if not ok:
@@ -892,6 +911,9 @@ class AutomationEngine:
             self._log(rule, fired=True, conditions_hold=hold, reason=reason,
                       ok=ok_all, detail=detail)
         finally:
+            with self._lock:
+                self._running.pop(rule["id"], None)
+            self._execution.cancelled = None
             lock.release()
 
     def _perform(self, action: dict, rule: dict | None = None) -> tuple[bool, str]:
@@ -900,7 +922,12 @@ class AutomationEngine:
         # 事件，manual_mark_*/manual_clear_* 预设维护 g:手动优先_x，设备类预设
         # 带 ``g:手动优先_x == false`` 条件自行让位（见 default_rules.py）。
         if device == "delay":
-            time.sleep(float(action["seconds"]))
+            cancelled = getattr(self._execution, "cancelled", None)
+            if cancelled is not None:
+                if cancelled.wait(float(action["seconds"])):
+                    return False, "延时已取消"
+            else:
+                time.sleep(float(action["seconds"]))
             return True, f"等待 {action['seconds']:g}s"
         if device == "state":
             # 全局状态写入：纯状态、不碰硬件，所以放在 bridge 在线检查之前
@@ -1057,21 +1084,20 @@ class AutomationEngine:
                 return True, f"红外已发射 addr=0x{key[0]:02X} cmd=0x{key[1]:02X}"
             return False, msg
         if device == "ac":
-            # 空调是"合并式"状态（一帧带齐开关/模式/温度/风速）：
-            # 规则只给要改的项，其余按库里的当前值补齐后整帧下发。
-            try:
-                target, changed = midea_ac.apply_overrides(
-                    ac_state_from_db(self.db),
-                    **{k: action.get(k) for k in AC_KEYS})
-            except (ValueError, TypeError) as e:
-                return False, f"空调参数无效：{e}"
-            if not changed:
-                return True, "空调状态未变化"
-            ok, msg = self.bridge.control_ac(**target.snapshot())
-            if ok:
-                write_ac_state(self.db, target)
-                return True, "空调已更新"
-            return False, msg
+            with AC_LOCK:
+                # 空调是"合并式"状态（一帧带齐开关/模式/温度/风速）：
+                # 规则只给要改的项，其余按库里的当前值补齐后整帧下发。
+                try:
+                    target, changed = midea_ac.apply_overrides(
+                        ac_state_from_db(self.db),
+                        **{k: action.get(k) for k in AC_KEYS})
+                except (ValueError, TypeError) as e:
+                    return False, f"空调参数无效：{e}"
+                ok, msg = self.bridge.control_ac(**target.snapshot())
+                if ok:
+                    write_ac_state(self.db, target)
+                    return True, "空调已更新"
+                return False, msg
         if device == "oled":
             # 清屏比分快且不依赖占位符
             if action.get("clear"):

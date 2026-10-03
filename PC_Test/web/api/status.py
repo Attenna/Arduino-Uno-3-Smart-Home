@@ -2,7 +2,7 @@
 import json
 import time
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, current_app
 
 from .. import extensions
 from ..extensions import db, face_engine, ha_client
@@ -64,22 +64,28 @@ def get_statistics():
     return jsonify(db.get_statistics())
 
 
+@bp.route("/api/live")
+def live():
+    return jsonify(status="alive")
+
+
 @bp.route("/api/health")
+@bp.route("/api/ready")
 def health_check():
-    status = {
-        "status": "ok",
-        "timestamp": time.time(),
-        "services": {
-            "database": True,
-            "ha": ha_client.connected,
-            "face_recognition": face_engine.simulation_mode is False,
-            "mcp_hardware": (extensions.bridge.online
-                             if extensions.bridge else False),
-        },
-    }
+    bridge = extensions.bridge
+    required = {"database": False}
     try:
-        db.get_current_status()
+        row = db.get_current_status()
+        required["database"] = True
     except Exception:
-        status["services"]["database"] = False
-        status["status"] = "degraded"
-    return jsonify(status)
+        row = {}
+    serial_enabled = current_app.config["SMART_HOME_CFG"].get("serial", {}).get("enabled", True)
+    if serial_enabled:
+        required.update(mcp_hardware=bool(bridge and bridge.online),
+                        sensor_fresh=bool(row.get("sensor_online")),
+                        output_fresh=bool(row.get("output_online")))
+    ready = all(required.values())
+    return jsonify(status="ok" if ready else "degraded", timestamp=time.time(),
+                   services=required,
+                   optional_services={"ha": ha_client.connected,
+                                      "face_recognition": bool(face_engine.recognizer)}), (200 if ready else 503)
