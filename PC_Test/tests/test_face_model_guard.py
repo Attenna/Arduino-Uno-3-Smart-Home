@@ -206,6 +206,111 @@ class LibraryModelGuardTests(unittest.TestCase):
         self.assertIsNone(self.engine.model_mismatch())
 
 
+class LegacyLibraryProbeTests(unittest.TestCase):
+    """老库没写 model_fingerprint：拿注册照重算原型自检。
+
+    派上现存的库正是这种库。光留一行 warning 的话，「换了模型没重建库」就还是
+    那个服务照常启动、日志一句不错、谁都进不了门的静默故障。
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.authorized = self.root / "authorized"
+        for name, bias in (("甲", 30), ("乙", 200)):
+            person = self.authorized / name
+            person.mkdir(parents=True)
+            for idx in range(2):
+                frame = numpy.full((64, 64, 3), bias + idx * 3, dtype=numpy.uint8)
+                cv2.imwrite(str(person / f"{idx}.jpg"), frame)
+        self.pkl = self.root / "embeddings.pkl"
+        patcher = patch.object(engine_mod, "AUTHORIZED_DIR", self.authorized)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def build_legacy(self, rewrite=None):
+        """照片建库 → 抹掉指纹 → 当老库加载；rewrite 用来模拟别的模型算出的原型。"""
+        database = build_embedding_database(
+            authorized_dir=self.authorized,
+            method="simple_grayscale_cosine", model_path=None)
+        database.pop("model_fingerprint")
+        if rewrite:
+            for identity in database["identities"]:
+                identity["prototype"] = rewrite(identity["name"], identity["prototype"])
+        with self.pkl.open("wb") as file:
+            pickle.dump(database, file)
+        recognizer = FaceRecognizer(embeddings_path=self.pkl, model_path=None)
+        self.assertEqual(recognizer.library_fingerprint, "")
+        engine = make_engine({"simulation_mode": True,
+                              "recognition": {"method": "simple_grayscale_cosine"}},
+                             self.root / "face_config.json")
+        engine.simulation_mode = False
+        engine.recognizer = recognizer
+        return engine, recognizer
+
+    def saved(self):
+        with self.pkl.open("rb") as file:
+            return pickle.load(file)
+
+    def test_verified_library_is_stamped_and_stays_on(self):
+        engine, rec = self.build_legacy()
+        with self.assertLogs("web.face.engine", level="INFO") as captured:
+            engine._check_library_model()
+        self.assertIsNone(engine.recognition_block)
+        self.assertEqual(rec.library_fingerprint, rec.model_fingerprint)
+        # 指纹落盘：下次启动不必再花这笔提特征的钱
+        self.assertEqual(self.saved()["model_fingerprint"], rec.model_fingerprint)
+        self.assertTrue(any("自检通过" in line for line in captured.output))
+        self.assertEqual(engine.get_status()["mode"], "recognition")
+
+    def test_cross_model_legacy_library_is_blocked(self):
+        """原型换成与照片几乎正交的向量（跨模型的实测表现）→ 停用认人并给出原因。"""
+        rng = numpy.random.default_rng(7)
+
+        def other_model(_name, prototype):
+            noise = rng.standard_normal(len(prototype)).astype(numpy.float32)
+            return normalize_embedding(noise)
+
+        engine, rec = self.build_legacy(rewrite=other_model)
+        with self.assertLogs("web.face.engine", level="ERROR"):
+            engine._check_library_model()
+        self.assertIn("重建人脸库", engine.recognition_block)
+        self.assertTrue(engine.get_status()["recognition"]["blocked"])
+        # 没有可比对的指纹，不能冒充「两份指纹不一致」那条 i18n 句子
+        self.assertIsNone(engine.model_mismatch())
+        self.assertNotIn("model_fingerprint", self.saved())
+
+    def test_inconclusive_similarity_keeps_recognition_on(self):
+        """落在判定区之间（注册照可能不是人脸裁片）：继续认人，只告警、不写盘。"""
+        rng = numpy.random.default_rng(11)
+
+        def partly(_name, prototype):
+            noise = normalize_embedding(
+                rng.standard_normal(len(prototype)).astype(numpy.float32))
+            vector = 0.42 * numpy.asarray(prototype, dtype=numpy.float32) + \
+                0.908 * noise
+            return normalize_embedding(vector)
+
+        engine, rec = self.build_legacy(rewrite=partly)
+        with self.assertLogs("web.face.engine", level="WARNING") as captured:
+            engine._check_library_model()
+        self.assertIsNone(engine.recognition_block)
+        self.assertEqual(rec.library_fingerprint, "")
+        self.assertNotIn("model_fingerprint", self.saved())
+        self.assertTrue(any("自检" in line for line in captured.output))
+
+    def test_missing_photos_are_not_a_verdict(self):
+        engine, rec = self.build_legacy()
+        for path in self.authorized.rglob("*.jpg"):
+            path.unlink()
+        with self.assertLogs("web.face.engine", level="WARNING") as captured:
+            engine._check_library_model()
+        self.assertIsNone(engine.recognition_block)
+        self.assertEqual(rec.library_fingerprint, "")
+        self.assertTrue(any("自检" in line for line in captured.output))
+
+
 class RecognitionModelPathTests(unittest.TestCase):
     """模型文件路径只认 web_config.yaml，换模型/回滚都只改那一行。"""
 

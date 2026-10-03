@@ -45,6 +45,8 @@ MAX_ENROLL_FRAMES = 12
 MIN_FACE_SIDE = 56
 # 每个身份最多参与原型计算的注册照张数（取文件名最新的 N 张）
 MAX_IDENTITY_IMAGES = 20
+# 老库自检的判定线：跨模型余弦实测 0.067~0.077，同模型同人 ≥0.75，取中间偏保守的值
+CROSS_MODEL_CEILING = 0.30
 # 单次录入的图像体积上限（MB）
 ENROLL_IMAGE_MAX_MB = 4.0
 
@@ -220,8 +222,6 @@ class FaceEngine:
 
         跨模型的 512 维向量之间余弦相似度接近噪声。不拦的话服务照常启动、
         日志一句不错，只是谁都进不了门 —— 换模型必然踩的坑得在这里显式失败。
-        没记指纹的老库沿用当前模型（它能认人就说明本来就是这套模型），
-        加载时不改写文件，等下次录入或重建时补上指纹。
         """
         rec = self.recognizer
         if rec is None:
@@ -235,10 +235,57 @@ class FaceEngine:
                 "跨模型比对无效，请用 scripts/enroll_faces.py 重建人脸库")
             logger.error("[人脸] 库与模型不匹配，认人已停用: %s", self.recognition_block)
             return
-        if not stored:
-            logger.warning("[人脸] 老库没记模型指纹，按当前模型 %s 认人", current)
+        if not stored and not self._verify_legacy_library():
+            return
         self.recognition_block = None
         logger.info("人脸身份识别已启用: %s（%d 人）", rec.method, len(rec.identities))
+
+    def _verify_legacy_library(self) -> bool:
+        """没写指纹的老库：拿注册照重算一遍，认不出是谁建的就停用认人。返回能否继续认人。
+
+        派上现存的库正是这种库（iresnet50 时代建的，文件里只有 method/image_size）。
+        光「按当前模型继续认人」的话，换模型没重建库的表现就是静默全拒 —— 那正是
+        本函数要消灭的故障，不能只留一行 warning。
+        判不了（照片读不出来）时宁可让它继续工作：把一扇本来能开的门莫名停下，
+        比一次可诊断的停用更糟。
+        """
+        from .recognizer import probe_library_similarity
+
+        rec = self.recognizer
+        similarity = probe_library_similarity(rec, AUTHORIZED_DIR)
+        current = rec.model_fingerprint
+        if similarity is None:
+            logger.warning("[人脸] 老库没记模型指纹，也没有可读的注册照可自检，"
+                           "按当前模型 %s 认人", current)
+            return True
+        if similarity < CROSS_MODEL_CEILING:
+            self.recognition_block = (
+                f"人脸库没记模型指纹，自检发现注册照与当前模型 {current} 的相似度只有"
+                f" {similarity:.2f}（跨模型的典型表现）；"
+                "请用 scripts/enroll_faces.py 重建人脸库")
+            logger.error("[人脸] 老库自检判定跨模型，认人已停用: %s", self.recognition_block)
+            return False
+        if similarity < rec.similarity_threshold:
+            logger.warning("[人脸] 老库自检只有 %.2f，低于阈值 %.2f（注册照可能不是人脸裁片）；"
+                           "暂按当前模型 %s 认人", similarity, rec.similarity_threshold,
+                           current)
+            return True
+        self._stamp_library_fingerprint(similarity)
+        return True
+
+    def _stamp_library_fingerprint(self, similarity: float) -> None:
+        """自检通过就把当前指纹写回库：下次启动不必再猜，也省掉这笔提特征的钱。"""
+        from .recognizer import save_embedding_database
+
+        rec = self.recognizer
+        rec.database["model_fingerprint"] = rec.model_fingerprint
+        rec.library_fingerprint = rec.model_fingerprint
+        logger.info("[人脸] 老库自检通过（相似度 %.2f），已补写模型指纹 %s",
+                    similarity, rec.model_fingerprint)
+        try:
+            save_embedding_database(rec.database, rec.embeddings_path)
+        except OSError as exc:
+            logger.warning("[人脸] 指纹写回人脸库失败（不影响认人）: %s", exc)
 
     def _fallback_simulation(self) -> None:
         self.detector = None
@@ -435,12 +482,15 @@ class FaceEngine:
                 if self.recognizer is not None else 0)
 
     def model_mismatch(self) -> dict | None:
-        """库与当前模型不匹配时给出两个指纹，匹配（或老库没指纹）时返回 None。
+        """库里写过的指纹与当前模型不同时给出两份指纹，其余情况返回 None。
 
         句子交给前端按界面语言拼，日志里用 `_check_library_model` 那句中文。
+        老库自检（没有可比对的指纹）失败走 recognition_block，不冒充这种结构。
         """
         rec = self.recognizer
-        if rec is None or self.recognition_block is None:
+        if rec is None or not rec.library_fingerprint:
+            return None
+        if rec.library_fingerprint == rec.model_fingerprint:
             return None
         return {"library": rec.library_fingerprint, "current": rec.model_fingerprint}
 

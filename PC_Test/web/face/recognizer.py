@@ -272,6 +272,35 @@ def model_fingerprint(method: str, model_path: str | Path | None) -> str:
     return f"{method}:{path.stat().st_size}:{digest.hexdigest()[:16]}"
 
 
+def probe_library_similarity(
+    recognizer: "FaceRecognizer",
+    authorized_dir: str | Path,
+    max_identities: int = 3,
+    images_per_identity: int = 2,
+) -> float | None:
+    """拿磁盘上的注册照重算原型，与库里存的向量比余弦；返回各身份里最高的那个分。
+
+    没写 model_fingerprint 的老库光看文件猜不出是谁建的，而跨模型的余弦实测只有
+    0.07 上下（同人也一样）、同模型同人 ≥0.75，所以「重算一遍比一下」足够判定。
+    只取每个身份最新的几张、最多几个身份：派上单脸约 93ms，别把启动拖成长任务。
+    库里没有任何身份、或照片一张都读不出来时返回 None（判不了，不是不匹配）。
+    """
+    best: float | None = None
+    for identity in list(recognizer.identities or [])[:max_identities]:
+        stored = identity.get("prototype")
+        if stored is None:
+            continue
+        rebuilt = build_identity(Path(authorized_dir) / str(identity.get("name")),
+                                 recognizer.extractor,
+                                 max_images=images_per_identity)
+        if rebuilt is None:
+            continue
+        score = cosine_similarity(rebuilt["prototype"],
+                                  np.asarray(stored, dtype=np.float32))
+        best = score if best is None else max(best, score)
+    return best
+
+
 def build_embedding_database(
     authorized_dir: str | Path,
     model_path: str | Path | None = None,
