@@ -9,6 +9,7 @@ data/face/embeddings.pkl，识别时取余弦相似度最高且超过阈值的�
 """
 from __future__ import annotations
 
+import hashlib
 import pickle
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,6 +17,9 @@ from typing import Any
 
 import cv2
 import numpy as np
+
+# 算模型指纹时读取的文件头长度：够区分不同 ONNX，又不用整读上百 MB
+FINGERPRINT_PREFIX_BYTES = 256 * 1024
 
 
 @dataclass(frozen=True)
@@ -49,6 +53,9 @@ class FaceRecognizer:
         self.method = str(self.database.get("method", self.method))
         self.image_size = int(self.database.get("image_size", self.image_size))
         self.identities = self.database["identities"]
+        # 当前模型文件的指纹：库里写的不等于它，说明原型是别的模型算的
+        self.model_fingerprint = model_fingerprint(self.method, model_path)
+        self.library_fingerprint = str(self.database.get("model_fingerprint") or "")
         self.extractor = create_embedding_extractor(
             method=self.method,
             model_path=model_path,
@@ -241,6 +248,30 @@ def build_identity(
     }
 
 
+def model_fingerprint(method: str, model_path: str | Path | None) -> str:
+    """标识「这批原型是用哪个模型算出来的」，用来拦住跨模型比对。
+
+    不同模型的 512 维向量之间余弦相似度接近噪声，但库里只记 method 的话，
+    换了 ONNX 文件后旧原型照样能加载 —— 表现是「谁都不开权限」，日志里
+    一句错误都没有。所以 method + 文件大小 + 文件头哈希拼成指纹。
+
+    只哈希前 FINGERPRINT_PREFIX_BYTES：整读 174MB 在派上要花秒级，而换模型
+    必然换文件，头部片段加总长度足以区分。
+    """
+    if method != "arcface_onnx" or not model_path:
+        return str(method)
+    path = Path(model_path)
+    if not path.exists():
+        return f"{method}:missing"
+    digest = hashlib.sha256()
+    try:
+        with path.open("rb") as file:
+            digest.update(file.read(FINGERPRINT_PREFIX_BYTES))
+    except OSError as exc:
+        return f"{method}:unreadable:{exc.__class__.__name__}"
+    return f"{method}:{path.stat().st_size}:{digest.hexdigest()[:16]}"
+
+
 def build_embedding_database(
     authorized_dir: str | Path,
     model_path: str | Path | None = None,
@@ -270,6 +301,7 @@ def build_embedding_database(
         "version": 2,
         "method": method,
         "model_path": str(model_path) if model_path else None,
+        "model_fingerprint": model_fingerprint(method, model_path),
         "image_size": image_size,
         "identities": identities,
     }

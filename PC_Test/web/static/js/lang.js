@@ -209,6 +209,7 @@ const I18N = {
             'access.diag_orphan': '人脸库里有「{0}」，但名单里查不到对应人员',
             'access.diag_no_photo': '「{0}」还没有注册照，刷脸永远不会通过',
             'access.diag_ambiguous': '人脸ID「{0}」被多个人员共用',
+            'access.diag_model_block': '人脸库是模型「{0}」录的，当前模型是「{1}」：认人已停用，请重建人脸库',
             'access.diag_aliases': '已失效的历史人脸ID：{0}',
             'access.diag_repeat': '{0} 已重复触发 {1} 次，只开一次门',
             // 人脸识别展示面板
@@ -562,6 +563,7 @@ const I18N = {
             'access.diag_orphan': 'Face library holds "{0}" but no person owns that identity',
             'access.diag_no_photo': '"{0}" has no enrollment photos, face unlock can never pass',
             'access.diag_ambiguous': 'Face ID "{0}" is shared by several persons',
+            'access.diag_model_block': 'Face library was enrolled with model "{0}" but the current model is "{1}": recognition is disabled until the library is rebuilt',
             'access.diag_aliases': 'Stale historical face IDs: {0}',
             'access.diag_repeat': '{0} fired {1} times, door opened once',
             // Face Recognition Display Panel
