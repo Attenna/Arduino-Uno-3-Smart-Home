@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block doc_title_key %}nav.settings{% endblock %}
+{% block doc_title %}家庭设置 - 智能家居{% endblock %}
+{% block page_header %}
+    <span data-i18n="nav.settings">家庭设置</span>
+    <small data-i18n="settings.subtitle">成员、偏好与系统信息</small>
+{% endblock %}
+
+{% block content %}
+    <div class="settings-shell">
+        <nav class="settings-nav" id="settingsNav">
+            <div class="settings-nav-item active" data-sec="members" data-i18n="settings.members">家庭成员</div>
+            <div class="settings-nav-item" data-sec="prefs" data-i18n="settings.prefs">偏好设置</div>
+            <div class="settings-nav-item" data-sec="about" data-i18n="settings.about">关于系统</div>
+        </nav>
+
+        <div>
+            <!-- 家庭成员 -->
+            <section class="settings-section active" data-sec="members">
+                <div class="card">
+                    <div class="card-header">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="card-icon">
+                            <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>
+                            <circle cx="9" cy="7" r="4"/>
+                            <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/>
+                        </svg>
+                        <h3 data-i18n="settings.members">家庭成员</h3>
+                        <button class="btn btn-sm" style="margin-left:auto" onclick="addMember()">
+                            ＋ <span data-i18n="settings.add_member">添加成员</span>
+                        </button>
+                    </div>
+                    <div class="card-body">
+                        <div id="memberList"></div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 偏好设置 -->
+            <section class="settings-section" data-sec="prefs">
+                <div class="card">
+                    <div class="card-header">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="card-icon">
+                            <circle cx="12" cy="12" r="3"/>
+                            <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06A1.65 1.65 0 004.6 15a1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06A1.65 1.65 0 009 4.6a1.65 1.65 0 001-1.51V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z"/>
+                        </svg>
+                        <h3 data-i18n="settings.prefs">偏好设置</h3>
+                    </div>
+                    <div class="card-body">
+                        <div class="status-list">
+                            <div class="status-item">
+                                <span class="k" data-i18n="settings.language">界面语言</span>
+                                <select class="select-input" id="prefLang" onchange="saveLangPref()">
+                                    <option value="zh">中文</option>
+                                    <option value="en">English</option>
+                                </select>
+                            </div>
+                            <div class="status-item">
+                                <span class="k" data-i18n="settings.theme">界面主题</span>
+                                <span class="v" data-i18n="settings.theme_warm">暖居（暖奶油）</span>
+                            </div>
+                            <div class="status-item">
+                                <span class="k" data-i18n="settings.notify">桌面通知</span>
+                                <label class="editor-toggle" style="margin-left:auto">
+                                    <input type="checkbox" id="prefNotify" onchange="saveNotifyPref()">
+                                    <span data-i18n="settings.enabled">启用</span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card-footer" data-i18n="settings.prefs_footer">
+                        语言切换会立即作用于当前页面，并保存在本机浏览器中。
+                    </div>
+                </div>
+            </section>
+
+            <!-- 关于系统 -->
+            <section class="settings-section" data-sec="about">
+                <div class="card">
+                    <div class="card-header">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="card-icon">
+                            <circle cx="12" cy="12" r="10"/>
+                            <line x1="12" y1="16" x2="12" y2="12"/>
+                            <line x1="12" y1="8" x2="12.01" y2="8"/>
+                        </svg>
+                        <h3 data-i18n="settings.about">关于系统</h3>
+                    </div>
+                    <div class="card-body">
+                        <div class="status-list">
+                            <div class="status-item"><span class="k" data-i18n="settings.system">系统名称</span><span class="v" data-i18n="system.title">智能家居控制系统</span></div>
+                            <div class="status-item"><span class="k" data-i18n="settings.version">版本</span><span class="v">v2.9</span></div>
+                            <div class="status-item"><span class="k" data-i18n="settings.hardware">主控硬件</span><span class="v">Arduino Uno 3</span></div>
+                            <div class="status-item"><span class="k" data-i18n="settings.vision">视觉节点</span><span class="v" data-i18n="settings.vision_node">香橙派（人脸识别）</span></div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </div>
+    </div>
+{% endblock %}
+
+{% block scripts %}
+    <script src="{{ url_for('static', filename='js/settings.js') }}?v=20261003a"></script>
+{% endblock %}

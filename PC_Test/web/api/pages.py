@@ -9,6 +9,21 @@ def index():
     return render_template("dashboard.html")
 
 
+@bp.route("/rooms")
+def rooms_page():
+    return render_template("rooms.html")
+
+
+@bp.route("/settings")
+def settings_page():
+    return render_template("settings.html")
+
+
+@bp.route("/login")
+def login_page():
+    return render_template("login.html")
+
+
 @bp.route("/history")
 def history_page():
     return render_template("history.html")

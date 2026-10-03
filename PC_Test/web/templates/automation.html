@@ -1,10 +1,12 @@
-﻿<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>自动化规则 - 智能家居</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=20261002m">
+{% extends "base.html" %}
+{% block doc_title_key %}nav.automation{% endblock %}
+{% block doc_title %}场景与自动化 - 智能家居{% endblock %}
+{% block page_header %}
+    <span data-i18n="nav.automation">场景与自动化</span>
+    <small data-i18n="auto.subtitle">看懂家如何自己行动</small>
+{% endblock %}
+
+{% block head %}
     <!-- Blockly 全量自托管（内网/校园网无外网也可用）-->
     <script src="{{ url_for('static', filename='vendor/blockly/blockly.min.js') }}?v=20261001a"></script>
     <script>
@@ -14,11 +16,28 @@
     </script>
     <style>
         /* ==================== 视图切换 ==================== */
-        .auto-layout { display: grid; grid-template-columns: 1fr 320px; gap: 16px; align-items: start; }
+        .auto-layout { display: grid; grid-template-columns: 1fr 320px; gap: 20px; align-items: start; }
         .auto-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
         .auto-toolbar h3 { margin: 0; font-size: 16px; }
         .auto-toolbar .spacer { flex: 1 1 auto; }
         .rule-count { font-size: 12px; color: var(--text-secondary); }
+
+        /* ==================== 一键场景 ==================== */
+        .scene-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 20px; margin-bottom: 20px; }
+        .scene-card { display: flex; align-items: center; gap: 16px; padding: 20px;
+                      background: var(--bg-card); border: 1px solid var(--border-color);
+                      border-radius: var(--radius); box-shadow: var(--shadow); cursor: pointer;
+                      transition: .18s; text-align: left; }
+        .scene-card:hover { transform: translateY(-2px); border-color: rgba(152, 97, 49,.42); }
+        .scene-card.active { border-color: var(--accent-cyan); background: rgba(152, 97, 49,.07); }
+        .scene-icon { width: 48px; height: 48px; flex: 0 0 48px; border-radius: 14px;
+                      display: flex; align-items: center; justify-content: center;
+                      background: rgba(152, 97, 49,.12); color: var(--accent-cyan); }
+        .scene-icon svg { width: 26px; height: 26px; }
+        .scene-card.scene-away .scene-icon { background: rgba(181, 84, 74,.12); color: var(--accent-red); }
+        .scene-main { min-width: 0; }
+        .scene-name { font-weight: 600; font-size: 15px; }
+        .scene-desc { font-size: 12.5px; color: var(--text-secondary); margin-top: 3px; line-height: 1.5; }
 
         /* ==================== 规则卡片（iOS 快捷指令风）==================== */
         .rule-grid { display: grid; gap: 10px; }
@@ -67,7 +86,7 @@
                        padding: 7px 10px; border-radius: 8px; border: 1px solid var(--border-color);
                        background: var(--bg-secondary); color: var(--text-primary); }
         .editor-toggle { display: flex; align-items: center; gap: 6px; font-size: 13px; }
-        #blocklyArea { width: 100%; height: calc(100vh - 215px); min-height: 440px;
+        #blocklyArea { width: 100%; height: calc(100vh - 235px); min-height: 440px;
                        border-radius: var(--radius-sm); overflow: hidden;
                        border: 1px solid var(--border-color); background: #faf5ee; position: relative; }
         #blocklyDiv { position: absolute; inset: 0; }
@@ -111,144 +130,139 @@
                        border-radius: var(--radius-sm); text-align: center; padding: 20px; }
         @media (max-width: 1100px) { .auto-layout { grid-template-columns: 1fr; } }
     </style>
-</head>
-<body>
-    <nav class="navbar">
-        <div class="nav-brand">
-            <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/>
-                <polyline points="9 22 9 12 15 12 15 22"/>
-            </svg>
-            <span data-i18n="system.title">智能家居控制系统</span>
-        </div>
-        <div class="nav-links">
-            <a href="/" class="nav-link" data-i18n="nav.dashboard">仪表盘</a>
-            <a href="/history" class="nav-link" data-i18n="nav.history">历史数据</a>
-            <a href="/access" class="nav-link" data-i18n="nav.access">门禁管理</a>
-            <a href="/hardware" class="nav-link" data-i18n="nav.hardware">硬件管理</a>
-            <a href="/voice" class="nav-link" data-i18n="nav.voice">语音助手</a>
-            <a href="/automation" class="nav-link active" data-i18n="nav.automation">自动化</a>
-        </div>
-        <div class="nav-status">
-            <span class="status-dot online"></span>
-            <span data-i18n="system.online">系统在线</span>
-            <span id="currentTime" class="time-display">--:--:--</span>
-        </div>
-        <button class="lang-switch" onclick="setLang(I18N.currentLang === 'zh' ? 'en' : 'zh')">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <circle cx="12" cy="12" r="10"/>
-                <line x1="2" y1="12" x2="22" y2="12"/>
-                <path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/>
-            </svg>
-            <span data-i18n="nav.lang">EN</span>
-        </button>
-    </nav>
+{% endblock %}
 
-    <div id="notification" class="notification hidden"></div>
-
+{% block content %}
     <!-- 卡片 ⋮ 菜单（全局唯一，按需定位） -->
     <div id="cardMenu" class="card-menu hidden"></div>
 
-    <main class="main-content">
-        <!-- ==================== 视图一：规则列表 ==================== -->
-        <div id="listView">
-            <div class="card" style="margin-bottom:12px">
-                <div class="card-body auto-toolbar">
-                    <h3>🧩 自动化</h3>
-                    <span id="ruleCount" class="rule-count"></span>
-                    <span class="spacer"></span>
-                    <button class="btn btn-primary" onclick="createRule()">＋ 新建规则</button>
-                    <button class="btn" onclick="restorePresets()">♻️ 恢复内置</button>
-                    <button class="btn mini-btn" onclick="refreshPreview()">🔄</button>
-                </div>
-            </div>
-            <div class="auto-layout">
-                <div id="ruleGrid" class="rule-grid"></div>
+    <!-- ==================== 视图一：场景 + 规则列表 ==================== -->
+    <div id="listView">
+        <!-- 一键场景 -->
+        <div class="scene-row">
+            <button class="scene-card" id="sceneHome" onclick="setHomeMode('auto')">
+                <span class="scene-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/>
+                        <polyline points="9 22 9 12 15 12 15 22"/>
+                    </svg>
+                </span>
+                <span class="scene-main">
+                    <span class="scene-name" data-i18n="auto.scene_home">在家自动</span>
+                    <span class="scene-desc" data-i18n="auto.scene_home_desc">启用温度和光照联动，立即重新判断环境</span>
+                </span>
+            </button>
+            <button class="scene-card scene-away" id="sceneAway" onclick="setHomeMode('away')">
+                <span class="scene-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/>
+                        <polyline points="16 17 21 12 16 7"/>
+                        <line x1="21" y1="12" x2="9" y2="12"/>
+                    </svg>
+                </span>
+                <span class="scene-main">
+                    <span class="scene-name" data-i18n="auto.scene_away">离家</span>
+                    <span class="scene-desc" data-i18n="auto.scene_away_desc">关闭风扇和灯光，保留安全检测</span>
+                </span>
+            </button>
+        </div>
 
-                <div style="display:flex;flex-direction:column;gap:16px">
-                    <div class="card">
-                        <div class="card-header"><h3>🏠 全屋模式</h3></div>
-                        <div class="card-body" style="display:flex;flex-direction:column;gap:10px">
-                            <div id="homeModeBadge" class="mode-badge">当前模式：--</div>
-                            <div style="display:flex;gap:8px;flex-wrap:wrap">
-                                <button class="btn mini-btn" onclick="setHomeMode('auto')">🤖 自动</button>
-                                <button class="btn mini-btn" onclick="setHomeMode('manual')">✋ 手动</button>
-                                <button class="btn mini-btn" onclick="setHomeMode('away')">🚪 离家</button>
-                            </div>
-                            <div style="display:flex;gap:8px;flex-wrap:wrap">
-                                <button class="btn mini-btn" id="fanOverrideBtn"
-                                        onclick="cycleFanOverride()">🌀 风扇：--</button>
-                                <button class="btn mini-btn" id="lightLevelBtn"
-                                        onclick="cycleLightLevel()">💡 灯光：--</button>
-                            </div>
-                            <div>
-                                <div style="font-size:12px;color:var(--text-secondary);margin-bottom:4px">手动优先</div>
-                                <div id="manualGraceChips" class="manual-grace">
-                                    <span class="grace-chip empty">无</span>
-                                </div>
-                            </div>
-                            <span id="homeModeDetail" class="mode-hint"></span>
-                            <span class="mode-hint">手动操作后该设备 30 秒内不被自动规则改动；离家关闭全屋设备。</span>
-                            <span class="mode-hint">🛡️ 风扇只能由你在风扇卡片手动开启——任何自动化规则/全屋模式都只能关风扇，不能开风扇。</span>
+        <div class="card" style="margin-bottom:20px">
+            <div class="card-body auto-toolbar">
+                <h3 data-i18n="auto.rules">自动规则</h3>
+                <span id="ruleCount" class="rule-count"></span>
+                <span class="spacer"></span>
+                <button class="btn btn-primary" onclick="createRule()">＋ 新建规则</button>
+                <button class="btn" onclick="restorePresets()">♻️ 恢复内置</button>
+                <button class="btn mini-btn" onclick="refreshPreview()">🔄</button>
+            </div>
+        </div>
+        <div class="auto-layout">
+            <div id="ruleGrid" class="rule-grid"></div>
+
+            <div style="display:flex;flex-direction:column;gap:20px">
+                <div class="card">
+                    <div class="card-header"><h3>🏠 全屋模式</h3></div>
+                    <div class="card-body" style="display:flex;flex-direction:column;gap:10px">
+                        <div id="homeModeBadge" class="mode-badge">当前模式：--</div>
+                        <div style="display:flex;gap:8px;flex-wrap:wrap">
+                            <button class="btn mini-btn" onclick="setHomeMode('auto')">🤖 自动</button>
+                            <button class="btn mini-btn" onclick="setHomeMode('manual')">✋ 手动</button>
+                            <button class="btn mini-btn" onclick="setHomeMode('away')">🚪 离家</button>
                         </div>
+                        <div style="display:flex;gap:8px;flex-wrap:wrap">
+                            <button class="btn mini-btn" id="fanOverrideBtn"
+                                    onclick="cycleFanOverride()">🌀 风扇：--</button>
+                            <button class="btn mini-btn" id="lightLevelBtn"
+                                    onclick="cycleLightLevel()">💡 灯光：--</button>
+                        </div>
+                        <div>
+                            <div style="font-size:12px;color:var(--text-secondary);margin-bottom:4px">手动优先</div>
+                            <div id="manualGraceChips" class="manual-grace">
+                                <span class="grace-chip empty">无</span>
+                            </div>
+                        </div>
+                        <span id="homeModeDetail" class="mode-hint"></span>
+                        <span class="mode-hint">手动操作后该设备 30 秒内不被自动规则改动；离家关闭全屋设备。</span>
+                        <span class="mode-hint">🛡️ 风扇只能由你在风扇卡片手动开启——任何自动化规则/全屋模式都只能关风扇，不能开风扇。</span>
                     </div>
-                    <div class="card">
-                        <div class="card-header"><h3>🖥️ OLED 轮播</h3></div>
-                        <div class="card-body" style="display:flex;flex-direction:column;gap:10px">
-                            <label style="display:flex;align-items:center;gap:8px;font-size:14px">
-                                <input type="checkbox" id="oledEnabled"> 启用轮播
-                            </label>
-                            <label style="display:flex;align-items:center;gap:8px;font-size:14px">
-                                每
-                                <input type="number" id="oledInterval" value="5" min="1" max="3600" step="1"
-                                       style="width:70px"> 秒切页
-                            </label>
-                            <span style="font-size:12px;color:var(--text-secondary)">仅英文/数字，每行 16 字符</span>
-                            <button class="btn btn-primary" onclick="saveOledConfig()">💾 保存设置</button>
-                            <span id="oledStatus" style="font-size:12px;color:var(--text-secondary)"></span>
-                        </div>
+                </div>
+                <div class="card">
+                    <div class="card-header"><h3>🖥️ OLED 轮播</h3></div>
+                    <div class="card-body" style="display:flex;flex-direction:column;gap:10px">
+                        <label style="display:flex;align-items:center;gap:8px;font-size:14px">
+                            <input type="checkbox" id="oledEnabled"> 启用轮播
+                        </label>
+                        <label style="display:flex;align-items:center;gap:8px;font-size:14px">
+                            每
+                            <input type="number" id="oledInterval" value="5" min="1" max="3600" step="1"
+                                   style="width:70px"> 秒切页
+                        </label>
+                        <span style="font-size:12px;color:var(--text-secondary)">仅英文/数字，每行 16 字符</span>
+                        <button class="btn btn-primary" onclick="saveOledConfig()">💾 保存设置</button>
+                        <span id="oledStatus" style="font-size:12px;color:var(--text-secondary)"></span>
                     </div>
-                    <div class="card">
-                        <div class="card-header"><h3>📜 执行记录</h3></div>
-                        <div class="card-body log-wrap">
-                            <table class="auto-log">
-                                <thead><tr><th>时间</th><th>规则</th><th>结果</th></tr></thead>
-                                <tbody id="autoLogBody"></tbody>
-                            </table>
-                        </div>
+                </div>
+                <div class="card">
+                    <div class="card-header"><h3>📜 执行记录</h3></div>
+                    <div class="card-body log-wrap">
+                        <table class="auto-log">
+                            <thead><tr><th>时间</th><th>规则</th><th>结果</th></tr></thead>
+                            <tbody id="autoLogBody"></tbody>
+                        </table>
                     </div>
                 </div>
             </div>
         </div>
+    </div>
 
-        <!-- ==================== 视图二：单条规则编辑器 ==================== -->
-        <div id="editorView" class="hidden">
-            <div class="card">
-                <div class="card-body editor-bar">
-                    <button class="btn" onclick="closeEditor()">← 返回</button>
-                    <input id="editorName" class="editor-name" type="text" placeholder="规则名称">
-                    <label class="editor-toggle">
-                        <input type="checkbox" id="editorEnabled"> 启用
-                    </label>
-                    <button class="btn" onclick="runEditing()">▶ 运行一次</button>
-                    <button class="btn btn-primary" onclick="saveEditor()">💾 保存</button>
-                </div>
+    <!-- ==================== 视图二：单条规则编辑器 ==================== -->
+    <div id="editorView" class="hidden">
+        <div class="card">
+            <div class="card-body editor-bar">
+                <button class="btn" onclick="closeEditor()">← 返回</button>
+                <input id="editorName" class="editor-name" type="text" placeholder="规则名称">
+                <label class="editor-toggle">
+                    <input type="checkbox" id="editorEnabled"> 启用
+                </label>
+                <button class="btn" onclick="runEditing()">▶ 运行一次</button>
+                <button class="btn btn-primary" onclick="saveEditor()">💾 保存</button>
             </div>
-            <div class="card" style="margin-top:12px">
-                <div class="card-body">
-                    <div id="blocklyArea">
-                        <div id="blocklyDiv"></div>
-                        <button id="fitViewBtn" class="fit-btn" title="适应屏幕" type="button">⛶</button>
-                        <div id="blocklyMissing" class="missing-box hidden">
-                            积木引擎加载失败，请 Ctrl+F5 强制刷新。
-                        </div>
+        </div>
+        <div class="card" style="margin-top:20px">
+            <div class="card-body">
+                <div id="blocklyArea">
+                    <div id="blocklyDiv"></div>
+                    <button id="fitViewBtn" class="fit-btn" title="适应屏幕" type="button">⛶</button>
+                    <div id="blocklyMissing" class="missing-box hidden">
+                        积木引擎加载失败，请 Ctrl+F5 强制刷新。
                     </div>
                 </div>
             </div>
         </div>
-    </main>
+    </div>
+{% endblock %}
 
-    <script src="{{ url_for('static', filename='js/lang.js') }}?v=20261002m"></script>
-    <script src="{{ url_for('static', filename='js/automation.js') }}?v=20261002m"></script>
-</body>
-</html>
+{% block scripts %}
+    <script src="{{ url_for('static', filename='js/automation.js') }}?v=20261003a"></script>
+{% endblock %}

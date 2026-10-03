@@ -1,351 +1,376 @@
-﻿<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title data-i18n="system.title">智能家居控制系统</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=20261002m">
+﻿{% extends "base.html" %}
+{% block doc_title_key %}nav.dashboard{% endblock %}
+{% block doc_title %}我的家{% endblock %}
+{% block head %}
     <script src="{{ url_for('static', filename='vendor/chart/chart.umd.min.js') }}"></script>
-</head>
-<body>
-    <!-- 顶部导航栏 -->
-    <nav class="navbar">
-        <div class="nav-brand">
-            <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/>
-                <polyline points="9 22 9 12 15 12 15 22"/>
-            </svg>
-            <span data-i18n="system.title">智能家居控制系统</span>
+{% endblock %}
+{% block page_header %}
+    <span data-i18n="nav.dashboard">我的家</span>
+    <small data-i18n="home.subtitle">一眼看懂现在的家</small>
+{% endblock %}
+
+{% block content %}
+    <!-- 硬件回读一致性 / 串口健康度（诊断，后端已做防误报） -->
+    <div id="mismatchIndicator" class="mismatch-indicator na">
+        <div class="mismatch-row" data-i18n="mismatch.unavailable">硬件回读不可用</div>
+    </div>
+    <div id="serialHealth" class="serial-health hidden"></div>
+
+    <!-- 模式摘要 + 环境摘要 -->
+    <div class="mode-bar">
+        <span class="mode-pill" id="homeModePill">
+            <span class="dot"></span>
+            <span id="homeModeText" data-i18n="home.mode_home">在家</span>
+        </span>
+        <div class="env-chips">
+            <div class="env-chip"><span class="k" data-i18n="home.temp">温度</span><span class="v" id="envTemp">--</span></div>
+            <div class="env-chip"><span class="k" data-i18n="temp.humidity">湿度</span><span class="v" id="envHum">--</span></div>
+            <div class="env-chip"><span class="k">24h 平均温度</span><span class="v" id="avgTemp24h">--</span></div>
+            <div class="env-chip"><span class="k">24h 门禁</span><span class="v" id="accessCount24h">0</span></div>
+            <div class="env-chip"><span class="k">24h 灯光</span><span class="v" id="lightUsage24h">0</span></div>
         </div>
-        <div class="nav-links">
-            <a href="/" class="nav-link active"><span data-i18n="nav.dashboard">仪表盘</span></a>
-            <a href="/history" class="nav-link"><span data-i18n="nav.history">历史数据</span></a>
-            <a href="/access" class="nav-link"><span data-i18n="nav.access">门禁管理</span></a>
-            <a href="/hardware" class="nav-link"><span data-i18n="nav.hardware">硬件管理</span></a>
-            <a href="/voice" class="nav-link"><span data-i18n="nav.voice">语音助手</span></a>
-            <a href="/automation" class="nav-link"><span data-i18n="nav.automation">自动化</span></a>
-        </div>
-        <div class="nav-status">
-            <span id="connectionIndicator" class="status-dot online"></span>
-            <span data-i18n="system.online">系统在线</span>
-            <span id="currentTime" class="time-display">--:--:--</span>
-        </div>
-        <button class="lang-switch" onclick="toggleDashboardLang()" ><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <circle cx="12" cy="12" r="10"/>
-                <line x1="2" y1="12" x2="22" y2="12"/>
-                <path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/>
-            </svg>
-            <span data-i18n="nav.lang">EN</span>
-        </button>
-    </nav>
+    </div>
 
-    <!-- 通知区域 -->
-    <div id="notification" class="notification hidden"></div>
-
-    <!-- 主内容区域 -->
-    <main class="main-content">
-        <!-- 硬件回读一致性指示器：B 板回读值 vs 命令下发值（后端已做防误报） -->
-        <div id="mismatchIndicator" class="mismatch-indicator na">
-            <div class="mismatch-row" data-i18n="mismatch.unavailable">硬件回读不可用</div>
-        </div>
-
-        <!-- 串口链路健康度：A/B 板连接状态与重连/复位/告警计数（后端低频刷新） -->
-        <div id="serialHealth" class="serial-health hidden"></div>
-
-        <!-- 第一行: 核心状态卡片 -->
-        <div class="dashboard-grid">
-            <!-- 温湿度卡片 -->
-            <div class="card card-temperature">
-                <div class="card-header">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="card-icon">
-                        <path d="M14 14.76V3.5a2.5 2.5 0 00-5 0v11.26a4.5 4.5 0 105 0z"/>
-                    </svg>
-                    <h3 data-i18n="temp.title">温湿度监控</h3>
-                    <span class="card-badge" id="tempAlert">正常</span>
-                </div>
-                <div class="card-body">
-                    <div class="temp-display">
-                        <span class="temp-value" id="tempValue">--</span>
-                        <span class="temp-unit">°C</span>
-                    </div>
-                    <div class="humidity-display">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="mini-icon">
-                            <path d="M12 2.69l5.66 5.66a8 8 0 11-11.31 0z"/>
-                        </svg>
-                        <span><span data-i18n="temp.humidity">湿度</span>: <strong id="humidityValue">--</strong>%</span>
-                    </div>
-                    <div class="temp-range">
-                        <div class="range-item">
-                            <span class="range-label" data-i18n="temp.high">最高</span>
-                            <span class="range-value" id="tempMax">--</span>°C
-                        </div>
-                        <div class="range-item">
-                            <span class="range-label" data-i18n="temp.low">最低</span>
-                            <span class="range-value" id="tempMin">--</span>°C
-                        </div>
-                        <div class="range-item">
-                            <span class="range-label" data-i18n="temp.avg">平均</span>
-                            <span class="range-value" id="tempAvg">--</span>°C
-                        </div>
-                    </div>
-                </div>
-                <div class="card-footer">
-                    <small data-i18n="temp.auto_fan">温度过高将自动启动风扇</small>
-                </div>
-            </div>
-
-            <!-- 风扇控制卡片 -->
-            <div class="card card-fan">
-                <div class="card-header">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="card-icon">
-                        <circle cx="12" cy="12" r="3"/>
-                        <path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/>
-                    </svg>
-                    <h3 data-i18n="fan.title">风扇 / 伺服电机</h3>
-                </div>
-                <div class="card-body">
-                    <div class="fan-visual" id="fanVisual">
-                        <div class="fan-shell" id="fanShell">
-                            <svg class="fan-icon" viewBox="0 0 48 48">
-                                <g class="fan-rotor">
-                                    <ellipse class="fan-blade" cx="24" cy="11" rx="4.6" ry="10"/>
-                                    <ellipse class="fan-blade" cx="24" cy="11" rx="4.6" ry="10" transform="rotate(120 24 24)"/>
-                                    <ellipse class="fan-blade" cx="24" cy="11" rx="4.6" ry="10" transform="rotate(240 24 24)"/>
-                                </g>
-                                <circle class="fan-hub" cx="24" cy="24" r="4.2"/>
-                            </svg>
-                        </div>
-                        <span class="level-chip" id="fanLevelLabel" data-i18n="fan.off">关闭</span>
-                    </div>
-                    <!-- B 板硬件回读（真值）；无回读时隐藏 -->
-                    <div class="fan-readback hidden" id="fanReadback">
-                        <span data-i18n="fan.readback">回读</span>
-                        <span id="fanReadbackValue">--%</span>
-                    </div>
-                    <div class="level-selector" id="fanLevelButtons">
-                        <button class="btn btn-sm level-btn" data-level="0" onclick="setFan(0)" data-i18n="fan.off">关闭</button>
-                        <button class="btn btn-sm level-btn" data-level="30" onclick="setFan(30)" data-i18n="fan.low">低速</button>
-                        <button class="btn btn-sm level-btn" data-level="60" onclick="setFan(60)" data-i18n="fan.medium">中速</button>
-                        <button class="btn btn-sm level-btn" data-level="100" onclick="setFan(100)" data-i18n="fan.high">高速</button>
-                    </div>
-                </div>
-            </div>
-
-            <!-- 门窗状态卡片 -->
-            <div class="card card-door">
-                <div class="card-header">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="card-icon">
-                        <rect x="3" y="3" width="18" height="18" rx="2"/>
-                        <path d="M9 3v18M15 3v18"/>
-                    </svg>
-                    <h3 data-i18n="door.title">门窗状态</h3>
-                </div>
-                <div class="card-body">
-                    <div class="door-window-grid">
-                        <div class="dw-item">
-                            <div class="dw-icon" id="doorIcon">
-                                <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2">
-                                    <rect x="6" y="4" width="36" height="40" rx="2"/>
-                                    <circle cx="34" cy="24" r="3"/>
-                                    <path d="M6 4h36"/>
-                                </svg>
-                            </div>
-                            <span class="dw-label" data-i18n="door.front">前门</span>
-                            <span class="dw-status" id="doorStatus">--</span>
-                            <button class="btn btn-toggle" id="doorBtn" onclick="guardDoor()" data-i18n="door.toggle">切换</button>
-                        </div>
-                        <div class="dw-item">
-                            <div class="dw-icon" id="windowIcon">
-                                <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2">
-                                    <rect x="4" y="4" width="40" height="40" rx="2"/>
-                                    <line x1="24" y1="4" x2="24" y2="44"/>
-                                    <line x1="4" y1="24" x2="44" y2="24"/>
-                                </svg>
-                            </div>
-                            <span class="dw-label" data-i18n="door.window">客厅窗户</span>
-                            <span class="dw-status" id="windowStatus">--</span>
-                            <button class="btn btn-toggle" id="windowBtn" onclick="guardWindow()" data-i18n="door.toggle">切换</button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- 灯光控制卡片 -->
-            <div class="card card-light">
-                <div class="card-header">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="card-icon">
-                        <path d="M9 18h6M10 22h4M12 2v1M4.22 4.22l.7.71M1 12h1M4.22 19.78l.71-.7M20.07 4.93l-.71.71M23 12h-1M20.07 19.07l-.7-.71"/>
-                        <circle cx="12" cy="12" r="4"/>
-                    </svg>
-                    <h3 data-i18n="light.title">灯光控制</h3>
-                    <span class="light-indicator" id="lightIndicator"></span>
-                </div>
-                <div class="card-body">
-                    <div class="light-preview" id="lightPreview">
-                        <div class="bulb-shell" id="bulb">
-                            <span class="bulb-glow"></span>
-                            <svg class="bulb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                 stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                                <path class="bulb-body" d="M12 2.5a6.5 6.5 0 00-3.7 11.85V17h7.4v-2.65A6.5 6.5 0 0012 2.5z"/>
-                                <path d="M9.6 19.5h4.8"/>
-                                <path class="bulb-filament" d="M9.8 13.6a2.4 2.4 0 004.4 0"/>
-                            </svg>
-                        </div>
-                        <span class="level-chip" id="lightLevelLabel" data-i18n="light.off">关闭</span>
-                    </div>
-                    <div class="level-selector" id="lightLevelButtons">
-                        <button class="btn btn-sm level-btn" data-level="0" onclick="setLight('off', 0)" data-i18n="light.off">关闭</button>
-                        <button class="btn btn-sm level-btn" data-level="25" onclick="setLight('on', 25)" data-i18n="light.night">夜灯</button>
-                        <button class="btn btn-sm level-btn" data-level="50" onclick="setLight('on', 50)" data-i18n="light.half">半亮</button>
-                        <button class="btn btn-sm level-btn" data-level="100" onclick="setLight('on', 100)" data-i18n="light.full">全亮</button>
-                    </div>
-                </div>
-            </div>
-
-            <!-- 空调控制卡片（美的红外遥控） -->
-            <div class="card card-ac">
-                <div class="card-header">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="card-icon">
-                        <rect x="2" y="4" width="20" height="10" rx="2"/>
-                        <path d="M6 18v2M12 18v3M18 18v2"/>
-                    </svg>
-                    <h3 data-i18n="ac.title">空调（美的红外）</h3>
-                    <span class="ac-indicator" id="acIndicator"></span>
-                </div>
-                <div class="card-body">
-                    <div class="ac-readout">
-                        <span class="ac-temp" id="acTempValue">--</span>
-                        <span class="ac-mode" id="acModeValue">--</span>
-                    </div>
-                    <div class="control-row">
-                        <label data-i18n="ac.temperature">温度</label>
-                        <div class="slider-container">
-                            <input type="range" id="acTempSlider" min="17" max="30" step="1" value="26" class="slider">
-                            <span class="slider-value" id="acTempLabel">26.0°C</span>
-                        </div>
-                    </div>
-                    <div class="control-row">
-                        <label data-i18n="ac.mode">模式</label>
-                        <div class="btn-group btn-group-tight" id="acModeButtons">
-                            <button class="btn btn-sm ac-opt" data-ac-mode="auto" onclick="setACMode('auto')" data-i18n="ac.mode_auto">自动</button>
-                            <button class="btn btn-sm ac-opt" data-ac-mode="cool" onclick="setACMode('cool')" data-i18n="ac.mode_cool">制冷</button>
-                            <button class="btn btn-sm ac-opt" data-ac-mode="heat" onclick="setACMode('heat')" data-i18n="ac.mode_heat">制热</button>
-                            <button class="btn btn-sm ac-opt" data-ac-mode="dry" onclick="setACMode('dry')" data-i18n="ac.mode_dry">抽湿</button>
-                            <button class="btn btn-sm ac-opt" data-ac-mode="fan" onclick="setACMode('fan')" data-i18n="ac.mode_fan">送风</button>
-                        </div>
-                    </div>
-                    <div class="control-row">
-                        <label data-i18n="ac.fan">风速</label>
-                        <div class="btn-group btn-group-tight" id="acFanButtons">
-                            <button class="btn btn-sm ac-opt" data-ac-fan="auto" onclick="setACFan('auto')" data-i18n="ac.mode_auto">自动</button>
-                            <button class="btn btn-sm ac-opt" data-ac-fan="low" onclick="setACFan('low')" data-i18n="ac.fan_low">低</button>
-                            <button class="btn btn-sm ac-opt" data-ac-fan="mid" onclick="setACFan('mid')" data-i18n="ac.fan_mid">中</button>
-                            <button class="btn btn-sm ac-opt" data-ac-fan="high" onclick="setACFan('high')" data-i18n="ac.fan_high">高</button>
-                        </div>
-                    </div>
-                    <div class="btn-group btn-group-tight">
-                        <button class="btn btn-sm ac-opt" id="acSwingUdBtn" onclick="toggleACOption('swing_ud')" data-i18n="ac.swing_ud">上下扫风</button>
-                        <button class="btn btn-sm ac-opt" id="acSwingLrBtn" onclick="toggleACOption('swing_lr')" data-i18n="ac.swing_lr">左右扫风</button>
-                    </div>
-                    <div class="btn-group">
-                        <button class="btn btn-sm btn-toggle" id="acPowerBtn" onclick="toggleAC()" data-i18n="ac.power_on">开机</button>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- 第二行: 温度趋势图 -->
-        <div class="dashboard-grid">
-            <!-- 温度趋势图 -->
-            <div class="card card-chart" style="grid-column: 1 / -1">
-                <div class="card-header">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="card-icon">
-                        <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
-                    </svg>
-                    <h3 data-i18n="temp.trend_24h">温度趋势 (24小时)</h3>
-                </div>
-                <div class="card-body chart-container">
-                    <canvas id="tempChart"></canvas>
-                </div>
-            </div>
-        </div>
-
-        <!-- 第三行: 快捷远程控制面板 -->
-        <div class="card card-remote">
-            <div class="card-header">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="card-icon">
-                    <rect x="2" y="6" width="20" height="12" rx="2"/>
-                    <circle cx="12" cy="12" r="2"/>
-                    <path d="M6 18h12M12 6V3"/>
+    <!-- 房间实时状态 + 常用设备 + 最近事件 -->
+    <div class="room-scene">
+        <div class="room-stage">
+            <div class="floor"></div>
+            <div class="rs-unit rs-lamp" id="rsLamp">
+                <span class="glow"></span>
+                <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M15 30h18l-3.2-16H18.2z"/>
+                    <path d="M24 30v9"/>
+                    <path d="M17 41h14"/>
                 </svg>
-                <h3 data-i18n="remote.title">远程控制面板</h3>
-                <span class="card-subtitle" data-i18n="remote.subtitle">一键控制所有设备</span>
+                <span class="rs-label" data-i18n="home.lamp">灯</span>
+            </div>
+            <div class="rs-unit rs-fan" id="rsFan">
+                <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2">
+                    <g class="rotor">
+                        <ellipse cx="24" cy="12" rx="5" ry="10"/>
+                        <ellipse cx="24" cy="12" rx="5" ry="10" transform="rotate(120 24 24)"/>
+                        <ellipse cx="24" cy="12" rx="5" ry="10" transform="rotate(240 24 24)"/>
+                    </g>
+                    <circle cx="24" cy="24" r="3.5"/>
+                </svg>
+                <span class="rs-label" data-i18n="home.fan">风扇</span>
+            </div>
+            <div class="rs-unit rs-window" id="rsWindow">
+                <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="7" y="7" width="34" height="34" rx="2"/>
+                    <line x1="24" y1="7" x2="24" y2="41"/>
+                    <line x1="7" y1="24" x2="41" y2="24"/>
+                </svg>
+                <span class="rs-label" data-i18n="home.window">窗户</span>
+            </div>
+            <div class="rs-unit rs-door" id="rsDoor">
+                <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="11" y="6" width="26" height="38" rx="2"/>
+                    <circle cx="31" cy="26" r="2.4"/>
+                </svg>
+                <span class="rs-label" data-i18n="home.door">入户门</span>
+                <span class="rs-countdown hidden" id="rsDoorCountdown"></span>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="card-icon"><path d="M4 12h16M12 4v16"/></svg>
+                <h3 data-i18n="home.devices">常用设备</h3>
             </div>
             <div class="card-body">
-                <div class="remote-grid">
-                    <div class="remote-device" onclick="remoteControl('light_on')">
-                        <div class="remote-icon light-on-icon">
-                            <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="6"/></svg>
-                        </div>
-                        <span data-i18n="remote.light_on">全部开灯</span>
+                <div class="btn-group btn-group-tight" style="margin-bottom:10px">
+                    <button class="btn btn-sm" onclick="setLight('on',100)" data-i18n="light.full">全亮</button>
+                    <button class="btn btn-sm" onclick="setLight('on',50)" data-i18n="light.half">半亮</button>
+                    <button class="btn btn-sm" onclick="setLight('on',25)" data-i18n="light.night">夜灯</button>
+                    <button class="btn btn-sm" onclick="setLight('off',0)" data-i18n="light.off">关闭</button>
+                </div>
+                <div class="btn-group btn-group-tight" style="margin-bottom:10px">
+                    <button class="btn btn-sm" onclick="setFan(30)" data-i18n="fan.low">低速</button>
+                    <button class="btn btn-sm" onclick="setFan(60)" data-i18n="fan.medium">中速</button>
+                    <button class="btn btn-sm" onclick="setFan(100)" data-i18n="fan.high">高速</button>
+                    <button class="btn btn-sm" onclick="setFan(0)" data-i18n="fan.off">关闭</button>
+                </div>
+                <div class="btn-group btn-group-tight">
+                    <button class="btn btn-sm" onclick="guardDoor()" data-i18n="door.front">前门</button>
+                    <button class="btn btn-sm" onclick="guardWindow()" data-i18n="door.window">客厅窗户</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="card-icon"><path d="M12 8v5l3 2"/><circle cx="12" cy="12" r="9"/></svg>
+                <h3 data-i18n="home.recent">最近事件</h3>
+            </div>
+            <div class="card-body">
+                <div class="event-list" id="homeEvents">
+                    <div class="event-item"><span class="d" data-i18n="home.no_event">暂无事件</span></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 核心状态与控制卡片 -->
+    <div class="dashboard-grid">
+        <!-- 温湿度卡片 -->
+        <div class="card card-temperature">
+            <div class="card-header">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="card-icon">
+                    <path d="M14 14.76V3.5a2.5 2.5 0 00-5 0v11.26a4.5 4.5 0 105 0z"/>
+                </svg>
+                <h3 data-i18n="temp.title">温湿度监控</h3>
+                <span class="card-badge" id="tempAlert">正常</span>
+            </div>
+            <div class="card-body">
+                <div class="temp-display">
+                    <span class="temp-value" id="tempValue">--</span>
+                    <span class="temp-unit">°C</span>
+                </div>
+                <div class="humidity-display">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="mini-icon">
+                        <path d="M12 2.69l5.66 5.66a8 8 0 11-11.31 0z"/>
+                    </svg>
+                    <span><span data-i18n="temp.humidity">湿度</span>: <strong id="humidityValue">--</strong>%</span>
+                </div>
+                <div class="temp-range">
+                    <div class="range-item"><span class="range-label" data-i18n="temp.high">最高</span><span class="range-value" id="tempMax">--</span>°C</div>
+                    <div class="range-item"><span class="range-label" data-i18n="temp.low">最低</span><span class="range-value" id="tempMin">--</span>°C</div>
+                    <div class="range-item"><span class="range-label" data-i18n="temp.avg">平均</span><span class="range-value" id="tempAvg">--</span>°C</div>
+                </div>
+            </div>
+            <div class="card-footer"><small data-i18n="temp.auto_fan">温度过高将自动启动风扇</small></div>
+        </div>
+
+        <!-- 风扇控制卡片 -->
+        <div class="card card-fan">
+            <div class="card-header">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="card-icon">
+                    <circle cx="12" cy="12" r="3"/>
+                    <path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/>
+                </svg>
+                <h3 data-i18n="fan.title">风扇 / 伺服电机</h3>
+            </div>
+            <div class="card-body">
+                <div class="fan-visual" id="fanVisual">
+                    <div class="fan-shell" id="fanShell">
+                        <svg class="fan-icon" viewBox="0 0 48 48">
+                            <g class="fan-rotor">
+                                <ellipse class="fan-blade" cx="24" cy="11" rx="4.6" ry="10"/>
+                                <ellipse class="fan-blade" cx="24" cy="11" rx="4.6" ry="10" transform="rotate(120 24 24)"/>
+                                <ellipse class="fan-blade" cx="24" cy="11" rx="4.6" ry="10" transform="rotate(240 24 24)"/>
+                            </g>
+                            <circle class="fan-hub" cx="24" cy="24" r="4.2"/>
+                        </svg>
                     </div>
-                    <div class="remote-device" onclick="remoteControl('light_off')">
-                        <div class="remote-icon light-off-icon">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="6"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>
-                        </div>
-                        <span data-i18n="remote.light_off">全部关灯</span>
-                    </div>
-                    <div class="remote-device" onclick="remoteControl('fan_on')">
-                        <div class="remote-icon fan-on-icon">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83"/></svg>
-                        </div>
-                        <span data-i18n="remote.fan_on">开启风扇</span>
-                    </div>
-                    <div class="remote-device" onclick="remoteControl('fan_off')">
-                        <div class="remote-icon fan-off-icon">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/></svg>
-                        </div>
-                        <span data-i18n="remote.fan_off">关闭风扇</span>
-                    </div>
-                    <div class="remote-device" onclick="remoteControl('door_open')">
-                        <div class="remote-icon door-open-icon">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/></svg>
-                        </div>
-                        <span data-i18n="remote.door_open">开门</span>
-                    </div>
-                    <div class="remote-device" onclick="remoteControl('door_close')">
-                        <div class="remote-icon door-close-icon">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
-                        </div>
-                        <span data-i18n="remote.door_close">关门</span>
-                    </div>
-                    <div class="remote-device" onclick="remoteControl('ac_on')">
-                        <div class="remote-icon ac-on-icon">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="10" rx="2"/><path d="M6 18v2M12 18v3M18 18v2"/></svg>
-                        </div>
-                        <span data-i18n="remote.ac_on">开空调</span>
-                    </div>
-                    <div class="remote-device" onclick="remoteControl('ac_off')">
-                        <div class="remote-icon ac-off-icon">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="10" rx="2"/><line x1="3" y1="15" x2="21" y2="3"/></svg>
-                        </div>
-                        <span data-i18n="remote.ac_off">关空调</span>
-                    </div>
-                    <div class="remote-device" onclick="location.href='/access'">
-                        <div class="remote-icon camera-icon">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <path d="M23 7l-7 5 7 5V7z"/>
-                                <rect x="1" y="5" width="15" height="14" rx="2"/>
+                    <span class="level-chip" id="fanLevelLabel" data-i18n="fan.off">关闭</span>
+                </div>
+                <div class="fan-readback hidden" id="fanReadback">
+                    <span data-i18n="fan.readback">回读</span>
+                    <span id="fanReadbackValue">--%</span>
+                </div>
+                <div class="level-selector" id="fanLevelButtons">
+                    <button class="btn btn-sm level-btn" data-level="0" onclick="setFan(0)" data-i18n="fan.off">关闭</button>
+                    <button class="btn btn-sm level-btn" data-level="30" onclick="setFan(30)" data-i18n="fan.low">低速</button>
+                    <button class="btn btn-sm level-btn" data-level="60" onclick="setFan(60)" data-i18n="fan.medium">中速</button>
+                    <button class="btn btn-sm level-btn" data-level="100" onclick="setFan(100)" data-i18n="fan.high">高速</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 门窗状态卡片 -->
+        <div class="card card-door">
+            <div class="card-header">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="card-icon">
+                    <rect x="3" y="3" width="18" height="18" rx="2"/>
+                    <path d="M9 3v18M15 3v18"/>
+                </svg>
+                <h3 data-i18n="door.title">门窗状态</h3>
+            </div>
+            <div class="card-body">
+                <div class="door-window-grid">
+                    <div class="dw-item">
+                        <div class="dw-icon" id="doorIcon">
+                            <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect x="6" y="4" width="36" height="40" rx="2"/>
+                                <circle cx="34" cy="24" r="3"/>
+                                <path d="M6 4h36"/>
                             </svg>
                         </div>
-                        <span data-i18n="remote.camera">摄像头</span>
+                        <span class="dw-label" data-i18n="door.front">前门</span>
+                        <span class="dw-status" id="doorStatus">--</span>
+                        <button class="btn btn-toggle" id="doorBtn" onclick="guardDoor()" data-i18n="door.toggle">切换</button>
+                    </div>
+                    <div class="dw-item">
+                        <div class="dw-icon" id="windowIcon">
+                            <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect x="4" y="4" width="40" height="40" rx="2"/>
+                                <line x1="24" y1="4" x2="24" y2="44"/>
+                                <line x1="4" y1="24" x2="44" y2="24"/>
+                            </svg>
+                        </div>
+                        <span class="dw-label" data-i18n="door.window">客厅窗户</span>
+                        <span class="dw-status" id="windowStatus">--</span>
+                        <button class="btn btn-toggle" id="windowBtn" onclick="guardWindow()" data-i18n="door.toggle">切换</button>
                     </div>
                 </div>
             </div>
         </div>
-    </main>
 
-    <script src="{{ url_for('static', filename='js/lang.js') }}?v=20261002m"></script>
-    <script src="{{ url_for('static', filename='js/main.js') }}?v=20261002m"></script>
-</body>
-</html>
+        <!-- 灯光控制卡片 -->
+        <div class="card card-light">
+            <div class="card-header">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="card-icon">
+                    <path d="M9 18h6M10 22h4M12 2v1M4.22 4.22l.7.71M1 12h1M4.22 19.78l.71-.7M20.07 4.93l-.71.71M23 12h-1M20.07 19.07l-.7-.71"/>
+                    <circle cx="12" cy="12" r="4"/>
+                </svg>
+                <h3 data-i18n="light.title">灯光控制</h3>
+                <span class="light-indicator" id="lightIndicator"></span>
+            </div>
+            <div class="card-body">
+                <div class="light-preview" id="lightPreview">
+                    <div class="bulb-shell" id="bulb">
+                        <span class="bulb-glow"></span>
+                        <svg class="bulb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                             stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                            <path class="bulb-body" d="M12 2.5a6.5 6.5 0 00-3.7 11.85V17h7.4v-2.65A6.5 6.5 0 0012 2.5z"/>
+                            <path d="M9.6 19.5h4.8"/>
+                            <path class="bulb-filament" d="M9.8 13.6a2.4 2.4 0 004.4 0"/>
+                        </svg>
+                    </div>
+                    <span class="level-chip" id="lightLevelLabel" data-i18n="light.off">关闭</span>
+                </div>
+                <div class="level-selector" id="lightLevelButtons">
+                    <button class="btn btn-sm level-btn" data-level="0" onclick="setLight('off', 0)" data-i18n="light.off">关闭</button>
+                    <button class="btn btn-sm level-btn" data-level="25" onclick="setLight('on', 25)" data-i18n="light.night">夜灯</button>
+                    <button class="btn btn-sm level-btn" data-level="50" onclick="setLight('on', 50)" data-i18n="light.half">半亮</button>
+                    <button class="btn btn-sm level-btn" data-level="100" onclick="setLight('on', 100)" data-i18n="light.full">全亮</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 空调控制卡片（美的红外遥控） -->
+        <div class="card card-ac">
+            <div class="card-header">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="card-icon">
+                    <rect x="2" y="4" width="20" height="10" rx="2"/>
+                    <path d="M6 18v2M12 18v3M18 18v2"/>
+                </svg>
+                <h3 data-i18n="ac.title">空调（美的红外）</h3>
+                <span class="ac-indicator" id="acIndicator"></span>
+            </div>
+            <div class="card-body">
+                <div class="ac-readout">
+                    <span class="ac-temp" id="acTempValue">--</span>
+                    <span class="ac-mode" id="acModeValue">--</span>
+                </div>
+                <div class="control-row">
+                    <label data-i18n="ac.temperature">温度</label>
+                    <div class="slider-container">
+                        <input type="range" id="acTempSlider" min="17" max="30" step="1" value="26" class="slider">
+                        <span class="slider-value" id="acTempLabel">26.0°C</span>
+                    </div>
+                </div>
+                <div class="control-row">
+                    <label data-i18n="ac.mode">模式</label>
+                    <div class="btn-group btn-group-tight" id="acModeButtons">
+                        <button class="btn btn-sm ac-opt" data-ac-mode="auto" onclick="setACMode('auto')" data-i18n="ac.mode_auto">自动</button>
+                        <button class="btn btn-sm ac-opt" data-ac-mode="cool" onclick="setACMode('cool')" data-i18n="ac.mode_cool">制冷</button>
+                        <button class="btn btn-sm ac-opt" data-ac-mode="heat" onclick="setACMode('heat')" data-i18n="ac.mode_heat">制热</button>
+                        <button class="btn btn-sm ac-opt" data-ac-mode="dry" onclick="setACMode('dry')" data-i18n="ac.mode_dry">抽湿</button>
+                        <button class="btn btn-sm ac-opt" data-ac-mode="fan" onclick="setACMode('fan')" data-i18n="ac.mode_fan">送风</button>
+                    </div>
+                </div>
+                <div class="control-row">
+                    <label data-i18n="ac.fan">风速</label>
+                    <div class="btn-group btn-group-tight" id="acFanButtons">
+                        <button class="btn btn-sm ac-opt" data-ac-fan="auto" onclick="setACFan('auto')" data-i18n="ac.mode_auto">自动</button>
+                        <button class="btn btn-sm ac-opt" data-ac-fan="low" onclick="setACFan('low')" data-i18n="ac.fan_low">低</button>
+                        <button class="btn btn-sm ac-opt" data-ac-fan="mid" onclick="setACFan('mid')" data-i18n="ac.fan_mid">中</button>
+                        <button class="btn btn-sm ac-opt" data-ac-fan="high" onclick="setACFan('high')" data-i18n="ac.fan_high">高</button>
+                    </div>
+                </div>
+                <div class="btn-group btn-group-tight">
+                    <button class="btn btn-sm ac-opt" id="acSwingUdBtn" onclick="toggleACOption('swing_ud')" data-i18n="ac.swing_ud">上下扫风</button>
+                    <button class="btn btn-sm ac-opt" id="acSwingLrBtn" onclick="toggleACOption('swing_lr')" data-i18n="ac.swing_lr">左右扫风</button>
+                </div>
+                <div class="btn-group">
+                    <button class="btn btn-sm btn-toggle" id="acPowerBtn" onclick="toggleAC()" data-i18n="ac.power_on">开机</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 温度趋势图 -->
+    <div class="dashboard-grid">
+        <div class="card card-chart" style="grid-column: 1 / -1">
+            <div class="card-header">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="card-icon">
+                    <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+                </svg>
+                <h3 data-i18n="temp.trend_24h">温度趋势 (24小时)</h3>
+            </div>
+            <div class="card-body chart-container">
+                <canvas id="tempChart"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <!-- 快捷远程控制面板 -->
+    <div class="card card-remote">
+        <div class="card-header">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="card-icon">
+                <rect x="2" y="6" width="20" height="12" rx="2"/>
+                <circle cx="12" cy="12" r="2"/>
+                <path d="M6 18h12M12 6V3"/>
+            </svg>
+            <h3 data-i18n="remote.title">远程控制面板</h3>
+            <span class="card-subtitle" data-i18n="remote.subtitle">一键控制所有设备</span>
+        </div>
+        <div class="card-body">
+            <div class="remote-grid">
+                <div class="remote-device" onclick="remoteControl('light_on')">
+                    <div class="remote-icon light-on-icon"><svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="6"/></svg></div>
+                    <span data-i18n="remote.light_on">全部开灯</span>
+                </div>
+                <div class="remote-device" onclick="remoteControl('light_off')">
+                    <div class="remote-icon light-off-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="6"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg></div>
+                    <span data-i18n="remote.light_off">全部关灯</span>
+                </div>
+                <div class="remote-device" onclick="remoteControl('fan_on')">
+                    <div class="remote-icon fan-on-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83"/></svg></div>
+                    <span data-i18n="remote.fan_on">开启风扇</span>
+                </div>
+                <div class="remote-device" onclick="remoteControl('fan_off')">
+                    <div class="remote-icon fan-off-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/></svg></div>
+                    <span data-i18n="remote.fan_off">关闭风扇</span>
+                </div>
+                <div class="remote-device" onclick="remoteControl('door_open')">
+                    <div class="remote-icon door-open-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/></svg></div>
+                    <span data-i18n="remote.door_open">开门</span>
+                </div>
+                <div class="remote-device" onclick="remoteControl('door_close')">
+                    <div class="remote-icon door-close-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg></div>
+                    <span data-i18n="remote.door_close">关门</span>
+                </div>
+                <div class="remote-device" onclick="remoteControl('ac_on')">
+                    <div class="remote-icon ac-on-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="10" rx="2"/><path d="M6 18v2M12 18v3M18 18v2"/></svg></div>
+                    <span data-i18n="remote.ac_on">开空调</span>
+                </div>
+                <div class="remote-device" onclick="remoteControl('ac_off')">
+                    <div class="remote-icon ac-off-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="10" rx="2"/><line x1="3" y1="15" x2="21" y2="3"/></svg></div>
+                    <span data-i18n="remote.ac_off">关空调</span>
+                </div>
+                <div class="remote-device" onclick="location.href='/access'">
+                    <div class="remote-icon camera-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg></div>
+                    <span data-i18n="remote.camera">摄像头</span>
+                </div>
+            </div>
+        </div>
+    </div>
+{% endblock %}
+
+{% block scripts %}
+    <script src="{{ url_for('static', filename='js/main.js') }}?v=20261003a"></script>
+    <script src="{{ url_for('static', filename='js/home.js') }}?v=20261003a"></script>
+{% endblock %}

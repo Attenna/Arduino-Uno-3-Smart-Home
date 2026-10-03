@@ -1,138 +1,113 @@
-﻿<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title data-i18n="history.title">历史数据 - 智能家居</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=20261002m">
+{% extends "base.html" %}
+{% block doc_title_key %}history.title{% endblock %}
+{% block doc_title %}家庭记录 - 智能家居{% endblock %}
+{% block page_header %}
+    <span data-i18n="nav.history">家庭记录</span>
+    <small data-i18n="history.subtitle">把每天的变化留成可回看的记录</small>
+{% endblock %}
+
+{% block head %}
     <script src="{{ url_for('static', filename='vendor/chart/chart.umd.min.js') }}"></script>
-</head>
-<body>
-    <nav class="navbar">
-        <div class="nav-brand">
-            <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/>
-                <polyline points="9 22 9 12 15 12 15 22"/>
+{% endblock %}
+
+{% block content %}
+    <!-- 时间筛选 -->
+    <div class="card card-filter">
+        <div class="card-body">
+            <div class="filter-row">
+                <label data-i18n="history.data_type">数据类型:</label>
+                <select id="dataType" onchange="loadHistory()" class="select-input" data-i18n-options="history.type">
+                    <option value="temperature">温度</option>
+                    <option value="humidity">湿度</option>
+                    <option value="door_window">门窗状态</option>
+                    <option value="light">灯光状态</option>
+                </select>
+                <label data-i18n="history.time_range">时间范围:</label>
+                <select id="timeRange" onchange="loadHistory()" class="select-input" data-i18n-options="history.range">
+                    <option value="1">最近1小时</option>
+                    <option value="6">最近6小时</option>
+                    <option value="12">最近12小时</option>
+                    <option value="24" selected>最近24小时</option>
+                    <option value="72">最近3天</option>
+                    <option value="168">最近7天</option>
+                </select>
+                <button class="btn" onclick="loadHistory()" data-i18n="history.refresh">刷新数据</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 统计概览 -->
+    <div class="dashboard-grid grid-4">
+        <div class="card card-stat">
+            <div class="card-body stat-body">
+                <span class="stat-label" data-i18n="history.stat_max">最高温度</span>
+                <span class="stat-value" id="statMax">--</span>
+                <span class="stat-unit">°C</span>
+            </div>
+        </div>
+        <div class="card card-stat">
+            <div class="card-body stat-body">
+                <span class="stat-label" data-i18n="history.stat_min">最低温度</span>
+                <span class="stat-value" id="statMin">--</span>
+                <span class="stat-unit">°C</span>
+            </div>
+        </div>
+        <div class="card card-stat">
+            <div class="card-body stat-body">
+                <span class="stat-label" data-i18n="history.stat_avg">平均温度</span>
+                <span class="stat-value" id="statAvg">--</span>
+                <span class="stat-unit">°C</span>
+            </div>
+        </div>
+        <div class="card card-stat">
+            <div class="card-body stat-body">
+                <span class="stat-label" data-i18n="history.stat_count">数据点数</span>
+                <span class="stat-value" id="statCount">--</span>
+                <span class="stat-unit" data-i18n="history.stat_count_unit">条</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- 图表区域 -->
+    <div class="card card-chart-large">
+        <div class="card-header">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="card-icon">
+                <path d="M3 3v18h18"/><polyline points="7 14 11 10 15 13 20 7"/>
             </svg>
-            <span data-i18n="system.title">智能家居控制系统</span>
+            <h3 id="chartTitle" data-i18n="history.chart_title">温度历史趋势</h3>
         </div>
-        <div class="nav-links">
-            <a href="/" class="nav-link" data-i18n="nav.dashboard">仪表盘</a>
-            <a href="/history" class="nav-link active" data-i18n="nav.history">历史数据</a>
-            <a href="/access" class="nav-link" data-i18n="nav.access">门禁管理</a>
-            <a href="/hardware" class="nav-link" data-i18n="nav.hardware">硬件管理</a>
-            <a href="/voice" class="nav-link" data-i18n="nav.voice">语音助手</a>
-            <a href="/automation" class="nav-link" data-i18n="nav.automation">自动化</a>
+        <div class="card-body chart-container-large">
+            <canvas id="historyChart"></canvas>
         </div>
-        <div class="nav-status">
-            <span class="status-dot online"></span>
-            <span data-i18n="system.online">系统在线</span>
-            <span id="currentTime" class="time-display">--:--:--</span>
-        </div>
-        <button class="lang-switch" onclick="setLang(I18N.currentLang === 'zh' ? 'en' : 'zh')" ><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <circle cx="12" cy="12" r="10"/>
-                <line x1="2" y1="12" x2="22" y2="12"/>
-                <path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/>
+    </div>
+
+    <!-- 数据表格 -->
+    <div class="card card-table">
+        <div class="card-header">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="card-icon">
+                <path d="M3 5h18M3 12h18M3 19h18"/>
             </svg>
-            <span data-i18n="nav.lang">EN</span>
-        </button>
-    </nav>
-
-    <div id="notification" class="notification hidden"></div>
-
-    <main class="main-content">
-        <!-- 时间筛选 -->
-        <div class="card card-filter">
-            <div class="card-body">
-                <div class="filter-row">
-                    <label data-i18n="history.data_type">数据类型:</label>
-                    <select id="dataType" onchange="loadHistory()" class="select-input" data-i18n-options="history.type">
-                        <option value="temperature">温度</option>
-                        <option value="humidity">湿度</option>
-                        <option value="door_window">门窗状态</option>
-                        <option value="light">灯光状态</option>
-                    </select>
-                    <label data-i18n="history.time_range">时间范围:</label>
-                    <select id="timeRange" onchange="loadHistory()" class="select-input" data-i18n-options="history.range">
-                        <option value="1">最近1小时</option>
-                        <option value="6">最近6小时</option>
-                        <option value="12">最近12小时</option>
-                        <option value="24" selected>最近24小时</option>
-                        <option value="72">最近3天</option>
-                        <option value="168">最近7天</option>
-                    </select>
-                    <button class="btn" onclick="loadHistory()" data-i18n="history.refresh">刷新数据</button>
-                </div>
+            <h3 data-i18n="history.records">详细记录</h3>
+            <span class="card-subtitle" id="recordCount" data-i18n="history.records_count">共 0 条记录</span>
+        </div>
+        <div class="card-body">
+            <div class="table-wrapper">
+                <table class="data-table" id="historyTable">
+                    <thead>
+                        <tr id="tableHeader">
+                            <th data-i18n="history.time">时间</th>
+                            <th data-i18n="history.value">数值</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tableBody">
+                        <tr><td colspan="2" data-i18n="history.loading">加载中...</td></tr>
+                    </tbody>
+                </table>
             </div>
         </div>
+    </div>
+{% endblock %}
 
-        <!-- 统计概览 -->
-        <div class="dashboard-grid grid-4">
-            <div class="card card-stat">
-                <div class="card-body stat-body">
-                    <span class="stat-label" data-i18n="history.stat_max">最高温度</span>
-                    <span class="stat-value" id="statMax">--</span>
-                    <span class="stat-unit">°C</span>
-                </div>
-            </div>
-            <div class="card card-stat">
-                <div class="card-body stat-body">
-                    <span class="stat-label" data-i18n="history.stat_min">最低温度</span>
-                    <span class="stat-value" id="statMin">--</span>
-                    <span class="stat-unit">°C</span>
-                </div>
-            </div>
-            <div class="card card-stat">
-                <div class="card-body stat-body">
-                    <span class="stat-label" data-i18n="history.stat_avg">平均温度</span>
-                    <span class="stat-value" id="statAvg">--</span>
-                    <span class="stat-unit">°C</span>
-                </div>
-            </div>
-            <div class="card card-stat">
-                <div class="card-body stat-body">
-                    <span class="stat-label" data-i18n="history.stat_count">数据点数</span>
-                    <span class="stat-value" id="statCount">--</span>
-                    <span class="stat-unit" data-i18n="history.stat_count_unit">条</span>
-                </div>
-            </div>
-        </div>
-
-        <!-- 图表区域 -->
-        <div class="card card-chart-large">
-            <div class="card-header">
-                <h3 id="chartTitle" data-i18n="history.chart_title">温度历史趋势</h3>
-            </div>
-            <div class="card-body chart-container-large">
-                <canvas id="historyChart"></canvas>
-            </div>
-        </div>
-
-        <!-- 数据表格 -->
-        <div class="card card-table">
-            <div class="card-header">
-                <h3 data-i18n="history.records">详细记录</h3>
-                <span class="card-subtitle" id="recordCount" data-i18n="history.records_count">共 0 条记录</span>
-            </div>
-            <div class="card-body">
-                <div class="table-wrapper">
-                    <table class="data-table" id="historyTable">
-                        <thead>
-                            <tr id="tableHeader">
-                                <th data-i18n="history.time">时间</th>
-                                <th data-i18n="history.value">数值</th>
-                            </tr>
-                        </thead>
-                        <tbody id="tableBody">
-                            <tr><td colspan="2" data-i18n="history.loading">加载中...</td></tr>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
-    </main>
-
-    <script src="{{ url_for('static', filename='js/lang.js') }}?v=20261002m"></script>
-    <script src="{{ url_for('static', filename='js/history.js') }}?v=20261002m"></script>
-</body>
-</html>
+{% block scripts %}
+    <script src="{{ url_for('static', filename='js/history.js') }}?v=20261003a"></script>
+{% endblock %}

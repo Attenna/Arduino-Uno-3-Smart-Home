@@ -1407,6 +1407,10 @@ async function loadHomeMode() {
     if (!badge) return;
     badge.textContent = '当前模式：' + (HOME_MODE.mode_label || HOME_MODE.mode);
     badge.className = 'mode-badge mode-' + HOME_MODE.mode;
+    const scHome = document.getElementById('sceneHome');
+    const scAway = document.getElementById('sceneAway');
+    if (scHome) scHome.classList.toggle('active', HOME_MODE.mode === 'auto');
+    if (scAway) scAway.classList.toggle('active', HOME_MODE.mode === 'away');
     const fanBtn = document.getElementById('fanOverrideBtn');
     if (fanBtn) {
         if (HOME_MODE.fan_override === 'on') {

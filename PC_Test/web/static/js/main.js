@@ -361,6 +361,9 @@ function updateDashboard(data) {
     if (data.statistics) {
         updateStats(data.statistics);
     }
+
+    // 广播一次状态，供首页房间示意等增量模块复用同一份数据（不再单独轮询）
+    document.dispatchEvent(new CustomEvent('status:update', { detail: data }));
 }
 
 // ==================== 硬件回读一致性指示器 ====================

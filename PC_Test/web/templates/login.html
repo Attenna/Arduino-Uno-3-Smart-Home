@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title data-i18n="login.title">登录 - 智能家居</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=20261003a">
+</head>
+<body>
+    <div class="login-shell">
+        <!-- 左侧视觉 -->
+        <div class="login-visual">
+            <div class="lamp-glow"></div>
+            <h1 data-i18n="login.brand">暖居</h1>
+            <p data-i18n="login.slogan">一个看得懂、也管得住的智能家。灯光、风扇、门窗与安防，都在同一处安放。</p>
+        </div>
+
+        <!-- 右侧登录卡 -->
+        <div class="login-card">
+            <h2 data-i18n="login.welcome">欢迎回家</h2>
+            <div class="sub" data-i18n="login.sub">登录以继续管理你的家</div>
+
+            <form id="loginForm" onsubmit="return doLogin(event)">
+                <div class="login-field">
+                    <label data-i18n="login.username">用户名</label>
+                    <input type="text" id="loginUser" class="input-field" autocomplete="username"
+                           placeholder="admin">
+                </div>
+                <div class="login-field">
+                    <label data-i18n="login.password">密码</label>
+                    <input type="password" id="loginPass" class="input-field" autocomplete="current-password"
+                           placeholder="••••••">
+                </div>
+                <div class="login-field" style="display:flex;align-items:center;gap:8px">
+                    <input type="checkbox" id="loginRemember" checked>
+                    <label for="loginRemember" style="margin:0" data-i18n="login.remember">记住我</label>
+                </div>
+                <button type="submit" class="btn btn-primary" style="width:100%"
+                        data-i18n="login.submit">登录</button>
+                <div id="loginError" class="login-error" style="display:none;color:var(--accent-red);font-size:13px;margin-top:12px"></div>
+            </form>
+
+            <div class="sub" style="margin-top:24px;margin-bottom:0" data-i18n="login.hint">
+                演示模式：任意用户名密码均可进入。
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/lang.js') }}?v=20261003a"></script>
+    <script>
+        function doLogin(e) {
+            e.preventDefault();
+            const user = document.getElementById('loginUser').value.trim();
+            const pass = document.getElementById('loginPass').value.trim();
+            const err = document.getElementById('loginError');
+            if (!user || !pass) {
+                err.textContent = t('login.error');
+                err.style.display = '';
+                return false;
+            }
+            err.style.display = 'none';
+            window.location.href = '/';
+            return false;
+        }
+    </script>
+</body>
+</html>
