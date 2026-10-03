@@ -120,12 +120,11 @@ class HomeRulesTests(unittest.TestCase):
     def test_touch_has_open_delay_close_sequence_and_no_startup_open(self):
         r=self.rules["touch_open_close"]
         with patch.object(self.engine,"_fire") as fire:
-            self.engine._snapshot["touch"]=True
-            self.engine._evaluate_sensor_rule(r)
+            # 周期快照（包括启动时已经按住）不应当触发开门。
+            self.engine.on_snapshot(dict(touch=True))
             fire.assert_not_called()
-            self.engine._snapshot["touch"]=False; self.engine._evaluate_sensor_rule(r)
-            self.engine._snapshot["touch"]=True; self.engine._evaluate_sensor_rule(r)
-            fire.assert_called_once()
+            self.engine.on_snapshot(dict(touch=False))
+            fire.assert_not_called()
         actions=[]
         lock=threading.Lock(); lock.acquire()
         with patch.object(self.engine,"_perform",side_effect=lambda a,r:(actions.append(a) is None,"ok")):
@@ -133,6 +132,18 @@ class HomeRulesTests(unittest.TestCase):
         self.assertEqual(actions,[{"device":"door","status":"open"},
                                   {"device":"delay","seconds":10},
                                   {"device":"door","status":"close"}])
+
+    def test_short_touch_between_snapshots_uses_press_event_once(self):
+        self.engine.on_snapshot(dict(touch=False))
+        pressed = {'event': 'touch', 'state': True, 'ts': 100}
+        released = {'event': 'touch', 'state': False, 'ts': 101}
+        with patch.object(self.engine, '_fire') as fire:
+            self.engine.on_event(pressed)
+            self.engine.on_event(released)
+            self.engine.on_event(pressed)  # 同一个事件重放不能再次开门。
+            self.engine.on_snapshot(dict(touch=False))
+            fire.assert_called_once()
+            self.assertEqual(fire.call_args.args[0]['preset'], 'touch_open_close')
 
     def test_manual_grace_is_immediate_and_repeated_event_renews_it(self):
         r=self.rules["manual_mark_fan"]
@@ -241,7 +252,15 @@ class SecurityTests(unittest.TestCase):
 
     def test_security_endpoints_require_login(self):
         from web.app import create_app
-        app=create_app({"serial":{"enabled":False}},start_hardware=False)
+        from werkzeug.security import generate_password_hash
+        # 可独立运行，不依赖 test_hardening 模块先初始化认证环境。
+        with patch.dict('os.environ', {
+            'SMART_HOME_ADMIN_USER': 'test-admin',
+            'SMART_HOME_ADMIN_PASSWORD_HASH': generate_password_hash('test-password'),
+            'SMART_HOME_SESSION_SECRET': 's' * 48,
+            'SMART_HOME_SERVICE_TOKEN': 't' * 48,
+        }):
+            app=create_app({"serial":{"enabled":False}},start_hardware=False)
         client=app.test_client()
         self.assertEqual(client.get("/api/security/events").status_code,401)
         self.assertEqual(client.get("/api/security/images/"+"a"*32).status_code,401)
