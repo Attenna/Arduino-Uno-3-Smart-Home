@@ -760,8 +760,8 @@ async function loadTemperatureChart() {
                 {
                     label: t('chart.temp'),
                     data: temps,
-                    borderColor: '#986131',
-                    backgroundColor: 'rgba(152, 97, 49, 0.1)',
+                    borderColor: '#f5b301',
+                    backgroundColor: 'rgba(245, 179, 1, 0.1)',
                     tension: 0.4,
                     fill: true
                 },

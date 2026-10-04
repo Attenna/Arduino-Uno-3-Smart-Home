@@ -3,8 +3,20 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script>
+        // 在样式加载前同步语言：英文模式启用专用拉丁字体与排版（见 style.css 的 html[lang="en"] 层）
+        (function () {
+            try {
+                var lang = localStorage.getItem('smart_home_lang') || 'zh';
+                document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en';
+            } catch (e) { /* 隐私模式等忽略 */ }
+        })();
+    </script>
     <title data-i18n="{% block doc_title_key %}system.title{% endblock %}">{% block doc_title %}智能家居控制系统{% endblock %}</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=20261003a">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400..700&family=IBM+Plex+Mono:wght@400;500;600&family=Noto+Serif+SC:wght@500;600;700&family=Plus+Jakarta+Sans:wght@400..800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=20261004g">
     {% block head %}{% endblock %}
 </head>
 <body>
@@ -87,7 +99,7 @@
         </div>
     </div>
 
-    <script src="{{ url_for('static', filename='js/lang.js') }}?v=20261003a"></script>
+    <script src="{{ url_for('static', filename='js/lang.js') }}?v=20261004c"></script>
     <script>
         (function () {
             var sb = document.getElementById('sidebar');

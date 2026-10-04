@@ -36,6 +36,18 @@ function setVoiceError(msg) {
     }
 }
 
+// 后端 state_label 为中文，前端按当前语言本地化（离线/待唤醒/聆听指令中…）
+function voiceStateLabel(data) {
+    if (!data.online) return t('voice.state_offline');
+    const map = {
+        IDLE: 'voice.state_idle',
+        COMMAND: 'voice.state_command',
+        THINKING: 'voice.state_thinking',
+        FOLLOWUP: 'voice.state_followup',
+    };
+    return t(map[data.state] || 'voice.state_unknown');
+}
+
 // ==================== 状态轮询 ====================
 async function refreshVoiceStatus() {
     let data = null;
@@ -49,15 +61,16 @@ async function refreshVoiceStatus() {
     const nav = document.getElementById('voiceNavText');
     const badge = document.getElementById('voiceStateBadge');
     const text = document.getElementById('voiceStateText');
+    const label = voiceStateLabel(data);
 
     if (dot) dot.className = 'status-dot' + (data.online ? ' online' : '');
     if (nav) nav.textContent = data.online ? t('voice.online') : t('voice.offline');
     if (badge) {
-        badge.textContent = data.state_label || '--';
+        badge.textContent = label;
         badge.className = 'card-badge'
             + (data.online ? (data.state === 'IDLE' ? '' : ' warning') : ' danger');
     }
-    if (text) text.textContent = data.state_label || '--';
+    if (text) text.textContent = label;
     setVoiceError(data.online ? '' : (data.error || ''));
 }
 

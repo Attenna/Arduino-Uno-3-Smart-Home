@@ -48,13 +48,13 @@ function initHistoryChart() {
             datasets: [{
                 label: '温度',
                 data: [],
-                borderColor: '#986131',
-                backgroundColor: 'rgba(152, 97, 49, 0.1)',
+                borderColor: '#f5b301',
+                backgroundColor: 'rgba(245, 179, 1, 0.1)',
                 borderWidth: 2,
                 fill: true,
                 tension: 0.4,
                 pointRadius: 2,
-                pointBackgroundColor: '#986131'
+                pointBackgroundColor: '#f5b301'
             }]
         },
         options: {
@@ -69,8 +69,8 @@ function initHistoryChart() {
                     }
                 },
                 tooltip: {
-                    backgroundColor: 'rgba(255, 252, 246, 0.96)',
-                    borderColor: '#ebe3d5',
+                    backgroundColor: 'rgba(255, 251, 238, 0.97)',
+                    borderColor: '#eedcb0',
                     borderWidth: 1,
                     titleColor: '#39362f',
                     bodyColor: '#7d7264',
@@ -99,16 +99,16 @@ async function loadHistory() {
     let data = [];
     let title = '';
     let chartLabel = '';
-    let chartColor = '#986131';
-    let chartBgColor = 'rgba(152, 97, 49, 0.1)';
+    let chartColor = '#f5b301';
+    let chartBgColor = 'rgba(245, 179, 1, 0.1)';
     
     switch (dataType) {
         case 'temperature':
             data = await apiGet(`/api/temperature?hours=${hours}`);
             title = t('chart.temp_history');
             chartLabel = t('chart.temp');
-            chartColor = '#986131';
-            chartBgColor = 'rgba(152, 97, 49, 0.1)';
+            chartColor = '#f5b301';
+            chartBgColor = 'rgba(245, 179, 1, 0.1)';
             break;
         case 'humidity':
             data = await apiGet(`/api/temperature?hours=${hours}`);
@@ -128,8 +128,8 @@ async function loadHistory() {
             data = await apiGet(`/api/light/history?hours=${hours}`);
             title = t('chart.light_history');
             chartLabel = t('chart.light_brightness');
-            chartColor = '#c8892f';
-            chartBgColor = 'rgba(152, 97, 49, 0.1)';
+            chartColor = '#e0a300';
+            chartBgColor = 'rgba(245, 179, 1, 0.1)';
             break;
     }
     

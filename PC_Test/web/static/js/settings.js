@@ -102,7 +102,18 @@ function initSettingsNav() {
     });
 }
 
+// ==================== 顶栏时钟 ====================
+
+function updateClock() {
+    const el = document.getElementById('currentTime');
+    if (!el) return;
+    const locale = I18N.currentLang === 'zh' ? 'zh-CN' : 'en-US';
+    el.textContent = new Date().toLocaleTimeString(locale, { hour12: false });
+}
+
 document.addEventListener('DOMContentLoaded', () => {
+    updateClock();
+    setInterval(updateClock, 1000);
     renderMembers();
     initPrefs();
     initSettingsNav();

@@ -10,7 +10,8 @@
     <!-- Blockly 全量自托管（内网/校园网无外网也可用）-->
     <script src="{{ url_for('static', filename='vendor/blockly/blockly.min.js') }}?v=20261001a"></script>
     <script>
-        if (typeof Blockly !== 'undefined') {
+        // 仅中文模式加载中文语言包；英文模式下 Blockly 内置文案默认即英文
+        if (typeof Blockly !== 'undefined' && (localStorage.getItem('smart_home_lang') || 'zh') === 'zh') {
             document.write('<script src="{{ url_for('static', filename='vendor/blockly/zh-hans.js') }}?v=20261001a"><\/script>');
         }
     </script>
@@ -28,29 +29,29 @@
                       background: var(--bg-card); border: 1px solid var(--border-color);
                       border-radius: var(--radius); box-shadow: var(--shadow); cursor: pointer;
                       transition: .18s; text-align: left; }
-        .scene-card:hover { transform: translateY(-2px); border-color: rgba(152, 97, 49,.42); }
-        .scene-card.active { border-color: var(--accent-cyan); background: rgba(152, 97, 49,.07); }
+        .scene-card:hover { transform: translateY(-2px); border-color: rgba(245, 179, 1,.42); }
+        .scene-card.active { border-color: var(--accent-cyan); background: rgba(245, 179, 1,.07); }
         .scene-icon { width: 48px; height: 48px; flex: 0 0 48px; border-radius: 14px;
                       display: flex; align-items: center; justify-content: center;
-                      background: rgba(152, 97, 49,.12); color: var(--accent-cyan); }
+                      background: rgba(245, 179, 1,.12); color: var(--accent-cyan); }
         .scene-icon svg { width: 26px; height: 26px; }
         .scene-card.scene-away .scene-icon { background: rgba(181, 84, 74,.12); color: var(--accent-red); }
-        .scene-main { min-width: 0; }
-        .scene-name { font-weight: 600; font-size: 15px; }
-        .scene-desc { font-size: 12.5px; color: var(--text-secondary); margin-top: 3px; line-height: 1.5; }
+        .scene-main { display: flex; flex-direction: column; min-width: 0; flex: 1 1 auto; }
+        .scene-name { display: block; font-weight: 600; font-size: 15px; line-height: 1.35; }
+        .scene-desc { display: block; font-size: 12.5px; color: var(--text-secondary); margin-top: 3px; line-height: 1.5; }
 
         /* ==================== 规则卡片（iOS 快捷指令风）==================== */
         .rule-grid { display: grid; gap: 10px; }
         .rule-card { display: flex; align-items: center; gap: 12px; padding: 12px 14px;
                      border: 1px solid var(--border-color); border-radius: 12px;
                      background: var(--bg-secondary); cursor: pointer; transition: .15s; }
-        .rule-card:hover { border-color: rgba(152, 97, 49,.45); background: rgba(152, 97, 49,.05); }
+        .rule-card:hover { border-color: rgba(245, 179, 1,.45); background: rgba(245, 179, 1,.05); }
         .rule-card.disabled { opacity: .5; }
         .rc-icon { width: 42px; height: 42px; flex: 0 0 42px; border-radius: 10px;
                    display: flex; align-items: center; justify-content: center; font-size: 20px;
                    background: rgba(154,122,160,.16); }
         .rc-icon.evt { background: rgba(176, 106, 44,.16); }
-        .rc-icon.time { background: rgba(152, 97, 49,.16); }
+        .rc-icon.time { background: rgba(245, 179, 1,.16); }
         .rc-main { flex: 1 1 auto; min-width: 0; }
         .rc-name { font-weight: 600; font-size: 14px; white-space: nowrap;
                    overflow: hidden; text-overflow: ellipsis; }
@@ -70,12 +71,12 @@
 
         /* 卡片 ⋮ 菜单 */
         .card-menu { position: fixed; z-index: 60; min-width: 172px; padding: 6px;
-                     background: #ffffff; border: 1px solid var(--border-color);
+                     background: #fffbf2; border: 1px solid var(--border-color);
                      border-radius: 10px; box-shadow: 0 12px 32px rgba(160,130,95,.18); }
         .card-menu button { display: flex; width: 100%; align-items: center; gap: 8px;
                             padding: 8px 10px; border: 0; border-radius: 7px; background: transparent;
                             color: var(--text-primary); font-size: 13.5px; text-align: left; cursor: pointer; }
-        .card-menu button:hover { background: rgba(152, 97, 49,.14); }
+        .card-menu button:hover { background: rgba(245, 179, 1,.14); }
         .card-menu button:disabled { opacity: .4; cursor: default; }
         .card-menu button.danger { color: var(--accent-red); }
         .card-menu .sep { height: 1px; margin: 5px 6px; background: var(--border-color); }
@@ -88,7 +89,7 @@
         .editor-toggle { display: flex; align-items: center; gap: 6px; font-size: 13px; }
         #blocklyArea { width: 100%; height: calc(100vh - 235px); min-height: 440px;
                        border-radius: var(--radius-sm); overflow: hidden;
-                       border: 1px solid var(--border-color); background: #faf5ee; position: relative; }
+                       border: 1px solid var(--border-color); background: #fef4da; position: relative; }
         #blocklyDiv { position: absolute; inset: 0; }
         /* 工具箱：窄分类栏 */
         .blocklyToolboxDiv { width: 96px !important; }
@@ -99,9 +100,9 @@
         .blocklyMainBackground { stroke: none !important; }
         .fit-btn { position: absolute; top: 10px; right: 10px; z-index: 20; width: 34px; height: 34px;
                    border-radius: 8px; border: 1px solid var(--border-color);
-                   background: rgba(255, 252, 246,.94); color: #6b5f50; font-size: 16px;
+                   background: rgba(255, 251, 238,.95); color: #6b5f50; font-size: 16px;
                    cursor: pointer; display: flex; align-items: center; justify-content: center; }
-        .fit-btn:hover { background: rgba(152, 97, 49,.18); color: #986131; }
+        .fit-btn:hover { background: rgba(245, 179, 1,.18); color: #e0a300; }
 
         /* ==================== 侧栏 ==================== */
         .badge { font-size: 11px; padding: 2px 8px; border-radius: 999px; }
@@ -110,14 +111,14 @@
         .badge.evt { background: rgba(176, 106, 44,.15); color: var(--accent-orange); }
         .badge.disabled { background: rgba(184,165,138,.2); color: var(--text-secondary); }
         .mode-badge { font-weight: 600; font-size: 14px; padding: 8px 12px; border-radius: var(--radius-sm);
-                      background: rgba(152, 97, 49,.10); color: var(--accent-cyan); }
+                      background: rgba(245, 179, 1,.10); color: var(--accent-cyan); }
         .mode-badge.mode-manual { background: rgba(176, 106, 44,.12); color: var(--accent-orange); }
         .mode-badge.mode-away { background: rgba(181, 84, 74,.12); color: var(--accent-red); }
         .manual-grace { display: flex; flex-wrap: wrap; gap: 6px; }
         .grace-chip { font-size: 12px; padding: 4px 10px; border-radius: 999px;
                       background: rgba(176, 106, 44,.14); color: var(--accent-orange); }
         .grace-chip.empty { background: rgba(79, 107, 72,.10); color: var(--accent-green); }
-        .mode-hint { font-size: 12px; color: var(--text-secondary); line-height: 1.7; }
+        .mode-hint { font-size: 12px; color: var(--text-secondary); line-height: 1.7; text-wrap: pretty; }
         .auto-log { width: 100%; font-size: 12px; border-collapse: collapse; }
         .auto-log th, .auto-log td { padding: 6px 8px; border-bottom: 1px solid var(--border-color);
                                      text-align: left; vertical-align: top; }
@@ -172,8 +173,8 @@
                 <h3 data-i18n="auto.rules">自动规则</h3>
                 <span id="ruleCount" class="rule-count"></span>
                 <span class="spacer"></span>
-                <button class="btn btn-primary" onclick="createRule()">＋ 新建规则</button>
-                <button class="btn" onclick="restorePresets()">♻️ 恢复内置</button>
+                <button class="btn btn-primary" onclick="createRule()" data-i18n="auto.new_rule">＋ 新建规则</button>
+                <button class="btn" onclick="restorePresets()" data-i18n="auto.restore_presets">♻️ 恢复内置</button>
                 <button class="btn mini-btn" onclick="refreshPreview()">🔄</button>
             </div>
         </div>
@@ -182,13 +183,13 @@
 
             <div style="display:flex;flex-direction:column;gap:20px">
                 <div class="card">
-                    <div class="card-header"><h3>🏠 全屋模式</h3></div>
+                    <div class="card-header"><h3 data-i18n="auto.home_mode">🏠 全屋模式</h3></div>
                     <div class="card-body" style="display:flex;flex-direction:column;gap:10px">
                         <div id="homeModeBadge" class="mode-badge">当前模式：--</div>
                         <div style="display:flex;gap:8px;flex-wrap:wrap">
-                            <button class="btn mini-btn" onclick="setHomeMode('auto')">🤖 自动</button>
-                            <button class="btn mini-btn" onclick="setHomeMode('manual')">✋ 手动</button>
-                            <button class="btn mini-btn" onclick="setHomeMode('away')">🚪 离家</button>
+                            <button class="btn mini-btn" onclick="setHomeMode('auto')" data-i18n="auto.mode_auto">🤖 自动</button>
+                            <button class="btn mini-btn" onclick="setHomeMode('manual')" data-i18n="auto.mode_manual">✋ 手动</button>
+                            <button class="btn mini-btn" onclick="setHomeMode('away')" data-i18n="auto.mode_away">🚪 离家</button>
                         </div>
                         <div style="display:flex;gap:8px;flex-wrap:wrap">
                             <button class="btn mini-btn" id="fanOverrideBtn"
@@ -197,37 +198,37 @@
                                     onclick="cycleLightLevel()">💡 灯光：--</button>
                         </div>
                         <div>
-                            <div style="font-size:12px;color:var(--text-secondary);margin-bottom:4px">手动优先</div>
+                            <div style="font-size:12px;color:var(--text-secondary);margin-bottom:4px" data-i18n="auto.manual_grace">手动优先</div>
                             <div id="manualGraceChips" class="manual-grace">
                                 <span class="grace-chip empty">无</span>
                             </div>
                         </div>
                         <span id="homeModeDetail" class="mode-hint"></span>
-                        <span class="mode-hint">手动操作后该设备 30 秒内不被自动规则改动；离家关闭全屋设备。</span>
-                        <span class="mode-hint">🛡️ 风扇只能由你在风扇卡片手动开启——任何自动化规则/全屋模式都只能关风扇，不能开风扇。</span>
+                        <span class="mode-hint" data-i18n="auto.hint_grace">手动操作后该设备 30 秒内不被自动规则改动；离家关闭全屋设备。</span>
+                        <span class="mode-hint" data-i18n="auto.hint_fan_safety">🛡️ 风扇只能由你在风扇卡片手动开启——任何自动化规则/全屋模式都只能关风扇，不能开风扇。</span>
                     </div>
                 </div>
                 <div class="card">
-                    <div class="card-header"><h3>🖥️ OLED 轮播</h3></div>
+                    <div class="card-header"><h3 data-i18n="auto.oled_title">🖥️ OLED 轮播</h3></div>
                     <div class="card-body" style="display:flex;flex-direction:column;gap:10px">
                         <label style="display:flex;align-items:center;gap:8px;font-size:14px">
-                            <input type="checkbox" id="oledEnabled"> 启用轮播
+                            <input type="checkbox" id="oledEnabled"> <span data-i18n="auto.oled_enable">启用轮播</span>
                         </label>
                         <label style="display:flex;align-items:center;gap:8px;font-size:14px">
-                            每
+                            <span data-i18n="auto.oled_every">每</span>
                             <input type="number" id="oledInterval" value="5" min="1" max="3600" step="1"
-                                   style="width:70px"> 秒切页
+                                   style="width:70px"> <span data-i18n="auto.oled_seconds">秒切页</span>
                         </label>
-                        <span style="font-size:12px;color:var(--text-secondary)">仅英文/数字，每行 16 字符</span>
-                        <button class="btn btn-primary" onclick="saveOledConfig()">💾 保存设置</button>
+                        <span style="font-size:12px;color:var(--text-secondary)" data-i18n="auto.oled_ascii_hint">仅英文/数字，每行 16 字符</span>
+                        <button class="btn btn-primary" onclick="saveOledConfig()" data-i18n="auto.oled_save">💾 保存设置</button>
                         <span id="oledStatus" style="font-size:12px;color:var(--text-secondary)"></span>
                     </div>
                 </div>
                 <div class="card">
-                    <div class="card-header"><h3>📜 执行记录</h3></div>
+                    <div class="card-header"><h3 data-i18n="auto.log_title">📜 执行记录</h3></div>
                     <div class="card-body log-wrap">
                         <table class="auto-log">
-                            <thead><tr><th>时间</th><th>规则</th><th>结果</th></tr></thead>
+                            <thead><tr><th data-i18n="auto.log_time">时间</th><th data-i18n="auto.log_rule">规则</th><th data-i18n="auto.log_result">结果</th></tr></thead>
                             <tbody id="autoLogBody"></tbody>
                         </table>
                     </div>
@@ -240,21 +241,21 @@
     <div id="editorView" class="hidden">
         <div class="card">
             <div class="card-body editor-bar">
-                <button class="btn" onclick="closeEditor()">← 返回</button>
-                <input id="editorName" class="editor-name" type="text" placeholder="规则名称">
+                <button class="btn" onclick="closeEditor()" data-i18n="auto.back">← 返回</button>
+                <input id="editorName" class="editor-name" type="text" placeholder="规则名称" data-i18n-placeholder="auto.rule_name_ph">
                 <label class="editor-toggle">
-                    <input type="checkbox" id="editorEnabled"> 启用
+                    <input type="checkbox" id="editorEnabled"> <span data-i18n="auto.enable">启用</span>
                 </label>
-                <button class="btn" onclick="runEditing()">▶ 运行一次</button>
-                <button class="btn btn-primary" onclick="saveEditor()">💾 保存</button>
+                <button class="btn" onclick="runEditing()" data-i18n="auto.run_once">▶ 运行一次</button>
+                <button class="btn btn-primary" onclick="saveEditor()" data-i18n="auto.save">💾 保存</button>
             </div>
         </div>
         <div class="card" style="margin-top:20px">
             <div class="card-body">
                 <div id="blocklyArea">
                     <div id="blocklyDiv"></div>
-                    <button id="fitViewBtn" class="fit-btn" title="适应屏幕" type="button">⛶</button>
-                    <div id="blocklyMissing" class="missing-box hidden">
+                    <button id="fitViewBtn" class="fit-btn" title="适应屏幕" data-i18n-title="auto.fit_screen" type="button">⛶</button>
+                    <div id="blocklyMissing" class="missing-box hidden" data-i18n="auto.engine_missing">
                         积木引擎加载失败，请 Ctrl+F5 强制刷新。
                     </div>
                 </div>
@@ -264,5 +265,5 @@
 {% endblock %}
 
 {% block scripts %}
-    <script src="{{ url_for('static', filename='js/automation.js') }}?v=20261003a"></script>
+    <script src="{{ url_for('static', filename='js/automation.js') }}?v=20261004b"></script>
 {% endblock %}

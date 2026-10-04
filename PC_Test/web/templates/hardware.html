@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title data-i18n="system.title">智能家居控制系统</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=20261002m">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=20261004g">
     <script src="{{ url_for('static', filename='vendor/chart/chart.umd.min.js') }}"></script>
 </head>
 <body>
@@ -47,7 +47,7 @@
         <div class="card">
             <div class="card-header">
                 <h3 data-i18n="ha.config_title">Home Assistant 连接配置</h3>
-                <span class="ha-status-badge" id="haStatus">未连接</span>
+                <span class="ha-status-badge" id="haStatus" data-i18n="ha.status_offline">未连接</span>
             </div>
             <div class="card-body">
                 <div class="form-row">
@@ -164,7 +164,7 @@
         </div>
     </main>
 
-    <script src="{{ url_for('static', filename='js/lang.js') }}?v=20261002m"></script>
+    <script src="{{ url_for('static', filename='js/lang.js') }}?v=20261004c"></script>
     <script src="{{ url_for('static', filename='js/hardware.js') }}?v=20261002m"></script>
 </body>
 </html>

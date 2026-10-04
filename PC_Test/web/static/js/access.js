@@ -246,7 +246,7 @@ async function loadPersons() {
 
     persons.forEach((p, i) => {
         const initial = p.name.charAt(0);
-        const colors = ['#986131', '#4f6b48', '#9a7aa0', '#b06a2c', '#b5544a'];
+        const colors = ['#f5b301', '#4f6b48', '#9a7aa0', '#b06a2c', '#b5544a'];
         const color = colors[i % colors.length];
         const faceIdDisplay = p.face_id || t('access.unset');
         html += `

@@ -25,9 +25,9 @@
         <div class="env-chips">
             <div class="env-chip"><span class="k" data-i18n="home.temp">温度</span><span class="v" id="envTemp">--</span></div>
             <div class="env-chip"><span class="k" data-i18n="temp.humidity">湿度</span><span class="v" id="envHum">--</span></div>
-            <div class="env-chip"><span class="k">24h 平均温度</span><span class="v" id="avgTemp24h">--</span></div>
-            <div class="env-chip"><span class="k">24h 门禁</span><span class="v" id="accessCount24h">0</span></div>
-            <div class="env-chip"><span class="k">24h 灯光</span><span class="v" id="lightUsage24h">0</span></div>
+            <div class="env-chip"><span class="k" data-i18n="home.avg24h">24h 平均温度</span><span class="v" id="avgTemp24h">--</span></div>
+            <div class="env-chip"><span class="k" data-i18n="home.access24h">24h 门禁</span><span class="v" id="accessCount24h">0</span></div>
+            <div class="env-chip"><span class="k" data-i18n="home.light24h">24h 灯光</span><span class="v" id="lightUsage24h">0</span></div>
         </div>
     </div>
 
@@ -120,7 +120,7 @@
                     <path d="M14 14.76V3.5a2.5 2.5 0 00-5 0v11.26a4.5 4.5 0 105 0z"/>
                 </svg>
                 <h3 data-i18n="temp.title">温湿度监控</h3>
-                <span class="card-badge" id="tempAlert">正常</span>
+                <span class="card-badge" id="tempAlert" data-i18n="temp.normal">正常</span>
             </div>
             <div class="card-body">
                 <div class="temp-display">

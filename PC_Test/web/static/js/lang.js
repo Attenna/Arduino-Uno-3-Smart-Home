@@ -225,6 +225,12 @@ const I18N = {
             'voice.wake_footer': '也可以直接对麦克风说唤醒词；本条链路对遥控器/键盘按键同样可用（见「自动化」）。',
             'voice.state': '当前状态',
             'voice.error': '错误',
+            'voice.state_offline': '离线',
+            'voice.state_idle': '待唤醒',
+            'voice.state_command': '聆听指令中',
+            'voice.state_thinking': '思考中',
+            'voice.state_followup': '追问窗口',
+            'voice.state_unknown': '未知',
             'voice.woken': '已唤醒，请说指令',
             'voice.failed': '操作失败',
             'voice.text_title': '文本指令（免麦克风）',
@@ -262,6 +268,7 @@ const I18N = {
             'ha.fan_off': '关风扇',
             'ha.unlock': '开锁',
             'ha.lock': '上锁',
+            'ha.status_offline': '未连接',
 
             // 图表标签
             'chart.temp': '温度 (°C)',
@@ -290,6 +297,9 @@ const I18N = {
             'home.close_in': '{0} 秒后自动关门',
             'home.no_event': '暂无事件',
             'home.devices': '常用设备',
+            'home.avg24h': '24h 平均温度',
+            'home.access24h': '24h 门禁',
+            'home.light24h': '24h 灯光',
 
             // 房间与设备
             'rooms.subtitle': '完成日常控制',
@@ -320,6 +330,33 @@ const I18N = {
             'auto.cond_idle': '条件未满足',
             'auto.manual_hold': '手动接管中',
             'auto.disabled': '已停用',
+            // 自动化页：小模块与编辑器
+            'auto.new_rule': '＋ 新建规则',
+            'auto.restore_presets': '♻️ 恢复内置',
+            'auto.home_mode': '🏠 全屋模式',
+            'auto.mode_auto': '🤖 自动',
+            'auto.mode_manual': '✋ 手动',
+            'auto.mode_away': '🚪 离家',
+            'auto.manual_grace': '手动优先',
+            'auto.hint_grace': '手动操作后该设备 30 秒内不被自动规则改动；离家关闭全屋设备。',
+            'auto.hint_fan_safety': '🛡️ 风扇只能由你在风扇卡片手动开启——任何自动化规则/全屋模式都只能关风扇，不能开风扇。',
+            'auto.oled_title': '🖥️ OLED 轮播',
+            'auto.oled_enable': '启用轮播',
+            'auto.oled_every': '每',
+            'auto.oled_seconds': '秒切页',
+            'auto.oled_ascii_hint': '仅英文/数字，每行 16 字符',
+            'auto.oled_save': '💾 保存设置',
+            'auto.log_title': '📜 执行记录',
+            'auto.log_time': '时间',
+            'auto.log_rule': '规则',
+            'auto.log_result': '结果',
+            'auto.back': '← 返回',
+            'auto.rule_name_ph': '规则名称',
+            'auto.enable': '启用',
+            'auto.run_once': '▶ 运行一次',
+            'auto.save': '💾 保存',
+            'auto.fit_screen': '适应屏幕',
+            'auto.engine_missing': '积木引擎加载失败，请 Ctrl+F5 强制刷新。',
 
             // 家庭记录
             'history.subtitle': '把每天的变化留成可回看的记录',
@@ -634,6 +671,12 @@ const I18N = {
             'voice.wake_footer': 'You can also say the wake word directly. The same link works from remote/keypad keys (see Automation).',
             'voice.state': 'State',
             'voice.error': 'Error',
+            'voice.state_offline': 'Offline',
+            'voice.state_idle': 'Idle',
+            'voice.state_command': 'Listening',
+            'voice.state_thinking': 'Thinking',
+            'voice.state_followup': 'Follow-up',
+            'voice.state_unknown': 'Unknown',
             'voice.woken': 'Awake — go ahead',
             'voice.failed': 'Operation failed',
             'voice.text_title': 'Text command (no microphone)',
@@ -671,6 +714,7 @@ const I18N = {
             'ha.fan_off': 'Fan Off',
             'ha.unlock': 'Unlock',
             'ha.lock': 'Lock',
+            'ha.status_offline': 'Not connected',
 
             // Chart labels
             'chart.temp': 'Temperature (°C)',
@@ -699,6 +743,9 @@ const I18N = {
             'home.close_in': 'Auto-close in {0}s',
             'home.no_event': 'No events yet',
             'home.devices': 'Frequently used',
+            'home.avg24h': '24h Avg Temp',
+            'home.access24h': '24h Access',
+            'home.light24h': '24h Lights',
 
             // Rooms & Devices
             'rooms.subtitle': 'Everyday control',
@@ -729,6 +776,33 @@ const I18N = {
             'auto.cond_idle': 'Condition idle',
             'auto.manual_hold': 'Manual override',
             'auto.disabled': 'Disabled',
+            // Scenes & Automation: modules and editor
+            'auto.new_rule': '＋ New rule',
+            'auto.restore_presets': '♻️ Restore built-ins',
+            'auto.home_mode': '🏠 Whole-home mode',
+            'auto.mode_auto': '🤖 Auto',
+            'auto.mode_manual': '✋ Manual',
+            'auto.mode_away': '🚪 Away',
+            'auto.manual_grace': 'Manual priority',
+            'auto.hint_grace': 'After manual control, that device is left untouched by automation for 30s; Away turns off whole-home devices.',
+            'auto.hint_fan_safety': '🛡️ The fan can only be turned on manually from the fan card — any automation rule or whole-home mode can only turn it off, never on.',
+            'auto.oled_title': '🖥️ OLED carousel',
+            'auto.oled_enable': 'Enable carousel',
+            'auto.oled_every': 'Every',
+            'auto.oled_seconds': 'sec/page',
+            'auto.oled_ascii_hint': 'ASCII only, 16 chars per line',
+            'auto.oled_save': '💾 Save settings',
+            'auto.log_title': '📜 Execution log',
+            'auto.log_time': 'Time',
+            'auto.log_rule': 'Rule',
+            'auto.log_result': 'Result',
+            'auto.back': '← Back',
+            'auto.rule_name_ph': 'Rule name',
+            'auto.enable': 'Enabled',
+            'auto.run_once': '▶ Run once',
+            'auto.save': '💾 Save',
+            'auto.fit_screen': 'Fit to screen',
+            'auto.engine_missing': 'Blockly engine failed to load. Press Ctrl+F5 to refresh.',
 
             // Home records
             'history.subtitle': 'Keep a reviewable record of daily changes',
@@ -833,7 +907,14 @@ const I18N = {
         this.currentLang = lang;
         localStorage.setItem('smart_home_lang', lang);
         this.applyI18n();
-        document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en';
+        this.syncLangAttr();
+        // 通知各页刷新由 JS 动态生成的内容（如自动化页的积木与卡片）
+        document.dispatchEvent(new CustomEvent('i18n:changed', { detail: { lang } }));
+    },
+
+    // 同步 <html lang>：英文模式据此启用专用拉丁字体与排版（style.css 的 html[lang="en"] 层）
+    syncLangAttr() {
+        document.documentElement.lang = this.currentLang === 'zh' ? 'zh-CN' : 'en';
     },
 
     applyI18n() {
@@ -867,6 +948,7 @@ const I18N = {
     },
 
     init() {
+        this.syncLangAttr();
         // 监听自定义事件
         document.addEventListener('i18n:ready', () => this.applyI18n());
         // 页面加载时立即应用
