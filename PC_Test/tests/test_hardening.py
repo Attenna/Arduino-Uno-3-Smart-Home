@@ -135,7 +135,8 @@ class LightModeTests(unittest.TestCase):
     """/api/light 的「亮法」选择：白光 / 夜灯 / 色温 / 自定义颜色。
 
     只断言最终落到硬件桥的调用参数——这层决定灯带怎么亮，是本次改动的语义核心。
-    DB 侧仍只记 status+brightness（不新增列），所以这里把记账与状态读取打桩隔离。
+    记账与状态读取在这里打桩隔离（亮法自 #27 起也入库：`light_mode`/`light_temp`/
+    `light_rgb`，其记账口径由 tests/test_light_style.py 覆盖）。
     """
 
     def setUp(self):

@@ -16,7 +16,10 @@ let acState = { power: false, mode: 'auto', temperature: 26, fan: 'auto',
 // 屏蔽移动端滑块连续 change、重复点击造成的无意义指令
 let lastKnownFanSpeed = null;
 let lastKnownLight = null;   // { status: 'on'|'off', brightness: Number }
-let lightStyle = {};        // 当前页面选择的模式；状态接口只回传开关/亮度
+// 灯的「亮法」：白光 {mode:'white'} / 夜灯 {mode:'night'} / 色温 {temp:K} / 颜色 {rgb:[r,g,b]}，
+// 四者互斥（B 板一条命令只认一种）。它是服务端 light_mode/light_temp/light_rgb 的本地缓存，
+// 每次下发都带完整亮法，所以拖亮度不会被清成白光、改颜色不会丢亮度（#27）。
+let lightStyle = { mode: 'white' };
 
 // 页面实例标识 + 单调命令序号：服务端据此识别「迟到的旧命令」并丢弃，
 // 防止弱网下请求乱序到达（例如先关后开两请求颠倒 → 风扇关了又自己开）。
@@ -306,6 +309,54 @@ function updateSensorFreshness(data) {
     el.classList.toggle('stale', stale);
 }
 
+// 灯的亮法由服务端持久化（light_mode/light_temp/light_rgb），本页只是它的缓存：
+// 还原成下发用的最小对象（四态互斥），并回写三个控件。
+function lightStyleFromStatus(data) {
+    const mode = data.light_mode || 'white';
+    if (mode === 'temp' && data.light_temp) return { temp: Number(data.light_temp) };
+    if (mode === 'rgb' && data.light_rgb) return { rgb: data.light_rgb };
+    return { mode: mode === 'night' ? 'night' : 'white' };
+}
+
+function rgbToHex(rgb) {
+    return '#' + rgb.map(v => Number(v).toString(16).padStart(2, '0')).join('');
+}
+
+function syncLightControls(data) {
+    const lightOn = data.light_status === 'on';
+    const brightness = Number(data.light_brightness) || (lightOn ? 100 : 0);
+    lastKnownLight = { status: lightOn ? 'on' : 'off', brightness };
+    lightStyle = lightStyleFromStatus(data);
+
+    const bulb = document.getElementById('bulb');
+    if (bulb) {
+        bulb.classList.toggle('on', lightOn);
+        bulb.style.opacity = lightOn ? String(0.35 + 0.65 * brightness / 100) : '';
+        // 自定义颜色时把灯泡染成实际颜色；白光/夜灯/色温沿用主题的暖黄
+        bulb.style.background = (lightOn && lightStyle.rgb)
+            ? 'rgb(' + lightStyle.rgb.join(',') + ')' : '';
+    }
+    const lightIndicator = document.getElementById('lightIndicator');
+    if (lightIndicator) lightIndicator.classList.toggle('on', lightOn);
+    const brightSlider = document.getElementById('brightnessSlider');
+    if (brightSlider && document.activeElement !== brightSlider) brightSlider.value = brightness;
+    const brightLabel = document.getElementById('brightnessValue');
+    if (brightLabel) brightLabel.textContent = brightness + '%';
+
+    // 色温滑杆与取色器只在服务端记着对应亮法时回写。程序化赋值 .value 不触发
+    // input，因此不会被 bindActuatorSlider 当成用户操作再下发一遍。
+    if (lightStyle.temp) {
+        const tempSlider = document.getElementById('tempSlider');
+        if (tempSlider && document.activeElement !== tempSlider) tempSlider.value = lightStyle.temp;
+        const tempLabel = document.getElementById('lightTempValue');
+        if (tempLabel) tempLabel.textContent = lightStyle.temp + 'K';
+    }
+    if (lightStyle.rgb) {
+        const colorInput = document.getElementById('lightColor');
+        if (colorInput && document.activeElement !== colorInput) colorInput.value = rgbToHex(lightStyle.rgb);
+    }
+}
+
 function updateDashboard(data) {
     // 温度
     const tempEl = document.getElementById('tempValue');
@@ -343,21 +394,8 @@ function updateDashboard(data) {
         }
     }
 
-    // 灯光（灯泡高亮 + 指示点 + 亮度滑块回写，拖动时不抢焦点）
-    const lightOn = data.light_status === 'on';
-    const brightness = Number(data.light_brightness) || (lightOn ? 100 : 0);
-    lastKnownLight = { status: lightOn ? 'on' : 'off', brightness };
-    const bulb = document.getElementById('bulb');
-    if (bulb) {
-        bulb.classList.toggle('on', lightOn);
-        bulb.style.opacity = lightOn ? String(0.35 + 0.65 * brightness / 100) : '';
-    }
-    const lightIndicator = document.getElementById('lightIndicator');
-    if (lightIndicator) lightIndicator.classList.toggle('on', lightOn);
-    const brightSlider = document.getElementById('brightnessSlider');
-    if (brightSlider && document.activeElement !== brightSlider) brightSlider.value = brightness;
-    const brightLabel = document.getElementById('brightnessValue');
-    if (brightLabel) brightLabel.textContent = brightness + '%';
+    // 灯光（灯泡高亮 + 指示点 + 亮度/色温/颜色控件回写，拖动时不抢焦点）
+    syncLightControls(data);
 
     // 门窗
     const doorEl = document.getElementById('doorStatus');
@@ -573,7 +611,7 @@ const postLightDebounced = debounce(async (status, brightness, style) => {
     lightInflight = target;
     // 乐观更新：立即刷新本地显示，指令在飞期间界面不卡顿；
     // 失败时 loadStatus() 会用服务端真值回滚界面
-    lastKnownLight = { status, brightness, ...extra };
+    lastKnownLight = { status, brightness };
     const bSlider = document.getElementById('brightnessSlider');
     if (bSlider && document.activeElement !== bSlider) bSlider.value = brightness;
     const bLabel = document.getElementById('brightnessValue');
@@ -589,9 +627,13 @@ const postLightDebounced = debounce(async (status, brightness, style) => {
     loadStatus();
 }, 300);
 
-function setLight(status, brightness, mode) {
-    lightStyle = mode ? { mode } : {};
-    postLightDebounced(status, Number(brightness) || 0, lightStyle);
+// 亮度与亮法是两条正交的意图，但 B 板一条命令只认一种亮法，所以下发必须带齐。
+// 全部入口收敛到 setLightStyle / setLightBrightness：改亮法保留当前亮度，改亮度
+// 保留当前亮法，谁都不再顺手把对方清掉（旧 setLight 的 lightStyle = mode ? … : {}
+// 会让「全亮/半亮」把色温和自定义颜色打回白光，这就是 #27）。
+function setLightStyle(style, brightness) {
+    lightStyle = style;
+    postLightDebounced('on', brightness, lightStyle);
 }
 
 // 色温 / 自定义颜色只改「亮法」，亮度沿用当前档位（灯是关的就用 100% 起步）。
@@ -600,9 +642,25 @@ function currentBrightness(fallback) {
     return n > 0 ? n : fallback;
 }
 
+function setLightBrightness(pct) {
+    postLightDebounced(pct > 0 ? 'on' : 'off', pct, lightStyle);
+}
+
+function setLightWhite() {
+    setLightStyle({ mode: 'white' }, currentBrightness(100));
+}
+
+function setLightNight() {
+    setLightStyle({ mode: 'night' }, 25);
+}
+
+// 关灯不带亮法：服务端沿用库里当前值，本页缓存过期时也不会覆盖别的页面刚设的颜色。
+function turnLightOff() {
+    postLightDebounced('off', 0, {});
+}
+
 function applyLightTemp(kelvin) {
-    lightStyle = { temp: Number(kelvin) };
-    postLightDebounced('on', currentBrightness(100), lightStyle);
+    setLightStyle({ temp: Number(kelvin) }, currentBrightness(100));
 }
 
 function hexToRgb(hex) {
@@ -616,8 +674,7 @@ function hexToRgb(hex) {
 function applyLightColor() {
     const input = document.getElementById('lightColor');
     if (!input) return;
-    lightStyle = { rgb: hexToRgb(input.value) };
-    postLightDebounced('on', currentBrightness(100), lightStyle);
+    setLightStyle({ rgb: hexToRgb(input.value) }, currentBrightness(100));
 }
 
 // 风扇卡片按钮：关闭/低速/中速/高速（与灯光相同的防抖收口原因）
@@ -689,8 +746,8 @@ function remoteControl(action) {
     // 风扇/灯光复用带防抖、乐观更新与"同值不下发"的收口，避免远程面板连点刷屏
     if (action === 'fan_on')  { setFan(60); return; }
     if (action === 'fan_off') { setFan(0); return; }
-    if (action === 'light_on')  { setLight('on', 100); return; }
-    if (action === 'light_off') { setLight('off', 0); return; }
+    if (action === 'light_on')  { setLightBrightness(100); return; }
+    if (action === 'light_off') { turnLightOff(); return; }
     // 门/空调为秒级慢动作：同名动作在执行期间忽略重复点击（触摸双发/连点）
     tapGuard('rc-' + action, async () => {
         const posts = {
