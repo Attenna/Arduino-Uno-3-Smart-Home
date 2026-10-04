@@ -806,6 +806,7 @@ function buildToolbox() {
     const stCondBool = orPlaceholder(stateSourceOptions('bool'), NEW_STATE_HINT);
     const stCondNum = orPlaceholder(stateSourceOptions('number'), NEW_STATE_HINT);
     const stCondEnum = orPlaceholder(condStateEnumOptions(), NEW_STATE_HINT);
+    // 扁平工具箱：只有四个顶层分类，积木一律直接可见，不再套子分类（点开两层才能找到动作）
     return `<xml>
       <category name="规则" colour="265">
         <block type="rule_block"></block>
@@ -818,16 +819,15 @@ function buildToolbox() {
         <block type="trig_status"></block>
         <block type="trig_interval"><field name="SECONDS">10</field></block>
         <block type="trig_time"><field name="TIME">08:00</field></block>
-        <category name="事件" colour="30">
-          <block type="trig_touch"><field name="EVT">touch_on</field></block>
-          <block type="trig_keypad"></block>
-          <block type="trig_ir"></block>
-          <block type="trig_rfid"></block>
-          <block type="trig_manual"></block>
-          <block type="trig_access"></block>
-          <block type="trig_access_denied"></block>
-          <block type="trig_event_other"><field name="EVT">${evt[0][1]}</field></block>
-        </category>
+        <sep gap="14"></sep>
+        <block type="trig_touch"><field name="EVT">touch_on</field></block>
+        <block type="trig_keypad"></block>
+        <block type="trig_ir"></block>
+        <block type="trig_rfid"></block>
+        <block type="trig_manual"></block>
+        <block type="trig_access"></block>
+        <block type="trig_access_denied"></block>
+        <block type="trig_event_other"><field name="EVT">${evt[0][1]}</field></block>
       </category>
       <category name="条件" colour="190">
         <block type="cond_num">
@@ -835,15 +835,14 @@ function buildToolbox() {
         </block>
         <block type="cond_bool"><field name="SRC">${bool[0][1]}</field><field name="STATE">true</field></block>
         <block type="cond_status"></block>
-        <category name="全局状态" colour="190">
-          <block type="cond_state_bool">
-            <field name="SRC">${stCondBool[0][1]}</field><field name="STATE">true</field>
-          </block>
-          <block type="cond_state_num">
-            <field name="SRC">${stCondNum[0][1]}</field><field name="OP">&gt;</field><field name="VAL">0</field>
-          </block>
-          <block type="cond_state_enum"><field name="PRED">${stCondEnum[0][1]}</field></block>
-        </category>
+        <sep gap="14"></sep>
+        <block type="cond_state_bool">
+          <field name="SRC">${stCondBool[0][1]}</field><field name="STATE">true</field>
+        </block>
+        <block type="cond_state_num">
+          <field name="SRC">${stCondNum[0][1]}</field><field name="OP">&gt;</field><field name="VAL">0</field>
+        </block>
+        <block type="cond_state_enum"><field name="PRED">${stCondEnum[0][1]}</field></block>
       </category>
       <category name="动作" colour="120">
         <block type="act_door"></block>
@@ -862,19 +861,18 @@ function buildToolbox() {
         <block type="act_oled"></block>
         <block type="act_oled_line"></block>
         <block type="act_delay"></block>
-        <category name="全局状态" colour="120">
-          <block type="act_state_bool">
-            <field name="NAME">${stBool[0][1]}</field><field name="VALUE">true</field>
-          </block>
-          <block type="act_state_toggle"><field name="NAME">${stToggle[0][1]}</field></block>
-          <block type="act_state_num">
-            <field name="NAME">${stNum[0][1]}</field><field name="OP">set</field><field name="VAL">0</field>
-          </block>
-          <block type="act_state_enum"><field name="PRED">${stEnum[0][1]}</field></block>
-          <block type="act_state_text">
-            <field name="NAME">${stText[0][1]}</field><field name="TEXT"></field>
-          </block>
-        </category>
+        <sep gap="14"></sep>
+        <block type="act_state_bool">
+          <field name="NAME">${stBool[0][1]}</field><field name="VALUE">true</field>
+        </block>
+        <block type="act_state_toggle"><field name="NAME">${stToggle[0][1]}</field></block>
+        <block type="act_state_num">
+          <field name="NAME">${stNum[0][1]}</field><field name="OP">set</field><field name="VAL">0</field>
+        </block>
+        <block type="act_state_enum"><field name="PRED">${stEnum[0][1]}</field></block>
+        <block type="act_state_text">
+          <field name="NAME">${stText[0][1]}</field><field name="TEXT"></field>
+        </block>
       </category>
     </xml>`;
 }
@@ -1032,11 +1030,18 @@ function summarizeAction(a) {
     }
 }
 
-function summarizeActions(actions) {
-    const list = actions || [];
-    if (!list.length) return '（无动作）';
-    const first = summarizeAction(list[0]);
-    return list.length > 1 ? `${first} 等 ${list.length} 项` : first;
+function summarizeActionList(actions) {
+    return (actions || []).map(summarizeAction).filter(Boolean);
+}
+
+// 条件与传感器触发同形（{sensor, op, value}），直接复用触发的标签换算
+function summarizeCondition(c) {
+    if (!c || !c.sensor) return '';
+    return summarizeTrigger(Object.assign({ kind: 'sensor' }, c));
+}
+
+function summarizeConditions(conditions) {
+    return (conditions || []).map(summarizeCondition).filter(Boolean);
 }
 
 // ==================== 视图切换 ====================
@@ -1108,18 +1113,36 @@ function ruleCardHtml(r, i) {
     else if (pv && pv.trigger_now === true) statusBadge = '<span class="badge on">条件成立</span>';
     else if (pv && pv.trigger_now === false) statusBadge = '<span class="badge off">未成立</span>';
     else if (pv) statusBadge = '<span class="badge evt">事件驱动</span>';
-    const nCond = (r.conditions || []).length;
-    const nAct = (r.actions || []).length;
+    const conds = summarizeConditions(r.conditions);
+    const acts = summarizeActionList(r.actions);
+    const elses = summarizeActionList(r.else_actions);
+    // 一条一个 chip：条件/动作各占一格，长列表靠换行 + 行内滚动消化，不做「等 N 项」折叠
+    const chips = [];
+    if (conds.length) {
+        chips.push(`<span class="chip label">如果${r.match === 'any' ? '任一' : '全部'}</span>`);
+        conds.forEach(c => chips.push(`<span class="chip cond">${esc(c)}</span>`));
+    }
+    chips.push('<span class="chip arrow">→</span>');
+    if (acts.length) {
+        acts.forEach(a => chips.push(`<span class="chip act">${esc(a)}</span>`));
+    } else {
+        chips.push('<span class="chip act none">（无动作）</span>');
+    }
+    if (elses.length) {
+        chips.push('<span class="chip label">否则</span>');
+        elses.forEach(a => chips.push(`<span class="chip act">${esc(a)}</span>`));
+    }
     return `<div class="rule-card ${r.enabled === false ? 'disabled' : ''}" data-kind="rule" data-index="${i}">
       <div class="rc-icon ${triggerKindClass(trig)}">${triggerIcon(trig)}</div>
       <div class="rc-main">
         <div class="rc-name">${esc(r.name)}</div>
-        <div class="rc-sub">当 ${esc(summarizeTrigger(trig))} → ${esc(summarizeActions(r.actions))}</div>
+        <div class="rc-sub">当 ${esc(summarizeTrigger(trig))}</div>
+        <div class="rc-flow">${chips.join('')}</div>
         <div class="rc-meta">
           ${statusBadge}
           ${r.preset ? '<span class="badge evt">内置</span>' : ''}
-          <span>${nCond ? nCond + ' 条件' : '无条件'}</span>
-          <span>${nAct} 动作</span>
+          <span>${conds.length ? conds.length + ' 条件' : '无条件'}</span>
+          <span>${acts.length + elses.length} 动作</span>
           <span>冷却 ${r.cooldown === undefined ? 3 : r.cooldown}s</span>
         </div>
       </div>
