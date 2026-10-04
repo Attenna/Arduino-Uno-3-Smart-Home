@@ -385,8 +385,8 @@ def control_light():
     payload = _light_payload(db.get_current_status())
     status_shown = payload["light_status"]
     shown = payload["light_brightness"]
-    label_zh, label_en = light_state.label(style)
     if outcome == "executed":
+        label_zh, label_en = light_state.label(style)
         if status_shown == "on":
             message = f"灯光已打开，亮度: {shown}%（{label_zh}）"
             message_en = f"Light turned on, brightness: {shown}% ({label_en})"
@@ -394,6 +394,9 @@ def control_light():
             message = "灯光已关闭"
             message_en = "Light turned off"
     else:
+        # 被更新的操作取代：展示与提示都来自库里最新执行的那条命令，用本次请求的
+        # style 会写出「已按最新操作执行（…色温 4000K）」这种自相矛盾的话。
+        label_zh, label_en = light_state.label(light_state.from_status(payload))
         message = f"已按最新操作执行（灯光 {status_shown}/{shown}% {label_zh}）"
         message_en = f"Latest command applied (light {status_shown}/{shown}% {label_en})"
     return jsonify({**payload, "message": message, "message_en": message_en})

@@ -89,6 +89,11 @@ class StyleResolutionTests(unittest.TestCase):
                          ("control_light_temp", (4000, 80), {}))
         self.assertEqual(ls.hardware_plan("on", 80, ("night", None, None)),
                          ("control_light", ("on", 80, "night"), {}))
+        # 0 亮度一律 off：rgb 否则会下发 value=0 的「全黑但不是关灯」
+        for style in (("rgb", None, (255, 0, 0)), ("temp", 4000, None),
+                      ("night", None, None)):
+            self.assertEqual(ls.hardware_plan("on", 0, style),
+                             ("control_light", ("off", 0), {}), style)
 
     def test_automation_color_maps_to_style(self):
         self.assertEqual(ls.from_color_param(None), ("white", None, None))
@@ -156,6 +161,16 @@ class LightApiTests(unittest.TestCase):
         self.assertEqual((payload["light_mode"], payload["light_rgb"],
                           payload["light_brightness"]), ("rgb", [255, 0, 128], 40))
 
+    def test_malformed_rgb_degrades_to_null_instead_of_500(self):
+        """一列脏数据不能让 /api/status 整页挂掉（面板每秒轮询它）。"""
+        for dirty in ("", "255,0", "255,0,128,7", "a,b,c"):
+            self.db.update_status(light_rgb=dirty)          # 绕过 status_values 的归一
+            with patch.object(status, "db", self.db):
+                response = self.client.get("/api/status",
+                                           headers={"Origin": "http://localhost"})
+            self.assertEqual(response.status_code, 200, dirty)
+            self.assertIsNone(response.get_json()["light_rgb"], dirty)
+
     def test_style_switches_are_bidirectional(self):
         self._post({"status": "on", "brightness": 60, "temp": 3000})
         self._post({"status": "on", "brightness": 60, "rgb": [0, 200, 120]})
@@ -222,6 +237,7 @@ class AutomationStyleTests(unittest.TestCase):
         self.bridge = Mock()
         self.bridge.control_light.return_value = (True, "ok")
         self.bridge.control_light_color.return_value = (True, "ok")
+        self.bridge.control_light_temp.return_value = (True, "ok")
         self.status = {"light_status": "off", "light_brightness": 0}
         self.db = Mock()
         self.db.get_current_status.side_effect = lambda: dict(self.status)
@@ -239,16 +255,38 @@ class AutomationStyleTests(unittest.TestCase):
         self._perform(status="on", brightness=60, color="red")
         self.assertEqual((self.status["light_mode"], self.status["light_status"],
                           self.status["light_rgb"]), ("rgb", "on", "255,0,0"))
+        self.bridge.control_light_color.assert_called_once_with("red", None, None, None)
 
-    def test_rule_without_color_is_white(self):
-        self.status.update(light_mode="rgb", light_rgb="255,0,0")
-        self._perform(status="on", brightness=60)
-        self.assertEqual(self.status["light_mode"], "white")
-        self.assertIsNone(self.status["light_rgb"])
+    def test_rule_without_color_inherits_current_style(self):
+        """没写颜色的积木只表达「开多亮」，不能把用户的颜色清成白光。
 
-    def test_rule_off_keeps_previous_style(self):
+        记账正确还不够：固件的 white 命令必然覆盖颜色，所以下发的那条命令本身
+        必须带完整亮法，否则库里记着 rgb、灯其实是白光（#27 在规则路径上的形态）。
+        """
+        self.status.update(light_mode="rgb", light_rgb="255,0,0",
+                           light_status="on", light_brightness=60)
+        self._perform(status="on", brightness=30)
+        self.bridge.control_light_color.assert_called_once_with(
+            "rgb", 255, 0, 0, brightness_pct=30)
+        self.bridge.control_light.assert_not_called()
+        self.assertEqual((self.status["light_mode"], self.status["light_rgb"],
+                          self.status["light_brightness"]), ("rgb", "255,0,0", 30))
+
+    def test_rule_without_color_inherits_temperature_and_night(self):
+        self.status.update(light_mode="temp", light_temp=4000)
+        self._perform(status="on", brightness=50)
+        self.bridge.control_light_temp.assert_called_once_with(4000, 50)
+
+        self.bridge.reset_mock()
+        self.status.update(light_mode="night", light_temp=None, light_rgb=None)
+        self._perform(status="on", brightness=25)
+        self.bridge.control_light.assert_called_once_with("on", 25, "night")
+        self.assertEqual(self.status["light_mode"], "night")
+
+    def test_rule_off_sends_off_and_keeps_previous_style(self):
         self.status.update(light_mode="temp", light_temp=4000)
         self._perform(status="off", brightness=0)
+        self.bridge.control_light.assert_called_once_with("off", 0)
         self.assertEqual((self.status["light_status"], self.status["light_mode"],
                           self.status["light_temp"]), ("off", "temp", 4000))
 

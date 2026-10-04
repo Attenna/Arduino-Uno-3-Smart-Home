@@ -131,3 +131,28 @@ test('dashboard light buttons are wired to defined functions', () => {
     }
     assert.equal(/function setLight\(/.test(js), false, 'setLight 应已被显式入口取代');
 });
+
+// JS 内部调用同样要能解析：远程面板的开/关灯走 remoteControl()，模板里搜不到。
+// 改名漏改内部调用只在点击时抛 ReferenceError，页面其它部分照常工作，最难发现。
+test('every light entry point called in main.js is defined', () => {
+    const js = fs.readFileSync(path.join(web, 'static/js/main.js'), 'utf8');
+    const called = new Set([...js.matchAll(/\b(setLight[A-Za-z]*|turnLightOff)\s*\(/g)]
+        .map(m => m[1]));
+    assert.ok(called.size >= 4);
+    for (const name of called) {
+        assert.match(js, new RegExp(`function ${name}\\(`), `${name} 被调用但没有定义`);
+    }
+});
+
+test('remote control light buttons still drive the light and keep the style', async () => {
+    const ui = lightSandbox();
+    ui.run("syncLightControls({light_status: 'on', light_brightness: 40,"
+        + " light_mode: 'temp', light_temp: 3000})");
+    ui.run("remoteControl('light_on')");
+    await ui.flush();
+    assert.deepEqual(ui.last(), {status: 'on', brightness: 100, temp: 3000});
+
+    ui.run("remoteControl('light_off')");
+    await ui.flush();
+    assert.deepEqual(ui.last(), {status: 'off', brightness: 0});
+});

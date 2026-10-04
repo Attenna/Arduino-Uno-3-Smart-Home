@@ -186,6 +186,8 @@ def target_from_request(data, current_brightness):
     * 亮度 0 就是关灯：``control_light`` 本来就把 <=0 直接发 off，旧代码却在这里
       把 on/0 偷偷抬成 100，于是库里记着 100%、滑块显示 0%、灯其实灭着。
     * 请求没带亮度（只改亮法的色温/颜色命令）沿用库里当前亮度，关着则 100 起步。
+    * ``status`` 缺失一律按关灯处理：面板与工具网关都会带 status，宁可关灯也不要
+      凭一条只含亮法的裸请求把灯点亮。
     """
     if data.get("status") != "on":
         return ("off", 0)
@@ -211,9 +213,13 @@ def status_values(status, brightness, style):
 
 
 def hardware_plan(status, brightness, style):
-    """意图 → 硬件桥调用 (方法名, 位置参数, 关键字参数)。"""
+    """意图 → 硬件桥调用 (方法名, 位置参数, 关键字参数)。
+
+    0 亮度一律走 off：否则 rgb 会下发一条 value=0 的「全黑但不是关灯」命令，
+    固件的 ``off()`` 还会清掉夜灯的点亮颗数，两者在灯带上不是同一个状态。
+    """
     mode, kelvin, color = style
-    if status != "on":
+    if status != "on" or not brightness:
         return "control_light", ("off", 0), {}
     if mode == "rgb":
         return ("control_light_color", ("rgb", color[0], color[1], color[2]),

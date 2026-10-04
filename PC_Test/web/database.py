@@ -248,8 +248,13 @@ class SmartHomeDB:
                     result[field] = None
         # light_rgb 在库里存成 "r,g,b" 文本；对外一律给三元列表。/api/status 是公开
         # 契约，前端与 HA 都不该去猜存储格式（#27：文本直接让页面的颜色恢复逻辑失效）。
+        # 畸形值降级成 None：这个接口被面板每秒轮询，不能因为一列脏数据抛 500。
         if isinstance(result.get('light_rgb'), str):
-            result['light_rgb'] = [int(v) for v in result['light_rgb'].split(',')]
+            try:
+                parts = result['light_rgb'].split(',')
+                result['light_rgb'] = [int(v) for v in parts] if len(parts) == 3 else None
+            except ValueError:
+                result['light_rgb'] = None
         return result
 
     def update_status(self, **kwargs):

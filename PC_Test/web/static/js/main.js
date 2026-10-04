@@ -746,8 +746,8 @@ function remoteControl(action) {
     // 风扇/灯光复用带防抖、乐观更新与"同值不下发"的收口，避免远程面板连点刷屏
     if (action === 'fan_on')  { setFan(60); return; }
     if (action === 'fan_off') { setFan(0); return; }
-    if (action === 'light_on')  { setLight('on', 100); return; }
-    if (action === 'light_off') { setLight('off', 0); return; }
+    if (action === 'light_on')  { setLightBrightness(100); return; }
+    if (action === 'light_off') { turnLightOff(); return; }
     // 门/空调为秒级慢动作：同名动作在执行期间忽略重复点击（触摸双发/连点）
     tapGuard('rc-' + action, async () => {
         const posts = {
