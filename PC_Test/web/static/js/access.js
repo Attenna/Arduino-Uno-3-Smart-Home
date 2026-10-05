@@ -360,7 +360,7 @@ async function loadPersons() {
 
     persons.forEach((p, i) => {
         const initial = p.name.charAt(0);
-        const colors = ['#f5b301', '#4f6b48', '#9a7aa0', '#b06a2c', '#b5544a'];
+        const colors = ['#a9743f', '#4f6b48', '#9a7aa0', '#b06a2c', '#b5544a'];
         const color = colors[i % colors.length];
         const faceChip = p.face_id
             ? `<span class="cred-chip on face">${t('access.cred_face')}</span>`

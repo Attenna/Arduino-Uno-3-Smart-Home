@@ -6,24 +6,24 @@
 }
 
 :root {
-    /* 暖居主题：米黄底 + 暖白卡片 + 黄色主色（状态色保留：鼠尾草绿正常 / 砖红告警） */
-    --bg-primary: #fdf3d7;
-    --bg-secondary: #fffbf0;
-    --bg-card: #fffef7;
-    --bg-card-hover: #fdecc0;
-    --bg-sidebar: #fffaef;
-    --border-color: #ead5a0;
-    --text-primary: #3b362c;
-    --text-secondary: #7c7466;
-    --text-muted: #b2a992;
+    /* 暖居主题（对齐演示页审美）：奶油米白底 + 纯白卡片 + 焦糖棕强调（状态色保留：鼠尾草绿正常 / 砖红告警） */
+    --bg-primary: #f6f2ea;
+    --bg-secondary: #fffdfa;
+    --bg-card: #ffffff;
+    --bg-card-hover: #f5efe6;
+    --bg-sidebar: #faf7f1;
+    --border-color: #e9e1d5;
+    --text-primary: #3b332a;
+    --text-secondary: #7c7264;
+    --text-muted: #a89e8d;
     --accent-blue: #476044;
-    --accent-cyan: #f5b301;
+    --accent-cyan: #a9743f;
     --accent-green: #4f6b48;
     --accent-orange: #b06a2c;
     --accent-red: #b5544a;
-    --accent-yellow: #f5b301;
+    --accent-yellow: #c08a4a;
     --accent-purple: #9a7aa0;
-    --shadow: 0 4px 16px rgba(196, 158, 44, 0.14);
+    --shadow: 0 4px 16px rgba(120, 95, 60, 0.10);
     --radius: 18px;
     --radius-sm: 10px;
     --transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
@@ -33,7 +33,7 @@
 body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
     background: var(--bg-primary);
-    background-image: radial-gradient(1200px 600px at 50% -10%, #fffdf0 0%, rgba(253, 243, 215, 0) 70%);
+    background-image: radial-gradient(1200px 600px at 50% -10%, #fffefb 0%, rgba(246, 242, 234, 0) 70%);
     color: var(--text-primary);
     min-height: 100vh;
     line-height: 1.5;
@@ -95,7 +95,7 @@ body {
 
 .nav-link.active {
     color: var(--accent-cyan);
-    background: rgba(245, 179, 1, 0.1);
+    background: rgba(169, 116, 63, 0.1);
 }
 
 .nav-status {
@@ -238,9 +238,9 @@ body {
     border-radius: var(--radius);
     cursor: pointer;
     transition: var(--transition);
-    box-shadow: 0 0 20px rgba(245, 179, 1, 0.25);
+    box-shadow: 0 0 20px rgba(169, 116, 63, 0.25);
 }
-.voice-wake-btn:hover { transform: translateY(-2px); box-shadow: 0 0 28px rgba(245, 179, 1, 0.45); }
+.voice-wake-btn:hover { transform: translateY(-2px); box-shadow: 0 0 28px rgba(169, 116, 63, 0.45); }
 .voice-wake-btn:active { transform: scale(0.98); }
 .voice-wake-btn:disabled { opacity: 0.55; cursor: not-allowed; transform: none; }
 .voice-wake-btn svg { width: 26px; height: 26px; }
@@ -386,7 +386,7 @@ body {
     font-family: var(--font-mono);
     font-size: 13px;
     color: var(--accent-cyan);
-    background: rgba(245, 179, 1, 0.08);
+    background: rgba(169, 116, 63, 0.08);
     padding: 4px 10px;
     border-radius: 6px;
 }
@@ -400,19 +400,19 @@ body {
     font-size: 14px;
     font-weight: 700;
     border: 2px solid var(--accent-cyan);
-    background: rgba(245, 179, 1, 0.15);
+    background: rgba(169, 116, 63, 0.15);
     color: var(--accent-cyan);
     cursor: pointer;
     transition: var(--transition);
     margin-left: 12px;
-    box-shadow: 0 0 12px rgba(245, 179, 1, 0.2);
+    box-shadow: 0 0 12px rgba(169, 116, 63, 0.2);
     letter-spacing: 0.5px;
 }
 
 .lang-switch:hover {
     background: var(--accent-cyan);
     color: #3b362c;
-    box-shadow: 0 0 20px rgba(245, 179, 1, 0.5);
+    box-shadow: 0 0 20px rgba(169, 116, 63, 0.5);
     transform: scale(1.05);
 }
 
@@ -486,7 +486,7 @@ body {
 }
 
 .card:hover {
-    border-color: rgba(245, 179, 1, 0.3);
+    border-color: rgba(169, 116, 63, 0.3);
     box-shadow: var(--shadow);
 }
 
@@ -625,7 +625,7 @@ body {
     font-weight: 700;
     color: var(--accent-cyan);
     font-family: var(--font-mono);
-    text-shadow: 0 0 30px rgba(245, 179, 1, 0.3);
+    text-shadow: 0 0 30px rgba(169, 116, 63, 0.3);
 }
 
 .temp-unit {
@@ -766,7 +766,7 @@ body {
 
 .level-chip.on {
     color: var(--accent-yellow);
-    background: rgba(245, 179, 1, 0.12);
+    background: rgba(169, 116, 63, 0.12);
 }
 
 .fan-visual .level-chip.on {
@@ -974,7 +974,7 @@ body {
     border-radius: 50%;
     background: var(--accent-cyan);
     cursor: pointer;
-    box-shadow: 0 0 10px rgba(245, 179, 1, 0.4);
+    box-shadow: 0 0 10px rgba(169, 116, 63, 0.4);
     transition: var(--transition);
 }
 
@@ -1083,20 +1083,20 @@ body {
 
 .level-btn.active {
     color: var(--accent-yellow);
-    background: rgba(245, 179, 1, 0.14);
-    border-color: rgba(245, 179, 1, 0.45);
-    box-shadow: 0 0 12px rgba(245, 179, 1, 0.18);
+    background: rgba(169, 116, 63, 0.14);
+    border-color: rgba(169, 116, 63, 0.45);
+    box-shadow: 0 0 12px rgba(169, 116, 63, 0.18);
 }
 
 .level-btn.active:hover {
     color: var(--accent-yellow);
-    background: rgba(245, 179, 1, 0.2);
-    border-color: rgba(245, 179, 1, 0.6);
+    background: rgba(169, 116, 63, 0.2);
+    border-color: rgba(169, 116, 63, 0.6);
 }
 
 /* ==================== 空调卡片（美的红外） ==================== */
 .ac-opt.active {
-    background: rgba(245, 179, 1, 0.15);
+    background: rgba(169, 116, 63, 0.15);
     border-color: var(--accent-cyan);
     color: var(--accent-cyan);
 }
@@ -1181,7 +1181,7 @@ body {
     height: 22px;
 }
 
-.light-on-icon { background: rgba(245, 179, 1, 0.1); color: var(--accent-yellow); }
+.light-on-icon { background: rgba(169, 116, 63, 0.1); color: var(--accent-yellow); }
 .light-off-icon { background: rgba(184, 165, 138, 0.26); }
 .ac-on-icon { background: rgba(154, 122, 160, 0.1); color: var(--accent-purple); }
 .ac-off-icon { background: rgba(184, 165, 138, 0.26); }
@@ -1347,8 +1347,8 @@ body {
 }
 
 @keyframes scanPulse {
-    0%, 100% { box-shadow: 0 0 0 rgba(245, 179, 1, 0); }
-    50% { box-shadow: 0 0 30px rgba(245, 179, 1, 0.2); }
+    0%, 100% { box-shadow: 0 0 0 rgba(169, 116, 63, 0); }
+    50% { box-shadow: 0 0 30px rgba(169, 116, 63, 0.2); }
 }
 
 .scan-icon {
@@ -1468,9 +1468,9 @@ body {
     padding: 1px 8px;
     border-radius: 4px;
     font-size: 11px;
-    background: rgba(245, 179, 1, 0.15);
+    background: rgba(169, 116, 63, 0.15);
     color: var(--accent-cyan);
-    border: 1px solid rgba(245, 179, 1, 0.3);
+    border: 1px solid rgba(169, 116, 63, 0.3);
     vertical-align: middle;
     margin-left: 4px;
 }
@@ -1763,8 +1763,8 @@ body {
     left: 0;
     bottom: 0;
     width: 224px;
-    background: linear-gradient(180deg, #fffdf6 0%, #fff7e6 100%);
-    border-right: 1px solid rgba(176, 143, 74, 0.13);
+    background: var(--bg-sidebar);
+    border-right: 1px solid var(--border-color);
     display: flex;
     flex-direction: column;
     padding: 20px 14px;
@@ -1818,20 +1818,20 @@ body {
 }
 
 .side-link:hover {
-    background: rgba(247, 231, 192, 0.5);
+    background: var(--bg-card-hover);
     color: var(--text-primary);
 }
 
 .side-link.active {
-    background: rgba(246, 227, 176, 0.6);
-    color: var(--accent-cyan);
+    background: var(--accent-cyan);
+    color: #fff;
     font-weight: 600;
-    box-shadow: inset 0 0 0 1px rgba(245, 179, 1, 0.22);
+    box-shadow: 0 4px 12px rgba(169, 116, 63, 0.24);
 }
 
 .side-foot {
     padding: 12px 8px 0;
-    border-top: 1px solid rgba(176, 143, 74, 0.13);
+    border-top: 1px solid var(--border-color);
     font-size: 12px;
     color: var(--text-muted);
 }
@@ -1852,9 +1852,9 @@ body {
     align-items: center;
     gap: 16px;
     padding: 0 28px;
-    background: rgba(254, 246, 222, 0.92);
+    background: rgba(255, 253, 250, 0.92);
     backdrop-filter: blur(10px);
-    border-bottom: 1px solid rgba(176, 143, 74, 0.24);
+    border-bottom: 1px solid var(--border-color);
     z-index: 40;
 }
 
@@ -1921,9 +1921,9 @@ body {
 }
 
 .mode-badge.away {
-    background: rgba(245, 179, 1, 0.12);
+    background: rgba(169, 116, 63, 0.12);
     color: var(--accent-cyan);
-    border-color: rgba(245, 179, 1, 0.26);
+    border-color: rgba(169, 116, 63, 0.26);
 }
 
 /* ==================== 「我的家」首页 ==================== */
@@ -1954,9 +1954,9 @@ body {
 }
 
 .mode-pill.away {
-    background: rgba(245, 179, 1, 0.12);
+    background: rgba(169, 116, 63, 0.12);
     color: var(--accent-cyan);
-    border-color: rgba(245, 179, 1, 0.3);
+    border-color: rgba(169, 116, 63, 0.3);
 }
 
 .mode-pill .dot {
@@ -2011,7 +2011,7 @@ body {
     position: relative;
     min-height: 210px;
     border-radius: var(--radius);
-    background: linear-gradient(180deg, #fffdf0 0%, #ffeecb 100%);
+    background: linear-gradient(180deg, #fdfbf7 0%, #f2ebdf 100%);
     border: 1px solid var(--border-color);
     overflow: hidden;
     display: flex;
@@ -2118,7 +2118,7 @@ body {
     transition: var(--transition);
 }
 
-.room-tab:hover { border-color: rgba(245, 179, 1, 0.4); color: var(--text-primary); }
+.room-tab:hover { border-color: rgba(169, 116, 63, 0.4); color: var(--text-primary); }
 
 .room-tab.active {
     background: var(--accent-cyan);
@@ -2161,7 +2161,7 @@ body {
 }
 
 .dc-icon svg { width: 20px; height: 20px; }
-.device-card.on .dc-icon { background: rgba(245, 179, 1, 0.16); color: var(--accent-cyan); }
+.device-card.on .dc-icon { background: rgba(169, 116, 63, 0.16); color: var(--accent-cyan); }
 
 .dc-name { font-size: 13.5px; font-weight: 600; color: var(--text-primary); }
 .dc-loc { font-size: 11px; color: var(--text-muted); }
@@ -2186,7 +2186,7 @@ body {
     background: var(--text-muted);
     flex-shrink: 0;
 }
-.device-card.on .dc-dot { background: var(--accent-cyan); box-shadow: 0 0 6px rgba(245, 179, 1, 0.5); }
+.device-card.on .dc-dot { background: var(--accent-cyan); box-shadow: 0 0 6px rgba(169, 116, 63, 0.5); }
 .device-card.warn .dc-dot { background: var(--accent-red); box-shadow: 0 0 6px rgba(181, 84, 74, 0.5); }
 .device-card.warn { border-color: rgba(181, 84, 74, 0.35); }
 
@@ -2251,12 +2251,12 @@ body {
     cursor: pointer;
     transition: var(--transition);
 }
-.scene-card:hover { border-color: rgba(245, 179, 1, 0.4); transform: translateY(-2px); }
+.scene-card:hover { border-color: rgba(169, 116, 63, 0.4); transform: translateY(-2px); }
 
 .scene-card .sc-icon {
     width: 50px; height: 50px; border-radius: 14px;
     display: flex; align-items: center; justify-content: center;
-    background: rgba(245, 179, 1, 0.14);
+    background: rgba(169, 116, 63, 0.14);
     color: var(--accent-cyan);
     flex-shrink: 0;
 }
@@ -2277,7 +2277,7 @@ body {
     cursor: pointer;
     transition: var(--transition);
 }
-.rule-card:hover { border-color: rgba(245, 179, 1, 0.35); }
+.rule-card:hover { border-color: rgba(169, 116, 63, 0.35); }
 .rule-card.active { border-left-color: var(--accent-cyan); background: var(--bg-card-hover); }
 .rule-card.disabled { opacity: 0.6; }
 
@@ -2291,7 +2291,7 @@ body {
     background: rgba(160, 130, 95, 0.16); color: var(--text-secondary);
 }
 .rule-chip.hold { background: rgba(71, 96, 68, 0.14); color: var(--accent-blue); }
-.rule-chip.manual { background: rgba(245, 179, 1, 0.16); color: var(--accent-cyan); }
+.rule-chip.manual { background: rgba(169, 116, 63, 0.16); color: var(--accent-cyan); }
 .rule-chip.off { background: rgba(181, 84, 74, 0.14); color: var(--accent-red); }
 
 .rule-detail {
@@ -2372,7 +2372,7 @@ body {
     padding: 3px 9px;
     border-radius: 999px;
     background: var(--accent-cyan);
-    color: #3a2c00;
+    color: #fff;
 }
 
 .method-tab-name {
@@ -2392,14 +2392,14 @@ body {
 }
 
 .method-tab:hover {
-    border-color: rgba(245, 179, 1, 0.45);
+    border-color: rgba(169, 116, 63, 0.45);
     transform: translateY(-1px);
 }
 
 .method-tab.active {
     border-color: var(--accent-cyan);
     background: var(--bg-card-hover);
-    box-shadow: 0 8px 22px rgba(245, 179, 1, 0.18);
+    box-shadow: 0 8px 22px rgba(169, 116, 63, 0.18);
 }
 
 .method-tab.active svg { color: var(--accent-cyan); }
@@ -2407,7 +2407,7 @@ body {
 .method-tab.active .method-tab-current { display: inline-flex; }
 
 .method-tab.active .method-tab-tag {
-    background: rgba(245, 179, 1, 0.18);
+    background: rgba(169, 116, 63, 0.18);
     color: var(--accent-cyan);
 }
 
@@ -2433,7 +2433,7 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
-    background: rgba(245, 179, 1, 0.14);
+    background: rgba(169, 116, 63, 0.14);
     color: var(--accent-cyan);
 }
 
@@ -2483,7 +2483,7 @@ body {
 .keypad-hint { font-size: 12px; color: var(--text-muted); margin-bottom: 10px; }
 
 /* 入户方式彩色标签：人脸 / 刷卡 / 密码 */
-.status-tag.face { background: rgba(245, 179, 1, 0.16); color: var(--accent-cyan); }
+.status-tag.face { background: rgba(169, 116, 63, 0.16); color: var(--accent-cyan); }
 .status-tag.rfid { background: rgba(71, 96, 68, 0.16); color: var(--accent-blue); }
 .status-tag.keypad { background: rgba(154, 122, 160, 0.18); color: #8a6a90; }
 
@@ -2499,7 +2499,7 @@ body {
     border-radius: 999px;
 }
 
-.cred-chip.on.face { background: rgba(245, 179, 1, 0.16); color: var(--accent-cyan); }
+.cred-chip.on.face { background: rgba(169, 116, 63, 0.16); color: var(--accent-cyan); }
 .cred-chip.on.card { background: rgba(71, 96, 68, 0.16); color: var(--accent-blue); }
 .cred-chip.off { background: rgba(160, 130, 95, 0.12); color: var(--text-muted); }
 
@@ -2581,7 +2581,7 @@ body {
     color: #3b362c;
     cursor: pointer;
     display: inline-flex; align-items: center; justify-content: center;
-    box-shadow: 0 10px 26px rgba(245, 179, 1, 0.32);
+    box-shadow: 0 10px 26px rgba(169, 116, 63, 0.32);
     transition: var(--transition);
 }
 .talk-btn svg { width: 42px; height: 42px; }
@@ -2677,7 +2677,7 @@ body {
     transition: var(--transition);
 }
 .settings-nav-item:hover { background: var(--bg-card-hover); color: var(--text-primary); }
-.settings-nav-item.active { background: rgba(245, 179, 1, 0.12); color: var(--accent-cyan); font-weight: 600; }
+.settings-nav-item.active { background: rgba(169, 116, 63, 0.12); color: var(--accent-cyan); font-weight: 600; }
 
 .settings-section { display: none; }
 .settings-section.active { display: block; }
@@ -2708,7 +2708,7 @@ body {
     flex: 0 0 38px; width: 38px; height: 38px;
     display: flex; align-items: center; justify-content: center;
     border-radius: 12px;
-    background: rgba(245, 179, 1, 0.14);
+    background: rgba(169, 116, 63, 0.14);
     color: var(--accent-cyan);
 }
 .slc-icon svg { width: 20px; height: 20px; }

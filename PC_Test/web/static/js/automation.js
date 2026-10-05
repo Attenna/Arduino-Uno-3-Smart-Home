@@ -688,10 +688,10 @@ function darkTheme() {
             flyoutOpacity: 0.98,
             scrollbarColour: '#e6d6a7',
             scrollbarOpacity: 0.6,
-            insertionMarkerColour: '#f5b301',
+            insertionMarkerColour: '#a9743f',
             insertionMarkerOpacity: 0.8,
-            cursorColour: '#f5b301',
-            selectedGlowColour: '#f5b301',
+            cursorColour: '#a9743f',
+            selectedGlowColour: '#a9743f',
         },
     });
 }

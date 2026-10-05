@@ -24,9 +24,9 @@ LOGIN = """<!doctype html>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400..700&family=Noto+Serif+SC:wght@500;600;700&family=Plus+Jakarta+Sans:wght@400..800&display=swap" rel="stylesheet">
 <style>
 :root{
-  --bg-primary:#fdf3d7;--bg-card:#fffef7;--border:#ead5a0;
-  --text-primary:#3b362c;--text-secondary:#7c7466;--text-muted:#b2a992;
-  --accent:#f5b301;--accent-strong:#e0a200;--danger:#b5544a;
+  --bg-primary:#f6f2ea;--bg-card:#ffffff;--border:#e9e1d5;
+  --text-primary:#3b332a;--text-secondary:#7c7264;--text-muted:#a89e8d;
+  --accent:#a9743f;--accent-strong:#96632f;--danger:#b5544a;
   --radius:18px;--radius-sm:10px;
   --transition:all .3s cubic-bezier(.4,0,.2,1);
 }
@@ -34,25 +34,25 @@ LOGIN = """<!doctype html>
 body{
   font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;
   color:var(--text-primary);background:var(--bg-primary);line-height:1.5;
-  background-image:radial-gradient(1200px 600px at 50% -10%,#fffdf0 0%,rgba(253,243,215,0) 70%),
-                   radial-gradient(900px 520px at 92% 112%,rgba(245,179,1,.16) 0%,rgba(253,243,215,0) 62%);
+  background-image:radial-gradient(1200px 600px at 50% -10%,#fffefb 0%,rgba(246,242,234,0) 70%),
+                   radial-gradient(900px 520px at 92% 112%,rgba(169,116,63,.16) 0%,rgba(246,242,234,0) 62%);
   display:flex;align-items:center;justify-content:center;min-height:100vh;padding:24px;
 }
 .login-card{
   position:relative;width:100%;max-width:400px;
   background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);
-  box-shadow:0 18px 48px rgba(196,158,44,.22);padding:42px 34px 30px;
+  box-shadow:0 18px 48px rgba(120,95,60,.14);padding:42px 34px 30px;
 }
 .lang-switch{
   position:absolute;top:16px;right:16px;height:32px;min-width:46px;padding:0 12px;
-  background:#fffbf0;border:1px solid var(--border);border-radius:999px;
+  background:#fffdfa;border:1px solid var(--border);border-radius:999px;
   color:var(--text-secondary);font-size:13px;font-weight:600;cursor:pointer;transition:var(--transition);
 }
-.lang-switch:hover{color:var(--text-primary);border-color:var(--accent);background:#fdecc0}
+.lang-switch:hover{color:var(--text-primary);border-color:var(--accent);background:#f5efe6}
 .brand{text-align:center;margin-bottom:26px}
 .brand-icon{
   display:inline-flex;align-items:center;justify-content:center;width:56px;height:56px;margin-bottom:14px;
-  color:#fff;background:var(--accent);border-radius:16px;box-shadow:0 8px 20px rgba(245,179,1,.35);
+  color:#fff;background:var(--accent);border-radius:16px;box-shadow:0 8px 20px rgba(169,116,63,.32);
 }
 .brand-icon svg{width:30px;height:30px}
 h1{font-size:24px;font-weight:600;letter-spacing:.5px}
@@ -61,15 +61,15 @@ h1{font-size:24px;font-weight:600;letter-spacing:.5px}
 .field>span{display:block;margin-bottom:6px;font-size:13px;font-weight:600;color:var(--text-secondary)}
 .field input{
   width:100%;padding:12px 14px;font-size:15px;color:var(--text-primary);
-  background:#fffef7;border:1px solid var(--border);border-radius:var(--radius-sm);
+  background:#ffffff;border:1px solid var(--border);border-radius:var(--radius-sm);
   outline:none;transition:var(--transition);
 }
-.field input:focus{border-color:var(--accent);background:#fff;box-shadow:0 0 0 3px rgba(245,179,1,.18)}
+.field input:focus{border-color:var(--accent);background:#fff;box-shadow:0 0 0 3px rgba(169,116,63,.18)}
 .submit{
-  width:100%;margin-top:6px;padding:13px;font-size:15px;font-weight:700;color:#3b362c;
+  width:100%;margin-top:6px;padding:13px;font-size:15px;font-weight:700;color:#fff;
   background:var(--accent);border:none;border-radius:var(--radius-sm);cursor:pointer;transition:var(--transition);
 }
-.submit:hover{background:var(--accent-strong);box-shadow:0 6px 18px rgba(245,179,1,.35);transform:translateY(-1px)}
+.submit:hover{background:var(--accent-strong);box-shadow:0 6px 18px rgba(169,116,63,.32);transform:translateY(-1px)}
 .submit:active{transform:translateY(0)}
 .error{
   margin-top:14px;padding:10px 12px;text-align:center;font-size:13px;color:var(--danger);
