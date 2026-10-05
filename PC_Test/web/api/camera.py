@@ -80,3 +80,25 @@ def camera_stream():
             upstream.close()
 
     return Response(_gen(), mimetype=f"multipart/x-mixed-replace; boundary={_BOUNDARY}")
+
+@bp.route("/api/security/events")
+def security_events():
+    from ..config import DATA_DIR
+    from ..security_monitor import SecurityMonitor
+    return jsonify(SecurityMonitor(DATA_DIR / "security").events())
+
+
+@bp.route("/api/security/images/<event_id>")
+def security_image(event_id):
+    import re
+    from flask import abort, send_from_directory
+    from ..config import DATA_DIR
+    if not re.fullmatch(r"[0-9a-f]{32}", event_id):
+        abort(404)
+    return send_from_directory(DATA_DIR / "security", event_id + ".jpg")
+
+
+@bp.route("/security")
+def security_page():
+    from flask import render_template
+    return render_template("security.html")

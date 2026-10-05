@@ -1,5 +1,7 @@
 # 文档中心（Documentation Hub）
 
+多人同时开发请先阅读 [Git 多人协作规范](git-workflow.md)。
+
 本目录汇集整套智能家居系统的文档。按**用途**分为四层：
 
 | 层级 | 文档 | 用途 |
@@ -7,9 +9,11 @@
 | **概念 / 架构** | [architecture.md](architecture.md) | 两种部署形态、分层架构、数据流向、模块边界 |
 | | [serial-protocol.md](serial-protocol.md) | 串口 JSON 协议规范（A 上报 / B 命令，含固件裁剪说明） |
 | | [development-guide.md](development-guide.md) | 开发规范（依赖方向、命名、禁止跨层、PC_Test/Web 前端硬约定） |
+| | [git-workflow.md](git-workflow.md) | 多人并行开发、分支、worktree、提交、评审和部署规范 |
 | **接口 / 配置** | [api.md](api.md) | 全部编程接口（Web REST / 语音 HTTP / MCP 工具 / LLM / 摄像头） |
 | | [extension-guide.md](extension-guide.md) | 二次开发接口指南（对外表面、四条扩展缝、加积木的清单与落地顺序） |
 | | [configuration.md](configuration.md) | 配置项参考（yaml / .env / 环境变量 / Config.h） |
+| | [face-models.md](face-models.md) | 人脸嵌入模型：实测延迟与判别余量、下载校验、换模型后重建人脸库 |
 | **实战 / 排障** | [ha-automation-examples.md](ha-automation-examples.md) | Home Assistant 自动化实战 |
 | | [hardware-debug-notes.md](hardware-debug-notes.md) | 硬件踩坑复盘、排障速查 |
 | | [faq.md](faq.md) | 常见问题解答（38 问） |

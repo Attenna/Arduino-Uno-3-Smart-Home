@@ -10,7 +10,9 @@ struct Command {
     char device[12];
     char action[20];
     long value;                 // fan 速度 / light 白亮度 / display 数字
+    bool hasValue;              // 区分缺省亮度与显式 value=0
     long r, g, b;               // light rgb
+    long temp;                  // light 色温（K，LIGHT_TEMP_MIN~LIGHT_TEMP_MAX）
     long count, onMs, offMs;    // buzzer beep
     long hour, minute;          // display 时间
     long line;                  // oled 行号

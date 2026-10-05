@@ -13,6 +13,7 @@ from .face.engine import FaceEngine
 from .face_watcher import FaceWatcher
 from .ha_client import HomeAssistantClient
 from .hardware import McpHardwareBridge
+from .security_monitor import SecurityMonitor
 
 # 数据库与人脸引擎在 import 时即可用（不依赖串口）
 db = SmartHomeDB(str(DB_PATH))
@@ -26,6 +27,7 @@ face_watcher = FaceWatcher(face_engine, access_guard)
 # 硬件桥/自动化引擎由 create_app() 按配置启动
 bridge: McpHardwareBridge | None = None
 automation: AutomationEngine | None = None
+security_monitor: SecurityMonitor | None = None
 _bridge_lock = threading.Lock()
 
 
@@ -39,11 +41,12 @@ def bind_automation(engine: AutomationEngine | None) -> None:
 
 
 def init_bridge(cfg: dict) -> McpHardwareBridge:
-    global bridge, automation
+    global bridge, automation, security_monitor
     with _bridge_lock:
         if bridge is None:
+            security_monitor = SecurityMonitor(DATA_DIR / "security", cfg)
+            security_monitor.start()
             bridge = McpHardwareBridge(cfg, db)
-            bridge.start()
             # 自动化引擎挂在硬件桥的快照/事件钩子上；动作经 bridge 下发
             rules_path = DATA_DIR / "automation_rules.json"
             automation = AutomationEngine(bridge, db, rules_path, cfg)
@@ -52,6 +55,8 @@ def init_bridge(cfg: dict) -> McpHardwareBridge:
             # 门禁：刷卡/键盘密码事件进鉴权，鉴权结果走积木（开门不再有硬编码）
             bind_automation(automation)
             access_guard.attach_bridge(bridge)
+            bridge.add_listener("event", security_monitor.on_event)
+            bridge.add_listener("snapshot", security_monitor.on_snapshot)
             # PIR 是识别哨兵的门控：没人时一帧都不抓
             face_watcher.attach_bridge(bridge)
 
@@ -62,6 +67,7 @@ def init_bridge(cfg: dict) -> McpHardwareBridge:
 
             bridge.command_ack_listener = _mark_output_ack
             automation.start()
+            bridge.start()
         return bridge
 
 
@@ -72,6 +78,9 @@ def start_watchers(cfg: dict) -> bool:
     和「录过但名单里没这个人」；摄像头地址从 cfg 解析，Docker 里指向 camera 容器。
     """
     access_guard.identity_check = face_engine.has_identity
+    # 首帧预热丢给后台线程：模型加载后第一次推理要 3.8 秒（派上实测），
+    # 这笔钱不该由站到门口的第一个人付，也不该拖慢 /api/ready
+    face_engine.start_warmup()
     return face_watcher.start(cfg)
 
 
@@ -80,10 +89,16 @@ def shutdown_watchers() -> None:
 
 
 def shutdown_bridge() -> None:
-    global bridge, automation
+    global bridge, automation, security_monitor
     with _bridge_lock:
         face_watcher.stop()
         bind_automation(None)
+        if security_monitor is not None:
+            if bridge is not None:
+                bridge.remove_listener("event", security_monitor.on_event)
+                bridge.remove_listener("snapshot", security_monitor.on_snapshot)
+            security_monitor.stop()
+            security_monitor = None
         if automation is not None:
             automation.stop()
             automation = None

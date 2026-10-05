@@ -6,6 +6,11 @@ document.addEventListener('DOMContentLoaded', () => {
     setInterval(updateClock, 1000);
     initHistoryChart();
     loadHistory();
+    // 与看板图表同频：历史页挂着也不能停在被打开那一刻的快照
+    setInterval(loadHistory, 60000);
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) loadHistory();
+    });
 });
 
 // 时钟
@@ -91,10 +96,33 @@ function initHistoryChart() {
     });
 }
 
+// 统计概览区：湿度显示湿度文案与 % 单位；门窗/灯光不显示这四个统计块
+function applyStatView(dataType) {
+    const grid = document.getElementById('statGrid');
+    if (grid) {
+        grid.style.display = (dataType === 'door_window' || dataType === 'light') ? 'none' : '';
+    }
+    const isHumidity = dataType === 'humidity';
+    const unit = isHumidity ? '%' : '°C';
+    ['max', 'min', 'avg'].forEach(name => {
+        const suffix = name.charAt(0).toUpperCase() + name.slice(1);
+        const key = isHumidity ? `history.stat_${name}_humidity` : `history.stat_${name}`;
+        const label = document.getElementById(`stat${suffix}Label`);
+        if (label) {
+            label.setAttribute('data-i18n', key);
+            label.textContent = t(key);
+        }
+        const unitEl = document.getElementById(`stat${suffix}Unit`);
+        if (unitEl) unitEl.textContent = unit;
+    });
+}
+
 // 加载历史数据
 async function loadHistory() {
     const dataType = document.getElementById('dataType').value;
     const hours = document.getElementById('timeRange').value;
+
+    applyStatView(dataType);
     
     let data = [];
     let title = '';
@@ -168,21 +196,26 @@ async function loadHistory() {
         historyChart.update();
     }
     
+    // 先清除旧窗口统计，空结果或全 NULL 时保持占位符。
+    for (const id of ['statMax', 'statMin', 'statAvg']) {
+        document.getElementById(id).textContent = '--';
+    }
     // 更新统计
-    if (dataType === 'temperature' && reversed.length > 0) {
-        const temps = reversed.map(d => d.temperature);
-        const max = Math.max(...temps);
-        const min = Math.min(...temps);
-        const avg = temps.reduce((a, b) => a + b, 0) / temps.length;
-        document.getElementById('statMax').textContent = max.toFixed(1);
-        document.getElementById('statMin').textContent = min.toFixed(1);
-        document.getElementById('statAvg').textContent = avg.toFixed(1);
+    if (dataType === 'temperature') {
+        const temps = reversed.map(d => d.temperature).filter(v => v !== null && v !== undefined);
+        if (temps.length > 0) {
+            document.getElementById('statMax').textContent = Math.max(...temps).toFixed(1);
+            document.getElementById('statMin').textContent = Math.min(...temps).toFixed(1);
+            document.getElementById('statAvg').textContent = (temps.reduce((a, b) => a + b, 0) / temps.length).toFixed(1);
+        }
         document.getElementById('statCount').textContent = reversed.length;
-    } else if (dataType === 'humidity' && reversed.length > 0) {
-        const hums = reversed.map(d => d.humidity);
-        document.getElementById('statMax').textContent = Math.max(...hums).toFixed(1);
-        document.getElementById('statMin').textContent = Math.min(...hums).toFixed(1);
-        document.getElementById('statAvg').textContent = (hums.reduce((a, b) => a + b, 0) / hums.length).toFixed(1);
+    } else if (dataType === 'humidity') {
+        const hums = reversed.map(d => d.humidity).filter(v => v !== null && v !== undefined);
+        if (hums.length > 0) {
+            document.getElementById('statMax').textContent = Math.max(...hums).toFixed(1);
+            document.getElementById('statMin').textContent = Math.min(...hums).toFixed(1);
+            document.getElementById('statAvg').textContent = (hums.reduce((a, b) => a + b, 0) / hums.length).toFixed(1);
+        }
         document.getElementById('statCount').textContent = reversed.length;
     } else {
         document.getElementById('statMax').textContent = '--';
@@ -193,6 +226,11 @@ async function loadHistory() {
     
     // 更新表格
     updateTable(dataType, reversed);
+}
+
+// 入库列级容错后坏字段是 NULL（聚合均值也可能是），表格与统计都不能瞎
+function num1(v) {
+    return v === null || v === undefined || isNaN(v) ? '--' : Number(v).toFixed(1);
 }
 
 // 更新数据表格
@@ -231,10 +269,10 @@ function updateTable(dataType, data) {
         
         switch (dataType) {
             case 'temperature':
-                bodyHTML += `<td>${d.temperature.toFixed(1)}</td><td>${d.humidity.toFixed(1)}</td>`;
+                bodyHTML += `<td>${num1(d.temperature)}</td><td>${num1(d.humidity)}</td>`;
                 break;
             case 'humidity':
-                bodyHTML += `<td>${d.humidity.toFixed(1)}</td><td>${d.temperature.toFixed(1)}</td>`;
+                bodyHTML += `<td>${num1(d.humidity)}</td><td>${num1(d.temperature)}</td>`;
                 break;
             case 'door_window':
                 const dwStatus = d.status === 'open' ? '已打开' : '已关闭';

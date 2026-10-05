@@ -3,3 +3,5 @@ flask>=3.0
 numpy>=1.26
 # 锁 4.x：OpenCV 5 移除了顶层 cv2.CascadeClassifier（camera_stream.py 使用 4.x API）
 opencv-python-headless>=4.10,<5
+
+waitress==3.0.2

@@ -122,12 +122,17 @@ class CameraSource:
         self._frame = None
         self._frame_ts = 0.0
         self._lock = threading.Lock()
+        self._changed = threading.Condition(self._lock)
+        self._jpeg = None
+        self._sequence = 0
         self._stop = threading.Event()
         self._last_error = ""
         self._sticky = ""      # 上次成功的描述，重开时优先再试它
 
     def request_stop(self):
         self._stop.set()
+        with self._changed:
+            self._changed.notify_all()
 
     def stopping(self):
         return self._stop.is_set()
@@ -165,6 +170,7 @@ class CameraSource:
             cap, self._cap = self._cap, None
             self._desc = ""
             self._frame = None
+            self._jpeg = None
             self._frame_ts = 0.0
             if reason:
                 self._last_error = reason
@@ -179,9 +185,27 @@ class CameraSource:
         return cap.read()
 
     def set_frame(self, frame):
-        with self._lock:
+        # One encode per captured frame, shared by every viewer and snapshot.
+        ok, encoded = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+        if not ok:
+            return
+        with self._changed:
             self._frame = frame
+            self._jpeg = encoded.tobytes()
+            self._sequence += 1
             self._frame_ts = time.monotonic()
+            self._changed.notify_all()
+
+    def jpeg_after(self, sequence=None, timeout=1.0):
+        with self._changed:
+            if sequence is not None:
+                self._changed.wait_for(
+                    lambda: self._sequence != sequence or self.stopping(), timeout)
+            if self.stopping() or time.monotonic() - self._frame_ts > FRAME_FRESH_S:
+                return self._sequence, None
+            if sequence == self._sequence:
+                return self._sequence, None
+            return self._sequence, self._jpeg
 
     def fresh_frame(self, max_age=FRAME_FRESH_S):
         """最近一帧仍在有效期内则返回，否则 None（设备已拔或卡住）。"""
@@ -266,6 +290,7 @@ def _multipart(jpeg):
 def stream_frames(src, detector, mode):
     """持续读帧直到断流或被要求停止。返回 True 表示用户按 q 退出程序。"""
     while not src.stopping():
+        started = time.monotonic()
         ret, frame = src.read()
         if not ret:
             print("[摄像头] 读取帧失败（设备可能已被拔出）")
@@ -274,6 +299,8 @@ def stream_frames(src, detector, mode):
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         detector.draw(frame, detector.detect(gray))
         src.set_frame(frame)
+        # Bound processing/encoding even if the camera produces 30+ FPS.
+        src._stop.wait(max(0.0, 1.0 / 12.0 - (time.monotonic() - started)))
 
         if mode in ("local", "both"):
             cv2.imshow("Face Detection", frame)
@@ -334,19 +361,17 @@ def stream_multipart(src, sleep=time.sleep):
     关键是「没有帧也要发点什么」：早先的实现只回头就不发体，浏览器既不报错
     也不重连，看起来就像摄像头没被识别到。
     """
+    sequence = -1
     while not src.stopping():
-        frame = src.fresh_frame()
-        if frame is None:
+        next_sequence, jpeg = src.jpeg_after(sequence, timeout=1.0)
+        if jpeg is not None:
+            sequence = next_sequence
+            yield _multipart(jpeg)
+        elif src.fresh_frame() is None:
             jpeg = placeholder_jpeg()
             if jpeg:
                 yield _multipart(jpeg)
             sleep(PLACEHOLDER_INTERVAL_S)
-            continue
-        ok, encoded = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
-        if not ok:
-            sleep(PLACEHOLDER_INTERVAL_S)
-            continue
-        yield _multipart(encoded.tobytes())
 
 
 def make_app(src, capture_alive):
@@ -373,15 +398,10 @@ def make_app(src, capture_alive):
     @app.route("/snapshot")
     def snapshot():
         # 识别哨兵要把「没画面」和「画面是占位帧」区分开，所以无新鲜帧时报 503 而不是发占位帧
-        frame = src.fresh_frame()
-        if frame is None:
-            return jsonify({"error": "摄像头当前无新鲜画面",
-                            "error_en": "no fresh frame available"}), 503
-        ok, encoded = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
-        if not ok:
-            return jsonify({"error": "画面编码 JPEG 失败",
-                            "error_en": "jpeg encode failed"}), 503
-        resp = Response(encoded.tobytes(), mimetype="image/jpeg")
+        _, jpeg = src.jpeg_after()
+        if jpeg is None:
+            return jsonify(error="no fresh frame available"), 503
+        resp = Response(jpeg, mimetype="image/jpeg")
         resp.headers["Cache-Control"] = "no-store"
         return resp
 
@@ -423,7 +443,8 @@ def main():
         print(f"[流] 浏览器打开 http://<本机IP>:{args.port} 查看")
         # 注意：Flask 的 reloader 需关闭，否则会重复开摄像头
         try:
-            app.run(host=args.host, port=args.port, threaded=True, debug=False)
+            from waitress import serve
+            serve(app, host=args.host, port=args.port, threads=8)
         finally:
             src.request_stop()
     else:

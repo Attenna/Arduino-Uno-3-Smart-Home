@@ -25,3 +25,10 @@ llm_key.txt
 siliconflow_key.txt
 dashscope_key.txt
 voice_config.local.yaml
+
+.env*
+.auth*
+*.tar.gz
+*credentials*
+known_hosts
+tests/

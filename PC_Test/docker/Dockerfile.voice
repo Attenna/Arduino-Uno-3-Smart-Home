@@ -14,8 +14,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 COPY docker/requirements-voice.txt /tmp/requirements-voice.txt
+COPY docker/requirements-voice.lock /tmp/constraints.txt
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install -r /tmp/requirements-voice.txt
+    pip install -c /tmp/constraints.txt -r /tmp/requirements-voice.txt
 
 COPY . /app
 
@@ -27,3 +28,5 @@ ENTRYPOINT ["tini", "--"]
 # LLM 模式/地址/网关/麦克风均由 compose 环境变量注入（SMART_HOME_LLM_MODE 等）。
 # 默认云端（硅基流动）；离线改走 local-llm override。
 CMD ["python", "-u", "voice_assistant.py"]
+
+ENV PYTHONDONTWRITEBYTECODE=1 HOME=/tmp

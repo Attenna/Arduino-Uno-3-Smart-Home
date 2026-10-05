@@ -22,6 +22,8 @@ import logging
 import sys
 import threading
 import time
+import math
+import uuid
 from collections import deque
 
 from .config import MCP_SERVER_PATH, PC_TEST_DIR
@@ -146,6 +148,12 @@ class McpHardwareBridge:
         self._online = False
         self._last_error = ""
         self._last_sensor_ts = None
+        # 传感器入库可见性：成功/失败计数 + 最近失败原因。以前失败只写 debug，
+        # 「DB 停在几小时前」完全无声；这里计数经 /api/status 暴露给看板。
+        self._ingest_ok = 0
+        self._ingest_fail = 0
+        self._ingest_last_error = ""
+        self._ingest_warned_at = 0.0
         # 事件去重：MCP 的 get_sensor_status 每轮返回 recent_events 全量（有界 50 条），
         # 这里必须按稳定身份记住「已处理过」的事件。旧实现用容量 30 的 set + pop()
         # （无序淘汰）：50 条全量里总有 ≥20 条被淘汰后又当新事件，导致历史红外/键盘
@@ -309,8 +317,17 @@ class McpHardwareBridge:
         try:
             health = json.loads(await self._call(session, "get_serial_health", {}))
             self.serial_health = health if isinstance(health, dict) else None
-            state = (json.loads(await self._call(session, "get_output_state", {}))
-                     or {}).get("state") or {}
+            output = (self.serial_health or {}).get("b") or {}
+            age = output.get("last_frame_ago_s")
+            # Cached output state is not evidence of a live device.
+            if (not output.get("connected") or not isinstance(age, (int, float))
+                    or not 0 <= age <= 20):
+                return
+            output_state = json.loads(await self._call(session, "get_output_state", {})) or {}
+            state_age = output_state.get("age_s")
+            if not isinstance(state_age, (int, float)) or not 0 <= state_age <= 20:
+                return
+            state = output_state.get("state") or {}
         except Exception as e:                            # noqa: BLE001
             logger.debug("[硬件桥] 回读/健康度刷新失败: %s", e)
             return
@@ -426,11 +443,26 @@ class McpHardwareBridge:
                 {"module": "sensor", "type": "data",
                  "timestamp": ts, "data": data})
             self._last_sensor_ts = ts
+            self._ingest_ok += 1
         except Exception as e:
-            # NaN/越界等脏数据：忽略本帧，不能杀死轮询循环
-            logger.debug("[硬件桥] 传感器数据入库失败: %s", e)
+            # 列级容错后到这里只剩 SQLite/编程级错误：必须可见（限流 warning），
+            # 否则就是「无声丢数据」。仍然不能杀死轮询循环。
+            self._ingest_fail += 1
+            self._ingest_last_error = str(e)
+            now = time.monotonic()
+            if now - self._ingest_warned_at >= 30:
+                self._ingest_warned_at = now
+                logger.warning("[硬件桥] 传感器入库失败（近 30s 首次，累计 %d 次）: %s",
+                               self._ingest_fail, e)
             return
         self._fire("snapshot", data)
+
+    @property
+    def ingest_stats(self) -> dict:
+        """A 板快照入库计数：dashboard 与运维据此发现「桥在线但在丢数据」。"""
+        return {"ok": self._ingest_ok, "fail": self._ingest_fail,
+                "last_error": self._ingest_last_error or None,
+                "last_sensor_ts": self._last_sensor_ts}
 
     @staticmethod
     def _event_identity(event: dict) -> str:
@@ -551,8 +583,12 @@ class McpHardwareBridge:
 
     # ==================== 同步调用 API（供 Flask 路由） ====================
 
-    async def _call(self, session, name: str, args: dict) -> str:
+    async def _call(self, session, name: str, args: dict, state=None) -> str:
         async with self._call_lock:
+            if state is not None:
+                if time.monotonic() >= state["deadline"]:
+                    raise TimeoutError("Command expired before dispatch")
+                state["sent"] = True
             result = await session.call_tool(name, args or {})
         text = ""
         for chunk in (result.content or []):
@@ -561,7 +597,12 @@ class McpHardwareBridge:
                 part = chunk.get("text")
             if part:
                 text += part
-        return text or "(工具无文本输出)"
+        text = text or "(工具无文本输出)"
+        if getattr(result, "isError", False):
+            return "error: " + text
+        if not _looks_like_error(text):
+            self._fire_ack(name, args or {})
+        return text
 
     def call_tool(self, name: str, args: dict | None = None,
                   timeout: float = 10.0) -> tuple[bool, str]:
@@ -574,15 +615,32 @@ class McpHardwareBridge:
         if not self.online or self._session is None or self._loop is None:
             return False, f"硬件服务离线（MCP 未连接：{self.last_error or '串口未连接'}）"
         try:
+            timeout = float(timeout)
+            if not math.isfinite(timeout) or not 0 < timeout <= 30:
+                return False, "硬件超时参数必须在 0 到 30 秒之间"
+        except (TypeError, ValueError):
+            return False, "无效超时参数"
+        state = {"id": uuid.uuid4().hex, "sent": False,
+                 "deadline": time.monotonic() + timeout}
+        try:
             future = asyncio.run_coroutine_threadsafe(
-                self._call(self._session, name, args or {}), self._loop)
+                self._call(self._session, name, args or {}, state), self._loop)
             text = future.result(timeout=timeout)
+        except TimeoutError:
+            # Keep an in-flight call serialized until its actual result arrives.
+            # Cancelling a sent command cannot undo an actuator movement.
+            if not state["sent"]:
+                future.cancel()
+                outcome = "expired_not_sent"
+            else:
+                outcome = "unknown_sent"
+            logger.warning("command=%s tool=%s outcome=%s", state["id"], name, outcome)
+            return False, f"{outcome}: 命令 {state['id']} 超时；请查询设备状态后再操作"
         except Exception as e:
             return False, f"硬件调用失败: {e}"
         if _looks_like_error(text):
             return False, text
         # B 板不自报状态：任何执行器工具成功 ACK 都视为输出板在线
-        self._fire_ack(name, args or {})
         return True, text
 
     # ── 设备语义映射：Web 百分比/状态 → B 板 MCP 工具参数 ──
@@ -596,11 +654,25 @@ class McpHardwareBridge:
         action = {"open": "open", "close": "close", "normal": "normal"}.get(status, "close")
         return self.call_tool("window", {"action": action})
 
-    def control_light(self, status: str, brightness_pct: int) -> tuple[bool, str]:
+    def control_light(self, status: str, brightness_pct: int,
+                     mode: str = "white") -> tuple[bool, str]:
+        """mode: white=整条灯带白光；night=夜灯（固件只点亮居中几颗灯珠）。
+
+        mode 缺省 white，老调用方（自动化引擎等）行为完全不变。
+        """
         if status == "off" or brightness_pct <= 0:
             return self.call_tool("light", {"action": "off"})
         value = max(1, min(255, round(brightness_pct * 255 / 100)))
-        return self.call_tool("light", {"action": "white", "value": value})
+        action = "night" if str(mode).lower() == "night" else "white"
+        return self.call_tool("light", {"action": action, "value": value})
+
+    def control_light_temp(self, kelvin: int, brightness_pct: int) -> tuple[bool, str]:
+        """色温白光：kelvin 2700~6500K，brightness_pct 0~100。"""
+        if brightness_pct <= 0:
+            return self.call_tool("light", {"action": "off"})
+        value = max(1, min(255, round(brightness_pct * 255 / 100)))
+        k = max(2700, min(6500, int(kelvin)))
+        return self.call_tool("light", {"action": "temp", "temp": k, "value": value})
 
     def control_fan(self, speed_pct: int) -> tuple[bool, str]:
         if speed_pct <= 0:
@@ -608,17 +680,21 @@ class McpHardwareBridge:
         value = max(1, min(255, round(speed_pct * 255 / 100)))
         return self.call_tool("fan", {"action": "set_speed", "value": value})
 
-    def control_light_color(self, color: str, r=None, g=None, b=None) -> tuple[bool, str]:
+    def control_light_color(self, color: str, r=None, g=None, b=None,
+                            brightness_pct=None) -> tuple[bool, str]:
         """灯颜色：MCP 工具名仍是 light（复用 ACK 心跳与 output_online）。
 
         color: white/red/green/blue/yellow/purple/cyan/rgb；rgb 需 r/g/b(0-255)。
-        彩色预设不接受亮度参数（B 板只有 white 用 value）。
+        只有 rgb 接受 brightness_pct（固件按它对颜色做整体缩放）；固件彩色预设是
+        固定亮度，不带 value，这里也不下发，避免旧固件收到不认识的字段组合。
         """
         args = {"action": color}
         if color == "rgb":
             if None in (r, g, b):
                 return False, "RGB 需要 r/g/b 三个值(0~255)"
             args.update({"r": int(r), "g": int(g), "b": int(b)})
+            if brightness_pct is not None:
+                args["value"] = max(0, min(255, round(int(brightness_pct) * 255 / 100)))
         return self.call_tool("light", args)
 
     def self_test(self, timeout: float = 8.0) -> tuple[bool, str]:

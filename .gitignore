@@ -28,6 +28,12 @@ ha_config/.storage/core.restore_state
 # 临时文件
 _tmp/
 *.tmp
+.sync-current/
+baseline.json
+*.tar.gz
+*credentials*
+wheels/
+known_hosts
 # 本地临时自检脚本（保留在磁盘，不进仓库）
 PC_Test/_cam_test.py
 
@@ -46,6 +52,10 @@ PC_Test/logs/
 
 # docker compose 本机环境变量（可能含 DASHSCOPE_API_KEY）
 PC_Test/.env
+PC_Test/.env.*
+PC_Test/.auth*
+PC_Test/docker-compose.override.yml
+PC_Test/docker/Dockerfile.patch.*
 
 # 朋友提供资料的原始压缩包（含 174MB ONNX，超 GitHub 100MB 限制；
 # 内容已解压到 PC_Test/models/face/，模型本身随 PC_Test/models/ 忽略）

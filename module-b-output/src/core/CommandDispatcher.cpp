@@ -82,13 +82,29 @@ bool CommandDispatcher::_route(const Command& cmd) {
     else if (strcmp(cmd.device, "light") == 0) {
         if (strcmp(cmd.action, "off") == 0)   { _light.off();  return true; }
         if (strcmp(cmd.action, "white") == 0) { _light.white((int)cmd.value); return true; }
+        // 夜灯：只点中间几颗；未带 value 时用 Config 里的 LIGHT_NIGHT_LEVEL
+        if (strcmp(cmd.action, "night") == 0) {
+            _light.night(cmd.hasValue ? (int)constrain(cmd.value, 0L, 255L) : LIGHT_NIGHT_LEVEL);
+            return true;
+        }
+        // 色温：temp 是色温(K)，value 是亮度 0~255（缺省 255）
+        if (strcmp(cmd.action, "temp") == 0) {
+            _light.temp((int)constrain(cmd.temp, (long)LIGHT_TEMP_MIN, (long)LIGHT_TEMP_MAX),
+                        cmd.hasValue ? (int)constrain(cmd.value, 0L, 255L) : 255);
+            return true;
+        }
         if (strcmp(cmd.action, "red") == 0)   { _light.red();    return true; }
         if (strcmp(cmd.action, "green") == 0) { _light.green();  return true; }
         if (strcmp(cmd.action, "blue") == 0)  { _light.blue();   return true; }
         if (strcmp(cmd.action, "yellow") == 0){ _light.yellow(); return true; }
         if (strcmp(cmd.action, "purple") == 0){ _light.purple(); return true; }
         if (strcmp(cmd.action, "cyan") == 0)  { _light.cyan();   return true; }
-        if (strcmp(cmd.action, "rgb") == 0)   { _light.rgb((int)cmd.r, (int)cmd.g, (int)cmd.b); return true; }
+        // rgb 的 value 是整体亮度缩放 0~255，缺省 255（保持旧行为：按原色全亮）
+        if (strcmp(cmd.action, "rgb") == 0) {
+            _light.rgb((int)cmd.r, (int)cmd.g, (int)cmd.b,
+                       cmd.hasValue ? (int)constrain(cmd.value, 0L, 255L) : 255);
+            return true;
+        }
     }
     else if (strcmp(cmd.device, "buzzer") == 0) {
         if (strcmp(cmd.action, "on") == 0)   { _buzzer.on();  return true; }
@@ -205,6 +221,9 @@ void CommandDispatcher::printSelfTest() {
     Serial.print((unsigned)_light.stripBrightness());
     Serial.print(F(",\"shows\":"));
     Serial.print((unsigned)_light.showCount());
+    // lit：最近一次点亮的灯珠数，0 = 整条（夜灯时会是 LIGHT_NIGHT_COUNT）
+    Serial.print(F(",\"lit\":"));
+    Serial.print((unsigned)_light.litCount());
     Serial.print(F(",\"d4\":["));
     Serial.print((unsigned)pinOutBit(RGB_PIN));
     Serial.print(',');

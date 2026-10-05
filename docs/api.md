@@ -91,6 +91,9 @@
   "window_status": "normal",
   "light_status": "off",
   "light_brightness": 0,
+  "light_mode": "white",
+  "light_temp": null,
+  "light_rgb": null,
   "fan_speed": 0,
   "last_updated": "2026-10-02 10:00:00",
   "statistics": { "...": "见 /api/statistics" },
@@ -201,8 +204,8 @@ GET 与 POST 等价（便于浏览器地址栏直接点）。
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/api/light` | 返回 `light_status` 与 `light_brightness` |
-| POST | `/api/light` | 开关灯并设置亮度 |
+| GET | `/api/light` | 返回 `light_status`、`light_brightness` 与当前亮法 `light_mode` / `light_temp` / `light_rgb` |
+| POST | `/api/light` | 开关灯、设置亮度与「亮法」（白光 / 夜灯 / 色温 / 自定义颜色） |
 
 请求：
 
@@ -211,7 +214,21 @@ GET 与 POST 等价（便于浏览器地址栏直接点）。
 ```
 
 - `brightness` 为百分比 **0~100**（自动夹取到该范围）；
-- `status:"on"` 且未给亮度时按 100% 处理；`status:"off"` 时亮度强制为 0。
+- `status:"on"` 且未给亮度时沿用库里当前亮度（灯是关的则按 100%）；**亮度 0 就是关灯**；`status:"off"` 时亮度强制为 0，并保留原亮法（下次开灯还是同一种亮法）；
+- `mode`（可选）：`white`（整条灯带白光）/ `night`（夜灯，固件只点亮居中几颗灯珠）；
+- `temp`（可选）：色温 **2700~6500K**（超出自动夹取），由固件按色温表出光，`brightness` 仍是亮度；
+- `rgb`（可选）：`[r,g,b]` 三个 0~255 的自定义颜色，`brightness` 作为整体亮度缩放；
+- 同时给出多个时按 `rgb` > `temp` > `mode` 取其一，一条请求只表达一种亮法；
+- **三个亮法字段一个都不给 = 沿用当前亮法**：只调亮度或只开关的请求不会把色温/颜色打回白光。B 板一条命令只认一种亮法，所以服务端会把当前亮法展开进每条下发命令，调用方无需自己记住。
+
+亮法示例：
+
+```json
+{ "status": "on", "brightness": 25, "mode": "night" }
+{ "status": "on", "brightness": 80, "temp": 3000 }
+{ "status": "on", "brightness": 50, "rgb": [255, 128, 0] }
+{ "status": "on", "brightness": 60 }
+```
 
 响应：
 
@@ -219,10 +236,15 @@ GET 与 POST 等价（便于浏览器地址栏直接点）。
 {
   "light_status": "on",
   "light_brightness": 80,
-  "message": "灯光已打开，亮度: 80%",
-  "message_en": "Light turned on, brightness: 80%"
+  "light_mode": "temp",
+  "light_temp": 3000,
+  "light_rgb": null,
+  "message": "灯光已打开，亮度: 80%（色温 3000K）",
+  "message_en": "Light turned on, brightness: 80% (color temperature 3000K)"
 }
 ```
+
+`light_rgb` 对外**一律是 `[r,g,b]` 三元列表**（库里存成 `"r,g,b"` 文本，接口层已归一）；不是自定义颜色时为 `null`。`light_mode` ∈ `white` / `night` / `temp` / `rgb`，`light_temp` 仅在 `mode:"temp"` 时有值。GET `/api/status` 里的同名字段口径完全一致。
 
 ### GET `/api/light/history?hours=24`
 
@@ -743,7 +765,7 @@ curl http://<host>:8101/trigger
 
 | 工具 | 主要参数 | 作用 |
 |------|---------|------|
-| `light` | `action`, `value`, `r`,`g`,`b` | 灯光：off/white/预设色/rgb |
+| `light` | `action`, `value`, `temp`, `r`,`g`,`b` | 灯光：off / white / night / temp / 预设色 / rgb（**没有 `on`**；开灯由 `white`/`night`/`temp`/rgb 表达，`value` 是 0~255 亮度，缺省 255、夜灯缺省 60） |
 | `door` | `action` = open/close | 门 |
 | `window` | `action` = open/close/normal | 窗 |
 | `fan` | `action` = on/off/set_speed, `value` | 风扇 |

@@ -26,7 +26,7 @@ import time
 from pathlib import Path
 
 from ..config import (AUTHORIZED_DIR, EMBEDDINGS_PATH, FACE_MODEL_PATH,
-                      RECOGNITION_MODEL_PATH, FACE_CONFIG_PATH,
+                      PC_TEST_DIR, RECOGNITION_MODEL_PATH, FACE_CONFIG_PATH,
                       load_config)
 from ..utils import ConnectionHealth, RequestThrottler, safe_base64_decode
 
@@ -45,6 +45,8 @@ MAX_ENROLL_FRAMES = 12
 MIN_FACE_SIDE = 56
 # 每个身份最多参与原型计算的注册照张数（取文件名最新的 N 张）
 MAX_IDENTITY_IMAGES = 20
+# 老库自检的判定线：跨模型余弦实测 0.067~0.077，同模型同人 ≥0.75，取中间偏保守的值
+CROSS_MODEL_CEILING = 0.30
 # 单次录入的图像体积上限（MB）
 ENROLL_IMAGE_MAX_MB = 4.0
 
@@ -68,14 +70,19 @@ class FaceEngine:
         self.config_path = str(config_path or FACE_CONFIG_PATH)
         self.web_cfg = (web_cfg or load_config()).get("face", {})
         self.config = self._load_config()
+        self.recognition_model_path = self._recognition_model_path()
         self.detector = None
         self.recognizer = None
         self._model_loaded = False
+        # 库与模型不匹配时的可读原因；非空 = 认人停用（检测仍照常）
+        self.recognition_block: str | None = None
         self.simulation_mode = self.config.get("simulation_mode", True)
         self.throttler = RequestThrottler(
             min_interval=float(self.config.get("recognition_interval", 1.5)))
         self.health = ConnectionHealth("FaceRecognition")
         self._enroll_lock = threading.Lock()
+        self._warmup_done = False
+        self._warmup_started = False
         if not self.simulation_mode:
             self._load_model()
 
@@ -129,6 +136,19 @@ class FaceEngine:
             json.dump(config, f, ensure_ascii=False, indent=2)
         self.config = config
 
+    def _recognition_model_path(self) -> Path:
+        """嵌入模型文件：只认 web_config.yaml，face_config.json 里那句不作数。
+
+        那个 json 是运行期写的，可能带着另一台机器的绝对路径（移植/挂载场景常见）。
+        yaml 是部署时人审过的，换模型（174MB 的 iresnet50 → 13MB 的 MobileFaceNet）
+        或回滚都只改这一行；相对路径按 PC_Test/ 解析（容器里就是 /app）。
+        """
+        raw = str((self.web_cfg.get("recognition") or {}).get("model_path") or "").strip()
+        if not raw:
+            return RECOGNITION_MODEL_PATH
+        path = Path(raw)
+        return path if path.is_absolute() else PC_TEST_DIR / path
+
     # ==================== 模型加载 ====================
 
     def reload_model(self) -> bool:
@@ -169,8 +189,8 @@ class FaceEngine:
         # 识别器可选：embeddings 存在才启用
         recog_cfg = self.config.get("recognition", {})
         if recog_cfg.get("enabled", True):
-            # 路径一律以代码常量为准（按当前机器/容器解析）；
-            # data/face/face_config.json 可能存着另一台机器的绝对路径（移植/挂载场景）
+            # 模型路径取自 web_config.yaml（见 _recognition_model_path）；
+            # data/face/face_config.json 里那句可能存着另一台机器的绝对路径，不作数
             embeddings = str(EMBEDDINGS_PATH)
             if Path(embeddings).exists():
                 try:
@@ -178,18 +198,18 @@ class FaceEngine:
 
                     self.recognizer = FaceRecognizer(
                         embeddings_path=embeddings,
-                        model_path=str(RECOGNITION_MODEL_PATH),
+                        model_path=str(self.recognition_model_path),
                         method=recog_cfg.get("method", "simple_grayscale_cosine"),
                         similarity_threshold=float(
                             recog_cfg.get("similarity_threshold", 0.5)),
                         image_size=int(recog_cfg.get("image_size", 112)),
                     )
-                    logger.info("人脸身份识别已启用: %s（%d 人）",
-                                self.recognizer.method,
-                                len(self.recognizer.identities))
+                    self._check_library_model()
                 except Exception as e:
                     logger.warning("嵌入识别器不可用（仅检测）: %s", e)
                     self.recognizer = None
+                    # 认不出人是「模型没起来」还是「根本没这个人」，前端得区分开
+                    self.recognition_block = f"人脸身份识别不可用：{e}"
             else:
                 logger.info("未找到 %s，仅做人脸检测；运行 enroll_faces.py 启用身份识别",
                             embeddings)
@@ -199,38 +219,171 @@ class FaceEngine:
         logger.info("YOLOv8 人脸模型加载成功: %s", model_path)
         return True
 
+    def _check_library_model(self) -> None:
+        """库里的原型必须是当前这个 ONNX 算出来的，否则比对结果毫无意义。
+
+        跨模型的 512 维向量之间余弦相似度接近噪声。不拦的话服务照常启动、
+        日志一句不错，只是谁都进不了门 —— 换模型必然踩的坑得在这里显式失败。
+        """
+        rec = self.recognizer
+        if rec is None:
+            self.recognition_block = None
+            return
+        current = rec.model_fingerprint
+        stored = rec.library_fingerprint
+        if stored and stored != current:
+            self.recognition_block = (
+                f"人脸库由模型 {stored} 建立，当前模型是 {current}；"
+                "跨模型比对无效，请用 scripts/enroll_faces.py 重建人脸库")
+            logger.error("[人脸] 库与模型不匹配，认人已停用: %s", self.recognition_block)
+            return
+        if not stored and not self._verify_legacy_library():
+            return
+        self.recognition_block = None
+        logger.info("人脸身份识别已启用: %s（%d 人）", rec.method, len(rec.identities))
+
+    def _verify_legacy_library(self) -> bool:
+        """没写指纹的老库：拿注册照重算一遍，认不出是谁建的就停用认人。返回能否继续认人。
+
+        派上现存的库正是这种库（iresnet50 时代建的，文件里只有 method/image_size）。
+        光「按当前模型继续认人」的话，换模型没重建库的表现就是静默全拒 —— 那正是
+        本函数要消灭的故障，不能只留一行 warning。
+        判不了（照片读不出来）时宁可让它继续工作：把一扇本来能开的门莫名停下，
+        比一次可诊断的停用更糟。
+        """
+        from .recognizer import probe_library_similarity
+
+        rec = self.recognizer
+        similarity = probe_library_similarity(rec, AUTHORIZED_DIR)
+        current = rec.model_fingerprint
+        if similarity is None:
+            logger.warning("[人脸] 老库没记模型指纹，也没有可读的注册照可自检，"
+                           "按当前模型 %s 认人", current)
+            return True
+        if similarity < CROSS_MODEL_CEILING:
+            self.recognition_block = (
+                f"人脸库没记模型指纹，自检发现注册照与当前模型 {current} 的相似度只有"
+                f" {similarity:.2f}（跨模型的典型表现）；"
+                "请用 scripts/enroll_faces.py 重建人脸库")
+            logger.error("[人脸] 老库自检判定跨模型，认人已停用: %s", self.recognition_block)
+            return False
+        if similarity < rec.similarity_threshold:
+            logger.warning("[人脸] 老库自检只有 %.2f，低于阈值 %.2f（注册照可能不是人脸裁片）；"
+                           "暂按当前模型 %s 认人", similarity, rec.similarity_threshold,
+                           current)
+            return True
+        self._stamp_library_fingerprint(similarity)
+        return True
+
+    def _stamp_library_fingerprint(self, similarity: float) -> None:
+        """自检通过就把当前指纹写回库：下次启动不必再猜，也省掉这笔提特征的钱。"""
+        from .recognizer import save_embedding_database
+
+        rec = self.recognizer
+        rec.database["model_fingerprint"] = rec.model_fingerprint
+        rec.library_fingerprint = rec.model_fingerprint
+        logger.info("[人脸] 老库自检通过（相似度 %.2f），已补写模型指纹 %s",
+                    similarity, rec.model_fingerprint)
+        try:
+            save_embedding_database(rec.database, rec.embeddings_path)
+        except OSError as exc:
+            logger.warning("[人脸] 指纹写回人脸库失败（不影响认人）: %s", exc)
+
     def _fallback_simulation(self) -> None:
         self.detector = None
         self.recognizer = None
         self._model_loaded = False
         self.simulation_mode = True
+        self.recognition_block = None
         self.config["simulation_mode"] = True
+
+    def warmup(self) -> bool:
+        """空跑一次检测 + 提特征，把「首次推理」的代价付在启动阶段。
+
+        ultralytics/onnxruntime 都是第一次前向才做算子选择与图构建：派上实测
+        模型加载后首帧检测 3.8 秒（稳态 0.25 秒），不预热的话服务刚起来时站到
+        门口的第一个人要多等约 4 秒。与识别/录入共用同一把锁，不会插队。
+        """
+        if self.simulation_mode or self.detector is None:
+            return False
+        import numpy as np
+
+        size = (int(self.config.get("camera_height") or 480),
+                int(self.config.get("camera_width") or 640))
+        blank = np.zeros((*size, 3), dtype=np.uint8)
+        with self._enroll_lock:
+            try:
+                t0 = time.perf_counter()
+                self.detector.detect(blank)
+                if self.recognizer is not None:
+                    self.recognizer.recognize(blank[:64, :64])
+                logger.info("[人脸预热] 完成，耗时 %.0fms",
+                            (time.perf_counter() - t0) * 1000.0)
+            except Exception as e:                        # noqa: BLE001
+                # 预热失败只是首帧仍然慢，不能把服务带倒
+                logger.warning("[人脸预热] 失败: %s", e)
+                return False
+        self._warmup_done = True
+        return True
+
+    def start_warmup(self) -> bool:
+        """后台预热：/api/ready 不该为了预热多等几秒。"""
+        if (self._warmup_started or self._warmup_done
+                or self.simulation_mode or self.detector is None):
+            return False
+        self._warmup_started = True
+        threading.Thread(target=self.warmup, name="face-warmup",
+                         daemon=True).start()
+        return True
 
     # ==================== 识别入口 ====================
 
-    def recognize_from_base64(self, image_base64: str) -> dict:
-        if not self.throttler.can_execute():
-            wait = self.throttler.time_until_next()
-            return {"detected": False, "face_id": None, "confidence": 0,
-                    "faces": [], "mode": "throttled",
-                    "message": f"请求过于频繁，请等待 {wait:.1f} 秒"}
+    def _throttled_result(self) -> dict:
+        wait = self.throttler.time_until_next()
+        return {"detected": False, "face_id": None, "confidence": 0,
+                "faces": [], "mode": "throttled",
+                "message": f"请求过于频繁，请等待 {wait:.1f} 秒"}
+
+    @property
+    def recognition_min_interval(self) -> float:
+        """识别节流窗口（秒）。哨兵拿它定两轮之间的下限：唤醒若正好撞在节流里，
+        这一轮只会被 can_execute 判成 throttled 消耗掉，下一次还要等满 interval。"""
+        return float(self.throttler.min_interval)
+
+    def _decode_frame(self, blob: bytes):
+        import cv2
+        import numpy as np
+
+        return cv2.imdecode(np.frombuffer(blob, dtype=np.uint8), cv2.IMREAD_COLOR)
+
+    def _recognize_blob(self, blob: bytes, min_face_px: int = 0) -> dict:
+        """解码 + 识别一段 JPEG 字节。调用方负责节流与锁。"""
         if self.simulation_mode:
             result = self._simulate_recognition()
             if result["detected"]:
                 self.health.record_success()
             return result
         try:
-            import cv2
-            import numpy as np
-
-            raw = image_base64
-            if "," in raw:
-                raw = raw.split(",", 1)[1]
-            img_array = np.frombuffer(base64.b64decode(raw), dtype=np.uint8)
-            frame = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+            frame = self._decode_frame(blob)
             if frame is None:
                 return self._empty_result("yolov8", error="图像解码失败")
-            return self.recognize_from_frame(frame, _already_throttled=True)
+            return self._yolov8_recognize(frame, min_face_px=min_face_px)
+        except Exception as e:
+            logger.error("JPEG 识别失败: %s", e)
+            self.health.record_failure(str(e))
+            return self._empty_result("yolov8", error=str(e))
+
+    def recognize_from_base64(self, image_base64: str) -> dict:
+        if not self.throttler.can_execute():
+            return self._throttled_result()
+        raw = image_base64
+        # data URI 前缀只可能在第一个逗号前（base64 字母表里没有逗号），
+        # partition 一遍就够，不必对整个几百 KB 的字符串做子串扫描
+        _prefix, sep, payload = raw.partition(",")
+        if sep:
+            raw = payload
+        try:
+            return self._recognize_blob(base64.b64decode(raw))
         except Exception as e:
             logger.error("Base64 识别失败: %s", e)
             self.health.record_failure(str(e))
@@ -239,10 +392,7 @@ class FaceEngine:
     def recognize_from_frame(self, frame, _already_throttled: bool = False) -> dict:
         if not _already_throttled:
             if not self.throttler.can_execute():
-                wait = self.throttler.time_until_next()
-                return {"detected": False, "face_id": None, "confidence": 0,
-                        "faces": [], "mode": "throttled",
-                        "message": f"请求过于频繁，请等待 {wait:.1f} 秒"}
+                return self._throttled_result()
         if self.simulation_mode:
             result = self._simulate_recognition()
             if result["detected"]:
@@ -250,13 +400,43 @@ class FaceEngine:
             return result
         return self._yolov8_recognize(frame)
 
-    def _yolov8_recognize(self, frame) -> dict:
-        try:
-            import cv2
+    def _embed_targets(self, detections: list, min_face_px: int) -> set:
+        """挑出值得提特征的脸：够近的、按面积从大到小最多 max_faces 张。
 
+        提特征是按人脸张数线性叠加的（派上实测每张约 370ms），而「太远不参与开门」
+        和「同框人数上限」这两条本来就有配置，只是过去要先算完才判定、上限没生效。
+        返回选中项的 id 集合；检出框本身不受影响，前端照样能画全部脸。
+
+        人数上限只认 web_config.yaml：data/face/face_config.json 是运行期写的，
+        可能带着另一台机器当时的取值（与嵌入模型路径同理）。
+        """
+        cap = int(self.web_cfg.get("max_faces", 5) or 0)
+        scored = []
+        for det in detections:
+            x1, y1, x2, y2 = det.xyxy_int()
+            if min(x2 - x1, y2 - y1) < min_face_px:
+                continue
+            scored.append(((x2 - x1) * (y2 - y1), id(det)))
+        scored.sort(key=lambda item: item[0], reverse=True)
+        if cap > 0:
+            scored = scored[:cap]
+        return {identity for _area, identity in scored}
+
+    def _yolov8_recognize(self, frame, min_face_px: int = 0) -> dict:
+        try:
+            height, width = frame.shape[:2]
+            t0 = time.perf_counter()
             detections = self.detector.detect(frame)
+            detect_ms = (time.perf_counter() - t0) * 1000.0
+
+            # 认人被停用（库与模型不匹配 / 识别器没起来）时一张脸都不必提特征：
+            # 比对结果毫无意义，付的钱却是每张线性叠加的
+            recognizing = (self.recognizer is not None
+                           and self.recognition_block is None)
+            targets = self._embed_targets(detections, min_face_px) if recognizing else set()
             faces: list[dict] = []
             best = None  # (优先授权身份的识别分, 检测置信度, face_info)
+            embed_ms = 0.0
 
             for det in detections:
                 x1, y1, x2, y2 = det.xyxy_int()
@@ -269,11 +449,12 @@ class FaceEngine:
                 }
                 rank = (-1.0, det.confidence)
 
-                if self.recognizer is not None:
-                    h, w = frame.shape[:2]
-                    crop = frame[max(y1, 0):min(y2, h), max(x1, 0):min(x2, w)]
+                if id(det) in targets:
+                    crop = frame[max(y1, 0):min(y2, height), max(x1, 0):min(x2, width)]
                     if crop.size > 0:
+                        t1 = time.perf_counter()
                         rec = self.recognizer.recognize(crop)
+                        embed_ms += (time.perf_counter() - t1) * 1000.0
                         info["score"] = round(rec.score, 3)
                         if rec.authorized:
                             info["face_id"] = rec.identity
@@ -284,10 +465,14 @@ class FaceEngine:
                 if best is None or rank > best[0]:
                     best = (rank, info)
 
+            logger.debug("[人脸耗时] 检测 %.0fms + 识别 %.0fms（%d/%d 张脸，min=%dpx）",
+                         detect_ms, embed_ms, len(targets), len(detections),
+                         min_face_px)
+
             if best is not None:
                 self.health.record_success()
                 info = best[1]
-                mode = "recognition" if self.recognizer is not None else "yolov8"
+                mode = "recognition" if recognizing else "yolov8"
                 return {
                     "detected": True,
                     "face_id": info["face_id"],
@@ -342,7 +527,8 @@ class FaceEngine:
             "model_loaded": self._model_loaded,
             "simulation_mode": self.simulation_mode,
             "mode": "simulation" if self.simulation_mode else (
-                "recognition" if self.recognizer is not None else "yolov8"),
+                "recognition" if (self.recognizer is not None
+                                  and self.recognition_block is None) else "yolov8"),
             "model_path": self.config.get("model_path", ""),
             "confidence_threshold": self.config.get("confidence_threshold", 0.4),
             "camera_device": self.config.get("camera_device", 0),
@@ -353,6 +539,14 @@ class FaceEngine:
                            else recog_cfg.get("method")),
                 "identities": (len(self.recognizer.identities)
                                if self.recognizer is not None else 0),
+                "model_file": str(self.recognition_model_path),
+                # 换模型而库没重建时，认人会停用并把原因顶到前端
+                "blocked": self.recognition_block is not None,
+                "block_reason": self.recognition_block,
+                "model_fingerprint": (self.recognizer.model_fingerprint
+                                      if self.recognizer is not None else None),
+                "library_fingerprint": (self.recognizer.library_fingerprint
+                                        if self.recognizer is not None else None),
             },
         }
         status.update(self.health.get_status())
@@ -381,20 +575,35 @@ class FaceEngine:
         return (len(self.recognizer.identities or [])
                 if self.recognizer is not None else 0)
 
+    def model_mismatch(self) -> dict | None:
+        """库里写过的指纹与当前模型不同时给出两份指纹，其余情况返回 None。
+
+        句子交给前端按界面语言拼，日志里用 `_check_library_model` 那句中文。
+        老库自检（没有可比对的指纹）失败走 recognition_block，不冒充这种结构。
+        """
+        rec = self.recognizer
+        if rec is None or not rec.library_fingerprint:
+            return None
+        if rec.library_fingerprint == rec.model_fingerprint:
+            return None
+        return {"library": rec.library_fingerprint, "current": rec.model_fingerprint}
+
     def library_identities(self) -> list[str]:
         """人脸目录里到底有哪些身份（诊断孤儿用：认得出但名单里没有的人）。"""
         if not AUTHORIZED_DIR.is_dir():
             return []
         return sorted(p.name for p in AUTHORIZED_DIR.iterdir() if p.is_dir())
 
-    def recognize_jpeg(self, blob: bytes) -> dict:
+    def recognize_jpeg(self, blob: bytes, min_face_px: int = 0) -> dict:
         """识别一整帧 JPEG（门口识别哨兵用）。
 
         与录入共用同一把锁：两个线程同时进 ultralytics 推理没有保护，而且录脸
         本来就该独占摄像头（人站在门口摆姿势，此时不需要刷脸开门）。
         """
         with self._enroll_lock:
-            return self.recognize_from_base64(base64.b64encode(blob).decode())
+            if not self.throttler.can_execute():
+                return self._throttled_result()
+            return self._recognize_blob(blob, min_face_px=min_face_px)
 
     def remove_known_face(self, face_id: str) -> bool:
         known = self.config.get("known_faces", {})
@@ -428,13 +637,16 @@ class FaceEngine:
         method = str(recog_cfg.get("method", "simple_grayscale_cosine"))
         size = int(recog_cfg.get("image_size", 112))
         return (create_embedding_extractor(method=method,
-                                           model_path=str(RECOGNITION_MODEL_PATH),
+                                           model_path=str(self.recognition_model_path),
                                            image_size=size), method, size)
 
-    @staticmethod
-    def _empty_database(method: str, image_size: int) -> dict:
+    def _empty_database(self, method: str, image_size: int) -> dict:
+        from .recognizer import model_fingerprint
+
         return {"version": 2, "method": method,
-                "model_path": str(RECOGNITION_MODEL_PATH),
+                "model_path": str(self.recognition_model_path),
+                "model_fingerprint": model_fingerprint(
+                    method, self.recognition_model_path),
                 "image_size": image_size, "identities": []}
 
     def _apply_database(self, database: dict) -> None:
@@ -442,6 +654,9 @@ class FaceEngine:
         if self.recognizer is not None:
             self.recognizer.database = database
             self.recognizer.identities = database["identities"]
+            # 录完脸库里就带着指纹了（老库借此补写），状态里得显示新的那份
+            self.recognizer.library_fingerprint = str(
+                database.get("model_fingerprint") or "")
             return
         self._load_model()
 
@@ -472,7 +687,7 @@ class FaceEngine:
 
         只重算这一个身份：全库重建（scripts/enroll_faces.py）留给离线场景。
         """
-        from .recognizer import build_identity, save_embedding_database
+        from .recognizer import build_identity, model_fingerprint, save_embedding_database
 
         identity_dir = self._identity_dir(name)
         if self.simulation_mode or self.detector is None:
@@ -482,6 +697,9 @@ class FaceEngine:
                     "error": "人脸识别模型未加载（当前为模拟模式），无法录入真实人脸"}
         if not self.config.get("recognition", {}).get("enabled", True):
             return {"ok": False, "error": "人脸配置里 recognition.enabled=false，身份识别已关闭"}
+        if self.recognition_block:
+            # 库里是别的模型的原型，再录一张就成了混着两种向量的库：谁也认不出谁
+            return {"ok": False, "error": self.recognition_block}
 
         import cv2
         import numpy as np
@@ -540,6 +758,9 @@ class FaceEngine:
                 else self._empty_database(method, image_size)
             database["method"] = method
             database["image_size"] = image_size
+            # 顺带给老库补上指纹：录入用的就是当前模型，库里的原型从此有据可查
+            database["model_fingerprint"] = model_fingerprint(
+                method, self.recognition_model_path)
             database["identities"] = [
                 i for i in (database.get("identities") or [])
                 if str(i.get("name")) != identity["name"]] + [identity]

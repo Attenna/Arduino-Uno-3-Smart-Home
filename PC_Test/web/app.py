@@ -6,6 +6,8 @@ import logging
 import traceback
 
 from flask import Flask, jsonify
+from werkzeug.exceptions import HTTPException
+from .auth import install_auth
 
 from .api import access, automation, camera, devices, face, ha, pages, status, voice
 from .config import ensure_dirs, load_config
@@ -20,6 +22,7 @@ def create_app(config: dict | None = None, start_hardware: bool = True):
 
     app = Flask(__name__)
     app.config["SMART_HOME_CFG"] = cfg
+    install_auth(app)
 
     for module in (pages, status, devices, access, face, camera, voice, ha, automation):
         app.register_blueprint(module.bp)
@@ -28,6 +31,8 @@ def create_app(config: dict | None = None, start_hardware: bool = True):
 
     @app.errorhandler(Exception)
     def handle_global_error(e):
+        if isinstance(e, HTTPException):
+            return jsonify(error=e.description), e.code
         logger.error("Unhandled exception: %s\n%s", e, traceback.format_exc())
         return jsonify({
             "error": "服务器内部错误",

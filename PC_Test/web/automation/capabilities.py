@@ -9,15 +9,17 @@ V2.1 固件已裁剪的能力（故意不列）：
   - buzzer_status(raw) / fan_level / light_level(raw 0-255) —— 旧 B 板 state 帧的
     原始电平，V2.1 裁剪后写入方 database.ingest_output() 已删除，永远为 NULL，
     不能作为条件源（执行器真值改用 P1 的 rb_* 回读列）；
-  - face_denied —— 人脸拒绝时只写库不广播事件，不是真实事件。
+  - face_granted —— v5 起门禁鉴权统一广播 access_granted/access_denied（带
+    method=face/rfid/keypad），旧事件名不再有广播方，规则已就地迁移。
 
 V2.1 已移除的遗留设备：空调（虚拟设备，无任何真实执行器接线），已在数据库/API/前端全局删除。
+
+「全屋模式」状态机（home_mode.py）已拆除：`home_mode / home_enabled / home_fan /
+home_light / person_present` 不再是引擎源，`home_mode` 也不再是执行器。同类能力改由
+**全局状态**承载（`g:全屋模式` / `g:有人在家` / `g:手动优先_x` 等种子变量 + 预设规则），
+所以这些源/动作都由运行期的 `global_state_sources()` 与 `state` 动作块动态提供。
 """
 from __future__ import annotations
-
-# 全屋模式的档位标签与「能力清单」共用同一份定义，避免两处文案漂移
-# （home_mode 不反向依赖本模块，无循环导入）
-from .home_mode import FAN_LABELS, LIGHT_LABELS, MODE_LABELS
 
 # 比较符（积木下拉）
 COMPARATORS = [
@@ -29,13 +31,10 @@ COMPARATORS = [
     {"id": "!=", "label": "不等于"},
 ]
 
-# 「全屋风扇档位」在 JSON 里用 auto/on/off 表示（None 是配置里的内部值，归一成 auto）
-_HOME_FAN_CHOICES = ["auto", "on", "off"]
-_HOME_FAN_LABELS = {"auto": FAN_LABELS[None], "on": FAN_LABELS["on"], "off": FAN_LABELS["off"]}
-
 # 可作为「触发/条件」的数据源：id 即规则 JSON 里的 sensor 字段
 # kind: number=数值比较；bool=与 true/false 比较；enum=与给定字符串比较
 CONDITION_SOURCES = {
+    "sensor_fresh": {"label": "传感器数据新鲜（10秒内）", "kind": "bool"},
     # ── Module A 周期上报的传感器 ──
     "temperature": {"label": "温度", "kind": "number", "unit": "°C"},
     "humidity": {"label": "湿度", "kind": "number", "unit": "%"},
@@ -44,7 +43,7 @@ CONDITION_SOURCES = {
     "rain": {"label": "雨水检测", "kind": "bool"},
     "touch": {"label": "触摸传感器", "kind": "bool"},
     "motion": {"label": "人体红外", "kind": "bool"},
-    # ── 执行器当前状态（来自 SQLite，由面板控制 / 规则动作 / 全屋模式写入）──
+    # ── 执行器当前状态（来自 SQLite，由面板控制 / 规则动作写入）──
     "door_status": {"label": "门状态", "kind": "enum",
                     "choices": ["open", "closed"],
                     "choice_labels": {"open": "开", "closed": "关"}},
@@ -65,18 +64,6 @@ CONDITION_SOURCES = {
                 "choice_labels": {"auto": "自动", "cool": "制冷", "heat": "制热",
                                   "dry": "抽湿", "fan": "送风"}},
     "ac_temperature": {"label": "空调设定温度", "kind": "number", "unit": "℃"},
-    # ── 全屋状态（状态机）──
-    "home_mode": {"label": "全屋模式", "kind": "enum",
-                  "choices": list(MODE_LABELS.keys()),
-                  "choice_labels": dict(MODE_LABELS)},
-    "home_enabled": {"label": "全屋自动调节已启用", "kind": "bool"},
-    "home_fan": {"label": "全屋风扇档位", "kind": "enum",
-                 "choices": list(_HOME_FAN_CHOICES),
-                 "choice_labels": dict(_HOME_FAN_LABELS)},
-    "home_light": {"label": "全屋灯光档位", "kind": "enum",
-                   "choices": list(LIGHT_LABELS.keys()),
-                   "choice_labels": dict(LIGHT_LABELS)},
-    "person_present": {"label": "判定有人在家", "kind": "bool"},
     # ── 硬件在线健康位（15 秒心跳判定）──
     "sensor_online": {"label": "传感器板在线", "kind": "bool"},
     "output_online": {"label": "执行器板在线", "kind": "bool"},
@@ -92,6 +79,12 @@ IR_KEYS = [
 ]
 # 矩阵键盘（A 板 D4 第一横列 / A4 第一纵列）：4x4 键盘实际只用到 0-9 与 * / #
 KEYPAD_KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "*", "#"]
+
+# 门禁验证方式（access_guard 在广播事件时写进 method 字段；积木触发块可按它过滤）
+ACCESS_METHODS = [{"id": "face", "label": "人脸识别"},
+                  {"id": "rfid", "label": "刷房卡"},
+                  {"id": "keypad", "label": "键盘密码"}]
+ACCESS_METHOD_IDS = [m["id"] for m in ACCESS_METHODS]
 
 # 事件触发块。choices 供前端下拉（按键类事件让用户直接选键名，无需手填十六进制码）
 #
@@ -111,9 +104,14 @@ EVENT_TRIGGERS = {
     # RFID 刷卡事件：uid 是可选的过滤参数（不填=任意卡片都触发）
     "rfid": {"label": "RFID：刷到卡片", "param": "uid", "param_label": "卡号",
              "payload": {"event": "rfid"}},
-    # 人脸授权（由 web 侧广播，非 A 板固件）
-    "face_granted": {"label": "人脸识别：授权人员通过",
-                     "payload": {"event": "face", "status": "granted"}},
+    # 门禁鉴权结果：web 侧 access_guard 统一广播（人脸 / 刷卡 / 键盘密码）。
+    # 「谁算什么身份」在后端白名单，开门/延时关门/报警全由积木规则决定。
+    "access_granted": {"label": "门禁：验证通过", "param": "method",
+                       "param_label": "验证方式", "choices": ACCESS_METHODS,
+                       "payload": {"event": "access", "status": "granted"}},
+    "access_denied": {"label": "门禁：验证被拒绝", "param": "method",
+                      "param_label": "验证方式", "choices": ACCESS_METHODS,
+                      "payload": {"event": "access", "status": "denied"}},
     "keypad": {"label": "矩阵键盘：按下指定键", "param": "key", "param_label": "按键",
                "default": "1",
                "choices": [{"id": k, "label": k} for k in KEYPAD_KEYS],
@@ -122,6 +120,16 @@ EVENT_TRIGGERS = {
            "default": "0x45",
            "choices": [{"id": code, "label": f"{name}（{code}）"} for code, name in IR_KEYS],
            "payload": {"event": "ir"}},
+    # 设备被面板/语音手动操作（引擎通用钩子，不含任何设备专属策略）。
+    # 用途：让「手动优先冷却」这类仲裁由积木规则自己表达，而不是硬编码在引擎里。
+    "manual_control": {"label": "手动操作：面板/语音控制设备",
+                       "param": "device", "param_label": "设备", "default": "fan",
+                       "choices": [{"id": "door", "label": "门"},
+                                   {"id": "window", "label": "窗户"},
+                                   {"id": "light", "label": "灯"},
+                                   {"id": "fan", "label": "风扇"},
+                                   {"id": "ac", "label": "空调"}],
+                       "payload": {"event": "manual_control"}},
 }
 
 # 执行器动作块
@@ -152,25 +160,28 @@ ACTION_DEVICES = {
         "text": {"label": "文本（可含 {temperature} 等占位符）", "maxlen": 200},
         "line": {"range": [0, 7], "label": "指定行（不填=按换行自动分配）"},
         "clear": {"type": "bool", "label": "清屏"}}},
-    # 全屋模式状态机：把「进门切自动 / 触摸切手动 / 档位循环」交给用户自己编排。
-    # mode=toggle 为「手动↔自动」翻转（触摸键那种一键切换）；
-    # fan_override/light_level 的 cycle 为档位循环，按一次换下一档。
-    "home_mode": {"label": "全屋模式", "params": {
-        "mode": {"choices": ["", "auto", "manual", "away", "toggle"],
-                 "labels": ["不改", "自动", "手动", "离家", "手动↔自动 翻转"]},
-        "fan_override": {"choices": ["", "on", "off", "auto", "cycle"],
-                         "labels": ["不改", "强制开", "强制关", "回到自动", "循环下一档"]},
-        "light_level": {"choices": ["", "auto", "hold", "dark", "half", "bright", "cycle"],
-                        "labels": ["不改", "自动", "保持当前", "暗", "半亮", "全亮", "循环下一档"]},
-        # 状态机自身参数（原先只能在代码里改）
-        "enabled": {"type": "bool", "label": "全屋自动调节总开关"},
-        "presence_hold_sec": {"range": [0, 86400], "unit": "秒", "label": "存在判定保持时长"},
-        "manual_grace_s": {"range": [1, 3600], "unit": "秒", "label": "手动冷却窗口"}}},
+    # 全屋模式状态机动作（home_mode）已拆除：模式/档位由 g:全屋模式 等全局状态
+    # 加预设规则表达，见模块 docstring。
     "delay": {"label": "等待（延时）", "params": {"seconds": {"range": [1, 300], "unit": "秒"}}},
+    # 全局状态写入（自由命名变量，见 global_state.py）。name 的可选项是运行期的，
+    # 由 capabilities_payload() 在打包时注入（这里的空壳只为让校验放行 device 名）。
+    "state": {"label": "设置全局状态", "params": {
+        "name": {"choices": [], "label": "状态（先新建「📌 状态」条目）"},
+        "op": {"choices": ["set", "toggle", "add"],
+               "labels": ["设为", "切换是/否", "加减"]},
+        "value": {"label": "值（类型随所选状态变化）"}}},
     # 语音助手联动：免唤醒词激活 / 直接下发一句文本指令
     "voice": {"label": "语音助手", "params": {
         "action": {"choices": ["wake", "say"], "labels": ["唤醒（跳过唤醒词）", "播报/执行文本"]},
         "text": {"label": "文本（action=播报时必填）", "maxlen": 200}}},
+    # HTTP 出站（webhook）：把规则结果推给外部系统（NAS / HA / MQTT 网关 / 自建服务）。
+    # URL 与内容共用 OLED 那套 {temperature} 占位符，但不受「16 列纯 ASCII」裁剪。
+    # 默认只允许本机与内网目标，不发任何认证头，也不跟随重定向——护栏与放开方式见 webhook.py。
+    "http": {"label": "HTTP 请求（对接外部系统）", "params": {
+        "method": {"choices": ["get", "post"], "labels": ["GET", "POST"]},
+        "url": {"label": "URL（默认只放行本机与内网）", "maxlen": 500},
+        "text": {"label": "POST 内容（可含 {temperature} 等占位符；填 JSON 即按 JSON 发）",
+                 "maxlen": 2048}}},
     # 红外发射（B 板 D12，NEC 38kHz）。code 为十进制 32 位码；
     # 也可给 address+command，由 hardware.py 的 helper 换算（NEC 约定见该处注释）。
     # 注意：本系统不支持红外自学习/回环转发，B 板发出的码会被 A 板接收头收到，
@@ -193,10 +204,53 @@ ACTION_DEVICES = {
 }
 
 
-def capabilities_payload() -> dict:
+def global_state_sources(defs) -> list[dict]:
+    """把已定义的全局状态导出成「条件/触发源」，前端下拉据此多出这些项。
+
+    只导出可比较的类型：bool / number / enum。**text 不导出**——``_compare`` 只能
+    做字符串相等，而且前端 ``statusOptions()`` 依赖 ``choices``，没有 choices 会渲染
+    出空下拉。text 变量只用于「写 + 状态条目卡片显示」。
+    """
+    out = []
+    for var in (defs or []):
+        type_ = var.get("type")
+        if type_ not in ("bool", "number", "enum"):
+            continue
+        item = {"id": var["id"],
+                "label": f"状态·{var.get('label') or var.get('name') or var['id']}",
+                "kind": type_}
+        if type_ == "enum":
+            # choices 必须与变量定义严格一致（含顺序），否则「等于」条件的下拉会漏项
+            item["choices"] = list(var.get("choices") or [])
+            labels = var.get("choice_labels") or {}
+            item["choice_labels"] = {c: labels.get(c, c) for c in item["choices"]}
+        elif type_ == "number" and var.get("unit"):
+            item["unit"] = var["unit"]
+        out.append(item)
+    return out
+
+
+def capabilities_payload(global_state=None) -> dict:
+    defs = list(global_state or [])
+    devices = []
+    for key, value in ACTION_DEVICES.items():
+        item = {"id": key, **value}
+        if key == "state":
+            # 变量清单是运行期的（用户新建/删除「📌 状态」条目），只能在打包时注入；
+            # 直接改模块级 ACTION_DEVICES 会污染其它调用方，所以这里浅拷贝一层。
+            item["params"] = dict(value["params"])
+            item["params"]["name"] = {
+                "choices": [v["id"] for v in defs],
+                "labels": [v.get("label") or v["id"] for v in defs],
+                "label": "状态（先新建「📌 状态」条目）"}
+        devices.append(item)
     return {
         "comparators": COMPARATORS,
-        "sources": [{"id": k, **v} for k, v in CONDITION_SOURCES.items()],
+        "sources": ([{"id": k, **v} for k, v in CONDITION_SOURCES.items()]
+                    + global_state_sources(defs)),
         "events": [{"id": k, **v} for k, v in EVENT_TRIGGERS.items()],
-        "devices": [{"id": k, **v} for k, v in ACTION_DEVICES.items()],
+        "devices": devices,
+        # 「设置全局状态」积木与状态条目卡片需要**全部**变量（含 text——text 不进
+        # sources 是因为不可比较，但积木下拉必须能选到它）
+        "state_vars": defs,
     }

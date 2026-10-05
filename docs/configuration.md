@@ -59,7 +59,7 @@
 | `simulation_mode` | `false` | `true` = 返回模拟人脸（无模型演示） |
 | `recognition.enabled` | `true` | 是否启用人脸身份识别 |
 | `recognition.method` | `arcface_onnx` | `arcface_onnx`（高精度）/ `simple_grayscale_cosine`（零依赖回退） |
-| `recognition.model_path` | `models/face/recognition.onnx` | ArcFace 模型 |
+| `recognition.model_path` | `models/face/w600k_mbf.onnx` | 嵌入模型文件（相对 `PC_Test/`）；来源、校验和与换模型步骤见 [face-models.md](face-models.md)，模型不进 Git |
 | `recognition.similarity_threshold` | `0.5` | 身份判定相似度阈值 |
 | `recognition.image_size` | `112` | 识别输入尺寸 |
 | `recognition_interval` | `1.5` | 识别节流：两次推理的最小间隔（秒），过频返回 `mode: throttled` |
@@ -254,7 +254,8 @@ ls -l /dev/ttyUSB* /dev/ttyACM* /dev/serial/by-id/* /dev/video*
 
 常用参数宏：门/窗舵机引脚与角度（`DOOR_*` / `WINDOW_*` / `SERVO_SETTLE_TIME`）、
 `FAN_INA` / `FAN_INB`、`RGB_PIN` / `LED_COUNT` / `LIGHT_BRIGHTNESS`、
-`LIGHT_BOOT_ON` / `LIGHT_BOOT_LEVEL`、`BUZZER_*`、`OLED_*` / `OLED_IS_SH1106`、
+`LIGHT_BOOT_ON` / `LIGHT_BOOT_LEVEL`、`LIGHT_NIGHT_COUNT` / `LIGHT_NIGHT_LEVEL`、
+`BUZZER_*`、`OLED_*` / `OLED_IS_SH1106`、
 `MIDEA_*`（美的长码时序）、`FW_VERSION`。
 
 > 所有引脚/阈值/时序只能改 Config.h，禁止在驱动 `.cpp` 内硬编码。

@@ -51,10 +51,16 @@ face:
   simulation_mode: false
   recognition:
     enabled: true
-    # arcface_onnx：高精度（需 models/face/recognition.onnx，~174MB，已就位）
+    # 嵌入模型只影响「认人」这一段的耗时，模型文件不进 Git（AGENTS.md 第 2 条），
+    # 换文件 + 改这一行即可切换；两边都写清来源，见 docs/face-models.md。
+    #   w600k_mbf.onnx  13MB，派上单脸 93ms（p50），A/B/C 留一法同人≥0.788、异人≤0.265
+    #   recognition.onnx 174MB（iresnet50），派上单脸 411ms，同人≥0.804、异人≤0.200
+    # 两者输入都是 112×112 RGB、(x-127.5)/127.5、输出 512 维，但向量空间互不相通：
+    # 换模型后必须用 scripts/enroll_faces.py 重建 data/face/embeddings.pkl，
+    # 否则库里旧原型与新查询比对必然全拒（引擎会显式停用认人并在门禁体检页说明）。
     # simple_grayscale_cosine：零依赖回退方案
     method: "arcface_onnx"
-    model_path: "models/face/recognition.onnx"
+    model_path: "models/face/w600k_mbf.onnx"
     similarity_threshold: 0.5
     image_size: 112
   # ── 门口识别哨兵：让「录了脸 → 自动开门」真的成立 ──────────────────────
@@ -67,3 +73,11 @@ face:
     motion_hold: 20        # 最后一次 motion 之后继续识别的秒数（人走到门口要时间）
     cooldown: 60           # 同一张脸放行后多久内不再重复开门（人站在门口不该连开）
     min_face_px: 60        # 人脸短边小于此像素只报「离得太远」，不进识别也不记日志
+
+# 独立门口超声波：尚未接线；不得用室内 PIR 代替距离数据。
+security:
+  doorway:
+    enabled: false
+    distance_cm: 100
+    hold_sec: 30
+    max_gap_sec: 5

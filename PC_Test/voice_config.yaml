@@ -41,6 +41,9 @@ llm:
     2) 查询当前状态（温度、湿度、是否有人等）必须先调 get_sensor_status，再用真实数据回答。
     3) 回复口语化、简短（一两句即可），不要列工具名或 JSON。
     4) 不确定用户意图时简短反问，不要乱调设备。
+    5) 只有工具明确返回成功时才能说设备已执行；失败或结果未知时说明不确定。
+    6) 工具调用失败或结果未知时禁止自动重复同一动作，应先查询状态或询问用户。
+    7) 上下文只用于理解省略和指代，当前用户的新指令优先于历史内容。
     设备能力：门、窗、风扇（可调速）、RGB 灯、蜂鸣器、OLED 屏、数码管、红外发射。
   local:                # mode=local 时生效（qwen_server.py 读取）
     gguf_path: "models/qwen/qwen2.5-3b-instruct-q4_k_m.gguf"  # 3B-Q4 ~2GB
@@ -51,6 +54,21 @@ llm:
 
 # ── 多轮对话上下文（保留最近 N 轮 user/assistant，追问有记忆；0=每句独立）──
 history_rounds: 4
+
+# ── 持久对话上下文 MCP server ──
+# 语音编排器通过标准 MCP stdio 自动读取和记录已完成轮次；工具不会暴露给大模型，
+# 防止模型自行修改记忆。文件位于 data 卷，voice 容器重启后上下文仍保留。
+context:
+  enabled: true
+  server_path: "voice_context_server.py"
+  store_path: "data/voice_context.json"
+  session_id: "smart-home"
+  history_rounds: 6       # 注入模型的最近确认轮次
+  max_turns: 20           # 服务端最多保留轮次
+  ttl_hours: 24           # 超过该时长的旧轮次不再注入
+
+safety:
+  max_tool_calls_per_turn: 6  # 防止模型循环调用；同参数重复动作会直接阻止
 
 # ── Sherpa-ONNX 语音前端（KWS 唤醒 + 流式 ASR + 本地 TTS，全离线，香橙派 CPU 可实时）──
 # 模型下载: py -3.13 download_sherpa_models.py
@@ -81,8 +99,9 @@ sherpa:
 wake:
   words:
     - "hey bota"
-  command_timeout: 6.0   # 命令模式等整句秒数
-  followup_timeout: 8.0  # 回答后追问窗口（秒），期间无需重新唤醒即可直接说话
+  command_timeout: 8.0   # 提示音结束后，等待用户开始说话的秒数
+  max_utterance_seconds: 20.0 # 已开始说话后的最长单句保护，不会用上面的计时中途截断
+  followup_timeout: 8.0  # TTS 完全结束后，等待用户开始追问的秒数
   wake_ack: "在的"        # voice/both 模式命中唤醒词后 TTS 回一句
   ack_mode: "chirp"      # 唤醒反馈：chirp=滴声(零延迟，推荐) / voice=说"在的" / both / none
   chirp_freq: 880        # 滴声音高 Hz

@@ -22,6 +22,8 @@ PC_Test/
 ├── camera_test.py          #    摄像头快速自检（验证摄像头 + 检测链路）
 │
 ├── voice_assistant.py      # ④ 语音交互模式（唤醒词 → Qwen3.5 → 经 ⑤ 的 HTTP 网关控硬件 → 流式 TTS）
+├── voice_context_server.py #    对话上下文 MCP server（持久保存确认轮次与真实工具结果）
+├── voice_context_client.py #    语音编排器使用的 MCP stdio 客户端
 ├── qwen_server.py          #    本地 Qwen2.5 OpenAI 兼容服务（llama.cpp 后端；离线兜底，默认不用）
 ├── download_qwen.py        #    Qwen2.5 权重下载器（ModelScope 国内渠道）
 ├── mcp_home_server.py      # 智能家居 MCP server（⑤ 的 stdio 子进程：独占串口，暴露 13 个工具；④ 经 ⑤ 用它）
@@ -202,10 +204,11 @@ py -3.13 camera_test.py --cam 0 --frames 10
 **数据流**：
 
 ```text
-麦克风 ──Sherpa-ONNX──▶ KWS 声学唤醒「Hey Bota」──▶ 切 COMMAND + 滴声提示
-                        流式 ASR 整句 ──▶ 用户指令 ──▶ 切 IDLE
+麦克风 ──Sherpa-ONNX──▶ KWS 声学唤醒「Hey Bota」──▶ ACK（ASR 关闭）──▶ 滴声结束
+                        COMMAND/FOLLOWUP（ASR 开启）──▶ 端点检测整句 ──▶ THINKING（ASR 关闭）
 键盘打字回车 / HTTP POST /say ─────────┘
-用户指令 ──Qwen3.5(默认云端硅基流动) 流式 + 工具调用──▶ delta.content 按句喂 VITS TTS（边生成边播）
+用户指令 ──上下文 MCP（读取确认历史）──▶ Qwen3.5 流式 + 工具调用──▶ VITS TTS
+本轮结果 ──上下文 MCP（记录回答和真实工具结果）◀──────────────────────────┘
                                   └─ tool_calls ──HTTP──▶ ⑤ web POST /api/hardware/tool
                                                             └─ MCP ──▶ mcp_home_server ──▶ Module B
 ```
@@ -223,10 +226,26 @@ get_serial_health / get_output_state / self_test`。
 `get_output_state` / `self_test` 是只读诊断：前者给 B 板硬件回读，后者给固件侧自检
 ——排查「灯不亮 / 风扇自转」时先用它们把故障定位到层次。）
 
-`voice_assistant.py` **完全不碰串口，也不自己起 MCP 进程**：启动时 `GET /api/hardware/tools`
-取工具清单喂给大模型，工具调用一律 `POST /api/hardware/tool`（带 `source=voice`）。
+`voice_assistant.py` **完全不碰串口，也不启动硬件 MCP**：启动时 `GET /api/hardware/tools`
+取工具清单喂给大模型，工具调用一律 `POST /api/hardware/tool`（带 `source=voice`）。它会启动
+独立的 `voice_context_server.py` MCP stdio 子进程；该进程只管理 `data/voice_context.json`，
+不接触串口，也不把清空/写入上下文工具暴露给大模型。
 web 既是执行者也是记账者，所以语音与面板的状态、历史、`manual_control`（全屋切手动）
 事件**天然等价**，无需任何回传对账。
+
+### 一轮对话何时开始、何时结束
+
+1. `IDLE` 只运行 KWS，ASR 不接收音频。
+2. 命中唤醒词后进入 `ACK`；提示音或“在的”完全播完，清空残音后才进入 `COMMAND`。
+3. `COMMAND` 的 `command_timeout` 只限制“多久内开始说话”。检测到第一个 ASR partial 后，
+   固定等待计时停止，长句由 Sherpa 端点检测结束；`max_utterance_seconds` 只负责异常兜底。
+4. 识别到 final 后立即进入 `THINKING` 并关闭 ASR，避免环境声进入下一轮。
+5. 大模型回答和 TTS 全部播完后，清空 ASR 残音，再进入 `FOLLOWUP`。
+6. `followup_timeout` 从 TTS 播放结束时开始计算；期间用户开始说话后同样等待端点 final。
+7. 追问窗口无语音时回到 `IDLE`。手动按钮仍可打断 TTS 并开始新一轮。
+
+工具执行前会在本地校验工具名、必填参数、类型、枚举和数值范围；同一轮完全相同的调用
+只执行一次。网关返回 `unknown_sent` 时不会自动重试，以免门、蜂鸣器等动作重复执行。
 
 ### LLM 引擎：Qwen3.5 / Qwen2.5（国内合规）
 

@@ -15,6 +15,9 @@
 
 默认 method=simple_grayscale_cosine（零依赖，开箱即用，精度一般）；
 放入 ArcFace/FaceNet ONNX 后用 --method arcface_onnx 获得高精度识别。
+
+换嵌入模型（模型清单见 docs/face-models.md）之后必须重跑本脚本重建 embeddings.pkl：
+不同模型的向量空间互不相通，混用的后果是谁都认不出。库里的 model_fingerprint 会拦住这种混用。
 """
 from __future__ import annotations
 
@@ -54,6 +57,10 @@ def main() -> int:
     model_path = args.model or (
         Path(recog["model_path"]) if recog.get("model_path")
         else RECOGNITION_MODEL_PATH)
+    if not Path(model_path).is_absolute():
+        # 配置里是相对路径（models/face/xxx.onnx）：按 PC_Test/ 定死，
+        # 从仓库根目录跑还是容器里跑（/app）都指向同一个文件
+        model_path = PC_TEST_DIR / model_path
     image_size = args.image_size or int(recog.get("image_size", 112))
 
     if method == "arcface_onnx" and not Path(model_path).exists():

@@ -4,6 +4,7 @@
 JSON 命令；只有收到 B 板 ACK 后才更新 system_status 并写历史，保证 UI 状态
 与真实硬件一致。串口离线时返回 503，不产生虚假状态。
 """
+from contextlib import nullcontext
 import logging
 import threading
 import time
@@ -13,7 +14,8 @@ from flask import Blueprint, jsonify, request
 import midea_ac
 
 from .. import extensions
-from ..ac_state import AC_KEYS, ac_state_from_db, write_ac_state
+from .. import light_state
+from ..ac_state import AC_KEYS, AC_LOCK, serialized_ac, ac_state_from_db, write_ac_state
 from ..extensions import db
 
 logger = logging.getLogger(__name__)
@@ -62,10 +64,20 @@ def _record_window(new_status):
     _note_manual("window", status=new_status)
 
 
-def _record_light(status, brightness):
-    db.update_status(light_status=status, light_brightness=brightness)
-    db.add_light_event("客厅主灯", status, brightness)
-    _note_manual("light", status=status, brightness=brightness)
+def _record_light(status, brightness, style=None):
+    """灯状态落库 + 写历史 + 通知引擎；``style=None`` 表示本次不改亮法。
+
+    记账字段一律由 light_state 生成，面板/语音/自动化四条写入路径口径一致；
+    返回真正写进去的字段，调用方据此回显，不再自己拼一遍。
+    """
+    if style is None:
+        style = light_state.from_status(db.get_current_status())
+    values = light_state.status_values(status, brightness, style)
+    db.update_status(**values)
+    db.add_light_event("客厅主灯", values["light_status"], values["light_brightness"])
+    _note_manual("light", status=values["light_status"],
+                 brightness=values["light_brightness"])
+    return values
 
 
 def _record_fan(speed):
@@ -321,32 +333,44 @@ def get_door_window_history():
 
 # ==================== 灯 ====================
 
+# 灯不止「开关 + 亮度」：同一亮度下还有白光/夜灯/色温/自定义颜色四种亮法，B 板
+# 一条命令只认一种。四种亮法怎么解析、持久化、下发，收口在 web/light_state.py，
+# 由面板、语音工具网关、manual_report 与自动化引擎共用同一份口径。
+
+
+def _light_payload(status_row):
+    """灯状态 + 当前亮法，GET/POST 响应共用一份序列化。"""
+    mode, kelvin, color = light_state.from_status(status_row)
+    return {"light_status": status_row.get("light_status", "off"),
+            "light_brightness": int(status_row.get("light_brightness") or 0),
+            "light_mode": mode, "light_temp": kelvin,
+            "light_rgb": list(color) if color else None}
+
+
 @bp.route("/api/light", methods=["GET"])
 def get_light_status():
-    status = db.get_current_status()
-    return jsonify({
-        "light_status": status.get("light_status", "off"),
-        "light_brightness": status.get("light_brightness", 0),
-    })
+    return jsonify(_light_payload(db.get_current_status()))
 
 
 @bp.route("/api/light", methods=["POST"])
 def control_light():
     data = request.get_json(silent=True) or {}
-    light_status = data.get("status", "off")
-    brightness = _pct(data.get("brightness"), 0)
-    if light_status == "on" and brightness == 0:
-        brightness = 100
-    if light_status == "off":
-        brightness = 0
+    current = db.get_current_status()
+    light_status, brightness = light_state.target_from_request(
+        data, int(current.get("light_brightness") or 0))
+    # 请求没带亮法 = 只调亮度或开关，沿用库里当前亮法。旧代码在这里缺省成白光，
+    # 于是拖一下亮度就把色温/颜色打回白光（#27）。
+    style = light_state.from_request(data) or light_state.from_status(current)
     cid, seq = _client_token(data)
-    target = (light_status, brightness)
+    target = (light_status, brightness, style)
 
     def _run(v):
-        status, level = v
-        ok, msg = _hw_call("control_light", status, level)
+        status, level, chosen = v
+        # 四种亮法互斥，由 hardware_plan 选一条固件命令：关灯 > 自定义颜色 > 色温 > 白光/夜灯
+        method, args, kwargs = light_state.hardware_plan(status, level, chosen)
+        ok, msg = _hw_call(method, *args, **kwargs)
         if ok:
-            _record_light(status, level)
+            _record_light(status, level, chosen)
         return ok, msg
 
     # 灯光**不做基于 DB 的状态幂等**（与 /api/fan 同理，见那里的说明）：web 以
@@ -358,18 +382,24 @@ def control_light():
     outcome, _, ok, msg = gate.submit("light", target, cid, seq, _run)
     if not ok:
         return _hardware_error(msg)
-    row = db.get_current_status()
-    status_shown = row.get("light_status", "off")
-    shown = int(row.get("light_brightness") or 0)
+    payload = _light_payload(db.get_current_status())
+    status_shown = payload["light_status"]
+    shown = payload["light_brightness"]
     if outcome == "executed":
-        message = f"灯光已{'打开' if status_shown == 'on' else '关闭'}，亮度: {shown}%"
-        message_en = (f"Light {'turned on' if status_shown == 'on' else 'turned off'}, "
-                      f"brightness: {shown}%")
+        label_zh, label_en = light_state.label(style)
+        if status_shown == "on":
+            message = f"灯光已打开，亮度: {shown}%（{label_zh}）"
+            message_en = f"Light turned on, brightness: {shown}% ({label_en})"
+        else:
+            message = "灯光已关闭"
+            message_en = "Light turned off"
     else:
-        message = f"已按最新操作执行（灯光 {status_shown}/{shown}%）"
-        message_en = f"Latest command applied (light {status_shown}/{shown}%)"
-    return jsonify({"light_status": status_shown, "light_brightness": shown,
-                    "message": message, "message_en": message_en})
+        # 被更新的操作取代：展示与提示都来自库里最新执行的那条命令，用本次请求的
+        # style 会写出「已按最新操作执行（…色温 4000K）」这种自相矛盾的话。
+        label_zh, label_en = light_state.label(light_state.from_status(payload))
+        message = f"已按最新操作执行（灯光 {status_shown}/{shown}% {label_zh}）"
+        message_en = f"Latest command applied (light {status_shown}/{shown}% {label_en})"
+    return jsonify({**payload, "message": message, "message_en": message_en})
 
 
 @bp.route("/api/light/history")
@@ -422,10 +452,11 @@ def control_fan():
 
 @bp.route("/api/ac", methods=["GET"])
 def get_ac_status():
-    return jsonify(_ac_state_from_db().snapshot())
+    return jsonify({**_ac_state_from_db().snapshot(), "state_source": "last_sent", "confirmed": False})
 
 
 @bp.route("/api/ac", methods=["POST"])
+@serialized_ac
 def control_ac():
     """只传要改的字段；其余按数据库里的当前状态补齐后整帧下发。
 
@@ -448,9 +479,6 @@ def control_ac():
                         "error_en": f"Invalid AC parameter: {e}"}), 400
 
     payload = target.snapshot()
-    if not changed:
-        return jsonify({**payload, "message": "空调状态未变化",
-                        "message_en": "No change"})
     cid, seq = _client_token(data)
 
     def _run(v):
@@ -512,24 +540,23 @@ def hardware_tool():
     except (TypeError, ValueError):
         timeout = 10.0
 
-    ok, text = bridge.call_tool(name, arguments, timeout=timeout)
-    if ok:
-        report = _tool_state_report(name, arguments)
-        if report is not None:
-            who = _SOURCES.get(str(data.get("source") or ""), "外部")
+    with AC_LOCK if name == "ac" else nullcontext():
+        if name == "ac":
             try:
-                _bookkeep(report, who)
-            except Exception:                                # noqa: BLE001
-                logger.debug("工具网关记账失败: %s", report, exc_info=True)
+                target, _ = midea_ac.apply_overrides(_ac_state_from_db(), **arguments)
+                arguments = target.snapshot()
+            except (TypeError, ValueError) as exc:
+                return jsonify(ok=False, error=str(exc)), 400
+        ok, text = bridge.call_tool(name, arguments, timeout=timeout)
+        if ok:
+            report = _tool_state_report(name, arguments)
+            if report is not None:
+                who = _SOURCES.get(str(data.get("source") or ""), "外部")
+                try:
+                    _bookkeep(report, who)
+                except Exception:                                # noqa: BLE001
+                    logger.debug("工具网关记账失败: %s", report, exc_info=True)
     return jsonify({"ok": ok, "name": name, "result": text}), (200 if ok else 502)
-
-
-def _pct255(value, default=0):
-    """MCP 工具用 0~255 表示亮度/转速，面板记账用百分比。"""
-    try:
-        return max(0, min(100, round(int(value) * 100 / 255)))
-    except (TypeError, ValueError):
-        return default
 
 
 def _tool_state_report(name, args):
@@ -548,14 +575,15 @@ def _tool_state_report(name, args):
         return {"device": "window", "status": status}
 
     if name == "light":
-        if action == "off":
-            return {"device": "light", "status": "off", "brightness": 0}
-        if action in ("on", "white", "red", "green", "blue",
-                      "yellow", "purple", "cyan", "rgb"):
-            # 彩色指令面板不跟踪颜色，只记为「开」+亮度
-            return {"device": "light", "status": "on",
-                    "brightness": _pct255(args.get("value"), 100) or 100}
-        return None
+        parsed = light_state.from_tool_args(args)
+        if parsed is None:
+            return None                 # 工具侧不会动硬件，没有状态可记
+        status, brightness, style = parsed
+        report = {"device": "light", "status": status, "brightness": brightness}
+        # 关灯不回传亮法：库里当前亮法保持原样，下次开灯回到原来的颜色
+        if style is not None:
+            report.update(light_state.to_request(style))
+        return report
 
     if name == "fan":
         if action == "off":
@@ -563,7 +591,7 @@ def _tool_state_report(name, args):
         if action == "on":
             return {"device": "fan", "speed": 100}
         if action == "set_speed":
-            return {"device": "fan", "speed": _pct255(args.get("value"), 50)}
+            return {"device": "fan", "speed": light_state.pct255(args.get("value"), 50)}
         return None
 
     if name == "ac":
@@ -576,6 +604,7 @@ def _tool_state_report(name, args):
     return None
 
 
+@serialized_ac
 def _bookkeep(data, who):
     """按 manual_report 形态做面板等效记账（只写库/发事件，不下发硬件）。
 
@@ -595,13 +624,12 @@ def _bookkeep(data, who):
         _record_window(status)
         return 200, {"ok": True, "window_status": status}
     if device == "light":
-        status = "on" if data.get("status") == "on" else "off"
-        brightness = _pct(data.get("brightness"), 0)
-        if status == "on" and brightness == 0:
-            brightness = 100
-        _record_light(status, brightness)
-        return 200, {"ok": True, "light_status": status,
-                     "light_brightness": brightness}
+        current = db.get_current_status()
+        status, brightness = light_state.target_from_request(
+            data, int(current.get("light_brightness") or 0))
+        style = light_state.from_request(data) or light_state.from_status(current)
+        _record_light(status, brightness, style)
+        return 200, {"ok": True, **_light_payload(db.get_current_status())}
     if device == "fan":
         speed = _pct(data.get("speed"), 0)
         _record_fan(speed)

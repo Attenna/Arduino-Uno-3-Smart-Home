@@ -29,6 +29,19 @@
 # ============================================================================
 name: smart-home
 
+x-runtime-hardening: &runtime-hardening
+  user: "1000:1000"
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  read_only: true
+  tmpfs:
+    - /tmp:size=256m,mode=1777
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
 services:
   # ── ① 本地 LLM（OpenAI 兼容；离线 fallback，默认编排不启动）───────────────
   qwen:
@@ -39,7 +52,7 @@ services:
     profiles: ["local-llm"]        # 默认不带 profile 启动；见 docker-compose.local-llm.yml
     volumes:
       # 模型不进镜像（2GB+），宿主机 PC_Test/models/qwen 直接挂载
-      - ./models:/app/models
+      - ./models:/app/models:ro
     environment:
       - TZ=${TZ:-Asia/Shanghai}
     ports:
@@ -48,6 +61,9 @@ services:
 
   # ── ② Web 仪表盘 + 人脸识别 + 唯一硬件网关（独占 A/B 串口）────────────────
   web:
+    env_file: [.auth.web.env]
+    <<: *runtime-hardening
+    group_add: ["20"]
     build:
       context: .
       dockerfile: docker/Dockerfile.web
@@ -62,10 +78,11 @@ services:
     # 跟随宿主机 /dev：cgroup 放行所有 USB ACM(166)，再靠 /dev 整目录看到新节点，
     # 串口层自愈才能真正把 B 板拉回来。
     device_cgroup_rules:
-      - "c 166:* rmw"
+      - "c 166:* rw"
+      - "c 188:* rw"
     volumes:
-      - /dev:/dev
-      - ./models:/app/models
+      - /dev:/dev:ro
+      - ./models:/app/models:ro
       # SQLite、人脸注册照片、embeddings.pkl 持久化
       - ./data:/app/data
       - ./web_config.yaml:/app/web_config.yaml:ro
@@ -84,6 +101,9 @@ services:
 
   # ── ③ 语音助手（Sherpa KWS/ASR/TTS；纯 HTTP 客户端，不碰串口）─────────────
   voice:
+    env_file: [.auth.voice.env]
+    <<: *runtime-hardening
+    group_add: ["29"]
     build:
       context: .
       dockerfile: docker/Dockerfile.voice
@@ -96,7 +116,9 @@ services:
       # ALSA 声卡（麦克风 + 扬声器），整目录透传；不再透传串口
       - /dev/snd:/dev/snd
     volumes:
-      - ./models:/app/models
+      - ./models:/app/models:ro
+      # 对话上下文 MCP 持久化（与 web 共用 data 卷目录，不包含凭据）
+      - ./data:/app/data
       # 改配置无需重建镜像（只读挂载；文件须存在于宿主机）
       - ./voice_config.yaml:/app/voice_config.yaml:ro
     environment:
@@ -113,11 +135,13 @@ services:
       # 查到索引后填到 .env 的 MIC_INDEX
       - SMART_HOME_MIC_INDEX=${MIC_INDEX:-}
     ports:
-      - "${VOICE_PORT:-8101}:8101"
+      - "127.0.0.1:${VOICE_PORT:-8101}:8101"
     restart: unless-stopped
 
   # ── ④ USB 摄像头 MJPEG 视频流（http://宿主:8080）─────────────────────────
   camera:
+    <<: *runtime-hardening
+    group_add: ["44"]
     build:
       context: .
       dockerfile: docker/Dockerfile.camera
@@ -127,14 +151,14 @@ services:
     # 下面两条让容器跟随宿主机 /dev：cgroup 放行所有 V4L2(字符设备主号 81)，
     # 再由 camera_stream.py 重新枚举并自动重开。
     device_cgroup_rules:
-      - "c 81:* rmw"
+      - "c 81:* rw"
     volumes:
-      - /dev:/dev
+      - /dev:/dev:ro
     environment:
       - TZ=${TZ:-Asia/Shanghai}
       # 探测到的节点，仅作优先候选；不在位时自动试其它 /dev/video*
       - CAMERA_DEVICE=${CAMERA_DEVICE:-}
     ports:
-      - "${CAMERA_PORT:-8080}:8080"
+      - "127.0.0.1:${CAMERA_PORT:-8080}:8080"
     restart: unless-stopped
     # 无摄像头的主机可临时不起： docker compose up -d --scale camera=0

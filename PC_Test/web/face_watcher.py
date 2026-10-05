@@ -25,6 +25,8 @@ logger = logging.getLogger(__name__)
 # 距上次收到 motion 超过这么久就当「A 板不报这个传感器了」，退化成不门控
 MOTION_STALE_S = 120.0
 GRAB_TIMEOUT_S = 3.0
+# PIR 上升沿可以提前抓帧，但两轮之间至少隔这么久：抖动的 motion 不该把哨兵打成连拍
+MIN_WAKE_SPACING_S = 0.4
 DEFAULTS = {"enabled": True, "interval": 2.0, "motion_gate": True,
             "motion_hold": 20.0, "cooldown": 60.0, "min_face_px": 60}
 
@@ -57,6 +59,7 @@ class FaceWatcher:
         self.configure(cfg)
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
+        self._wake = threading.Event()
         self._lock = threading.Lock()
         self._motion: bool | None = None
         self._motion_ts = 0.0
@@ -89,10 +92,11 @@ class FaceWatcher:
         if self._thread is not None:
             return True
         self._stop.clear()
+        self._wake.clear()
         self._thread = threading.Thread(target=self._loop, name="face-watcher",
                                         daemon=True)
         self._thread.start()
-        logger.info("[识别哨兵] 已启动：每 %.1f 秒取一帧，%s，快照 %s",
+        logger.info("[识别哨兵] 已启动：每 %.1f 秒取一帧（PIR 报有人时立刻补一轮），%s，快照 %s",
                     self.interval,
                     f"PIR 门控（保持 {self.motion_hold:.0f} 秒）" if self.motion_gate
                     else "不门控",
@@ -101,6 +105,8 @@ class FaceWatcher:
 
     def stop(self) -> None:
         self._stop.set()
+        # 循环可能正睡在 interval 上，顶它一下才退得出（否则会白等一整轮）
+        self._wake.set()
         thread, self._thread = self._thread, None
         if thread is not None and thread.is_alive():
             thread.join(timeout=self.interval + GRAB_TIMEOUT_S + 1.0)
@@ -115,15 +121,38 @@ class FaceWatcher:
         motion = bool(data.get("motion"))
         now = time.time()
         with self._lock:
+            rising = motion and not self._motion
             self._motion = motion
             self._motion_ts = now
             if motion:
                 self._active_until = now + self.motion_hold
+        if rising:
+            # 人刚到门口，不等满 interval：过去最多要白等 2 秒才抓第一帧
+            self._wake.set()
 
     # ==================== 主循环 ====================
 
+    def _spacing(self) -> float:
+        """两轮之间的下限：既不把抖动的 PIR 打成连拍，也不低于引擎的识别节流窗口。
+        否则唤醒只是白取一帧（recognize_jpeg 判 throttled），下一轮还得等满 interval。"""
+        return max(MIN_WAKE_SPACING_S, self.engine.recognition_min_interval)
+
     def _loop(self) -> None:
-        while not self._stop.wait(self.interval):
+        last_run = 0.0
+        while not self._stop.is_set():
+            now = time.monotonic()
+            floor = last_run + self._spacing()
+            due = last_run + self.interval
+            if now < floor:
+                # 上升沿来早了：事件先攒着，这段只睡觉（拿 _stop 睡，退得出去）
+                self._stop.wait(floor - now)
+                continue
+            # 到下限了：睡到 due，期间 PIR 上升沿随时把这一轮提前
+            self._wake.wait(max(0.0, due - now))
+            if self._stop.is_set():
+                return
+            self._wake.clear()
+            last_run = time.monotonic()
             try:
                 self.inspect_once()
             except Exception as e:                        # noqa: BLE001
@@ -147,7 +176,8 @@ class FaceWatcher:
         if blob is None:
             return self._note("no_camera")
         self._bump("attempts")
-        result = self.engine.recognize_jpeg(blob)
+        # min_face_px 交给引擎做「提特征前」的门控：太远的脸不必再花一张 370ms 的嵌入
+        result = self.engine.recognize_jpeg(blob, min_face_px=self.min_face_px)
         if result.get("error"):
             self._bump("errors")
             return self._note("error", detail=str(result["error"]))
