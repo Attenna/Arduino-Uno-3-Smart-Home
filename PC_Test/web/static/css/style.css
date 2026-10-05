@@ -2662,6 +2662,61 @@ body {
 .settings-section { display: none; }
 .settings-section.active { display: block; }
 
+/* 快捷入口：链接卡片网格 */
+.settings-link-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+    gap: 14px;
+}
+.settings-link-card {
+    display: flex; align-items: center; gap: 12px;
+    padding: 14px 16px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    text-decoration: none;
+    transition: var(--transition);
+}
+.settings-link-card:hover {
+    background: var(--bg-card-hover);
+    border-color: var(--accent-cyan);
+    transform: translateY(-2px);
+    box-shadow: var(--shadow);
+}
+.slc-icon {
+    flex: 0 0 38px; width: 38px; height: 38px;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 12px;
+    background: rgba(245, 179, 1, 0.14);
+    color: var(--accent-cyan);
+}
+.slc-icon svg { width: 20px; height: 20px; }
+.slc-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.slc-text b { font-size: 14px; font-weight: 600; }
+.slc-text small { font-size: 12px; color: var(--text-secondary); }
+
+/* 硬件与连接：状态点 */
+.conn-state { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; font-weight: 600; }
+.conn-dot {
+    width: 9px; height: 9px; border-radius: 50%;
+    background: var(--text-muted); flex: 0 0 auto;
+}
+.conn-dot.online { background: var(--accent-green); box-shadow: 0 0 0 3px rgba(79, 107, 72, 0.16); }
+.conn-dot.offline { background: var(--accent-red); box-shadow: 0 0 0 3px rgba(181, 84, 74, 0.16); }
+.conn-dot.disabled { background: var(--text-muted); }
+.conn-dot.unknown { background: var(--accent-orange); }
+
+/* 偏好：行内窄输入 */
+.pref-inline { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; }
+.input-narrow { width: 84px; padding: 6px 10px; font-size: 13px; }
+.pref-inline .unit { color: var(--text-secondary); font-size: 13px; }
+
+/* 系统维护：结果区与脚注 */
+.maint-result { margin-top: 14px; font-size: 13px; color: var(--text-secondary); line-height: 1.7; white-space: pre-wrap; }
+.maint-result:empty { display: none; }
+.card-footer .foot-note { margin-left: 12px; color: var(--text-secondary); font-size: 13px; }
+
 /* ==================== 登录页 ==================== */
 .login-shell { display: grid; grid-template-columns: 60fr 40fr; min-height: 100vh; }
 

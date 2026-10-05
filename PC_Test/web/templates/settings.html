@@ -9,14 +9,59 @@
 {% block content %}
     <div class="settings-shell">
         <nav class="settings-nav" id="settingsNav">
-            <div class="settings-nav-item active" data-sec="members" data-i18n="settings.members">家庭成员</div>
+            <div class="settings-nav-item active" data-sec="links" data-i18n="settings.links">快捷入口</div>
+            <div class="settings-nav-item" data-sec="members" data-i18n="settings.members">家庭成员</div>
             <div class="settings-nav-item" data-sec="prefs" data-i18n="settings.prefs">偏好设置</div>
+            <div class="settings-nav-item" data-sec="conn" data-i18n="settings.connections">硬件与连接</div>
+            <div class="settings-nav-item" data-sec="maint" data-i18n="settings.maintenance">系统维护</div>
             <div class="settings-nav-item" data-sec="about" data-i18n="settings.about">关于系统</div>
         </nav>
 
         <div>
+            <!-- 快捷入口 -->
+            <section class="settings-section active" data-sec="links">
+                <div class="card">
+                    <div class="card-header">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="card-icon">
+                            <rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/>
+                            <rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>
+                        </svg>
+                        <h3 data-i18n="settings.links">快捷入口</h3>
+                        <span class="card-subtitle" data-i18n="settings.links_subtitle">常用功能与配置页直达</span>
+                    </div>
+                    <div class="card-body">
+                        <div class="settings-link-grid">
+                            <a class="settings-link-card" href="/rooms">
+                                <span class="slc-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg></span>
+                                <span class="slc-text"><b data-i18n="nav.rooms">房间与设备</b><small data-i18n="links.rooms_desc">按房间查看设备与开关</small></span>
+                            </a>
+                            <a class="settings-link-card" href="/automation">
+                                <span class="slc-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L4.09 12.11a1 1 0 00.76 1.65H10l-1 8 8.91-10.11a1 1 0 00-.76-1.65H11z"/></svg></span>
+                                <span class="slc-text"><b data-i18n="nav.automation">场景与自动化</b><small data-i18n="links.automation_desc">积木规则与场景编排</small></span>
+                            </a>
+                            <a class="settings-link-card" href="/access">
+                                <span class="slc-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></span>
+                                <span class="slc-text"><b data-i18n="nav.access">门口与安防</b><small data-i18n="links.access_desc">入户方式、门禁与事件</small></span>
+                            </a>
+                            <a class="settings-link-card" href="/voice">
+                                <span class="slc-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0014 0v-2M12 19v3"/></svg></span>
+                                <span class="slc-text"><b data-i18n="nav.voice">语音管家</b><small data-i18n="links.voice_desc">语音助手与唤醒词</small></span>
+                            </a>
+                            <a class="settings-link-card" href="/history">
+                                <span class="slc-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 109-9 9 9 0 00-7.5 4"/><polyline points="3 3 3 8 8 8"/><polyline points="12 7 12 12 15 14"/></svg></span>
+                                <span class="slc-text"><b data-i18n="nav.history">家庭记录</b><small data-i18n="links.history_desc">温湿度与操作历史</small></span>
+                            </a>
+                            <a class="settings-link-card" href="/hardware">
+                                <span class="slc-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 2v2M15 2v2M9 20v2M15 20v2M2 9h2M2 15h2M20 9h2M20 15h2"/></svg></span>
+                                <span class="slc-text"><b data-i18n="nav.hardware">硬件管理</b><small data-i18n="links.hardware_desc">HA 连接与设备映射</small></span>
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
             <!-- 家庭成员 -->
-            <section class="settings-section active" data-sec="members">
+            <section class="settings-section" data-sec="members">
                 <div class="card">
                     <div class="card-header">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="card-icon">
@@ -31,6 +76,9 @@
                     </div>
                     <div class="card-body">
                         <div id="memberList"></div>
+                    </div>
+                    <div class="card-footer" data-i18n="settings.members_footer">
+                        成员信息保存在本机浏览器，用于快捷识别与展示；门禁凭证请前往「门口与安防」管理。
                     </div>
                 </div>
             </section>
@@ -65,10 +113,88 @@
                                     <span data-i18n="settings.enabled">启用</span>
                                 </label>
                             </div>
+                            <div class="status-item">
+                                <span class="k" data-i18n="settings.temp_warn">温度告警阈值</span>
+                                <span class="pref-inline">
+                                    <input type="number" class="input-field input-narrow" id="prefTempWarn" min="0" max="60" step="1"
+                                           onchange="saveAlertPrefs()">
+                                    <span class="unit">°C</span>
+                                </span>
+                            </div>
+                            <div class="status-item">
+                                <span class="k" data-i18n="settings.quiet_hours">免打扰时段</span>
+                                <span class="pref-inline">
+                                    <input type="time" class="input-field input-narrow" id="prefQuietStart" onchange="saveAlertPrefs()">
+                                    <span class="unit" data-i18n="settings.to">至</span>
+                                    <input type="time" class="input-field input-narrow" id="prefQuietEnd" onchange="saveAlertPrefs()">
+                                </span>
+                            </div>
                         </div>
                     </div>
                     <div class="card-footer" data-i18n="settings.prefs_footer">
                         语言切换会立即作用于当前页面，并保存在本机浏览器中。
+                    </div>
+                </div>
+            </section>
+
+            <!-- 硬件与连接 -->
+            <section class="settings-section" data-sec="conn">
+                <div class="card">
+                    <div class="card-header">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="card-icon">
+                            <path d="M9 3H5a2 2 0 00-2 2v4M15 3h4a2 2 0 012 2v4M9 21H5a2 2 0 01-2-2v-4M15 21h4a2 2 0 002-2v-4"/>
+                            <circle cx="12" cy="12" r="3"/>
+                        </svg>
+                        <h3 data-i18n="settings.connections">硬件与连接</h3>
+                        <button class="btn btn-sm" style="margin-left:auto" onclick="loadConnections()" data-i18n="settings.refresh">刷新</button>
+                    </div>
+                    <div class="card-body">
+                        <div class="status-list" id="connList">
+                            <div class="status-item">
+                                <span class="k" data-i18n="settings.conn_controller">主控（Arduino / 串口）</span>
+                                <span class="conn-state" id="connController"><i class="conn-dot"></i><span class="conn-text">—</span></span>
+                            </div>
+                            <div class="status-item">
+                                <span class="k" data-i18n="settings.conn_ha">Home Assistant</span>
+                                <span class="conn-state" id="connHa"><i class="conn-dot"></i><span class="conn-text">—</span></span>
+                            </div>
+                            <div class="status-item">
+                                <span class="k" data-i18n="settings.conn_camera">摄像头</span>
+                                <span class="conn-state" id="connCamera"><i class="conn-dot"></i><span class="conn-text">—</span></span>
+                            </div>
+                            <div class="status-item">
+                                <span class="k" data-i18n="settings.conn_face">人脸识别</span>
+                                <span class="conn-state" id="connFace"><i class="conn-dot"></i><span class="conn-text">—</span></span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card-footer">
+                        <a class="btn btn-sm" href="/hardware" data-i18n="settings.goto_hardware">前往硬件管理</a>
+                        <span class="foot-note" data-i18n="settings.conn_footer">连接详情与 HA 实体映射请在硬件管理页配置。</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 系统维护 -->
+            <section class="settings-section" data-sec="maint">
+                <div class="card">
+                    <div class="card-header">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="card-icon">
+                            <path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/>
+                        </svg>
+                        <h3 data-i18n="settings.maintenance">系统维护</h3>
+                    </div>
+                    <div class="card-body">
+                        <div class="btn-group">
+                            <button class="btn btn-sm" onclick="exportConfig()" data-i18n="settings.export">导出配置</button>
+                            <button class="btn btn-sm" onclick="runSelfTest()" data-i18n="settings.selftest">硬件自检</button>
+                            <a class="btn btn-sm" href="/history" data-i18n="settings.view_records">查看家庭记录</a>
+                            <button class="btn btn-sm btn-danger" onclick="clearLocalPrefs()" data-i18n="settings.clear_local">清空本机偏好</button>
+                        </div>
+                        <div id="maintResult" class="maint-result"></div>
+                    </div>
+                    <div class="card-footer" data-i18n="settings.maint_footer">
+                        导出内容包含本机偏好与成员列表；硬件自检为只读诊断，不会改变设备状态。
                     </div>
                 </div>
             </section>
@@ -90,6 +216,7 @@
                             <div class="status-item"><span class="k" data-i18n="settings.version">版本</span><span class="v">v2.9</span></div>
                             <div class="status-item"><span class="k" data-i18n="settings.hardware">主控硬件</span><span class="v">Arduino Uno 3</span></div>
                             <div class="status-item"><span class="k" data-i18n="settings.vision">视觉节点</span><span class="v" data-i18n="settings.vision_node">香橙派（人脸识别）</span></div>
+                            <div class="status-item"><span class="k" data-i18n="settings.entry_modes">入户方式</span><span class="v" data-i18n="settings.entry_modes_value">人脸识别 · RFID 刷卡 · 矩阵键盘密码</span></div>
                         </div>
                     </div>
                 </div>
@@ -99,5 +226,5 @@
 {% endblock %}
 
 {% block scripts %}
-    <script src="{{ url_for('static', filename='js/settings.js') }}?v=20261004c"></script>
+    <script src="{{ url_for('static', filename='js/settings.js') }}?v=20261005e"></script>
 {% endblock %}
