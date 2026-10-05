@@ -261,7 +261,7 @@ body {
     display: none;
 }
 .face-result-display {
-    min-height: 180px;
+    min-height: 150px;
     display: flex;
     flex-direction: column;
     justify-content: center;
@@ -269,7 +269,7 @@ body {
 .face-result-waiting {
     text-align: center;
     color: var(--text-muted);
-    padding: 24px;
+    padding: 18px;
 }
 .face-result-waiting .face-waiting-icon {
     width: 48px;
@@ -436,7 +436,10 @@ body {
 
 /* ==================== 主内容 ==================== */
 .main-content {
-    max-width: 1400px;
+    /* 父级 .app-main 是纵向 flex：若只有 margin:auto，交叉轴会退化为「按内容收缩」，
+       导致 auto-fill 网格塌成单列。显式 width:100% 撑满可用宽度，超宽时再由 auto 居中。 */
+    width: 100%;
+    max-width: 1520px;
     margin: 0 auto;
     padding: 28px;
 }
@@ -1071,11 +1074,6 @@ body {
 .ac-mode {
     font-size: 14px;
     color: var(--text-secondary);
-}
-
-/* 空调卡片控件较多：桌面端跨两列，避免按钮被挤成单只换行、标题折行 */
-@media (min-width: 769px) {
-    .card-ac { grid-column: span 2; }
 }
 
 /* ==================== 远程控制面板 ==================== */
@@ -2074,15 +2072,18 @@ body {
 
 .device-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-    gap: 20px;
+    /* 208px：紧凑卡面下尽量多排几列（1440px 视口下 5 列、1920px 下 6 列），
+       同时保证四枚档位按钮单行不落单
+       （4×约39px + 3×6px 间距 ≈ 174px 内宽，加左右 14px 内边距 ≈ 202px）。 */
+    grid-template-columns: repeat(auto-fill, minmax(208px, 1fr));
+    gap: 16px;
 }
 
 .device-card {
     background: var(--bg-card);
     border: 1px solid var(--border-color);
     border-radius: var(--radius);
-    padding: 18px;
+    padding: 14px;
     box-shadow: var(--shadow);
     cursor: pointer;
     transition: var(--transition);
@@ -2090,11 +2091,11 @@ body {
 
 .device-card:hover { transform: translateY(-2px); box-shadow: 0 10px 26px rgba(160, 130, 95, 0.14); }
 
-.dc-head { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+.dc-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
 
 .dc-icon {
-    width: 44px; height: 44px;
-    border-radius: 12px;
+    width: 38px; height: 38px;
+    border-radius: 10px;
     display: flex; align-items: center; justify-content: center;
     background: rgba(160, 130, 95, 0.14);
     color: var(--text-muted);
@@ -2102,21 +2103,24 @@ body {
     transition: var(--transition);
 }
 
-.dc-icon svg { width: 24px; height: 24px; }
+.dc-icon svg { width: 20px; height: 20px; }
 .device-card.on .dc-icon { background: rgba(245, 179, 1, 0.16); color: var(--accent-cyan); }
 
-.dc-name { font-size: 14.5px; font-weight: 600; color: var(--text-primary); }
-.dc-loc { font-size: 11.5px; color: var(--text-muted); }
+.dc-name { font-size: 13.5px; font-weight: 600; color: var(--text-primary); }
+.dc-loc { font-size: 11px; color: var(--text-muted); }
 
 .dc-state {
     display: flex; align-items: center; gap: 6px;
-    font-size: 13px; color: var(--text-secondary);
-    margin-bottom: 12px;
+    font-size: 12.5px; color: var(--text-secondary);
+    margin-bottom: 8px;
 }
 
-.dc-meta { font-size: 11.5px; color: var(--text-muted); margin-top: 10px; }
+.dc-meta { font-size: 11px; color: var(--text-muted); margin-top: 6px; }
 
-.dc-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.dc-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+
+/* 设备卡内的档位按钮：紧凑内边距，使四枚按钮在 208px 卡宽下仍单行不落单 */
+.dc-actions .btn-sm { padding: 5px 7px; }
 
 .dc-offline { opacity: 0.55; }
 
@@ -2248,7 +2252,197 @@ body {
 .rd-row .v { color: var(--text-primary); }
 
 /* ==================== 「门口与安防」页 ==================== */
-.security-grid { display: grid; grid-template-columns: 65fr 35fr; gap: 20px; align-items: start; }
+
+/* 入户方式总览：三张可点击切换的方式卡 + 详情 */
+.card-methods { margin-bottom: 20px; }
+
+.methods-last {
+    margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.methods-hint {
+    font-size: 12.5px;
+    color: var(--text-muted);
+    margin-bottom: 14px;
+}
+
+.method-tabs {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+}
+
+.method-tab {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 16px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-color);
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    cursor: pointer;
+    text-align: left;
+    font: inherit;
+    transition: var(--transition);
+}
+
+.method-tab svg {
+    width: 26px;
+    height: 26px;
+    color: var(--text-muted);
+    transition: var(--transition);
+}
+
+.method-tab > span {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.method-tab-tag {
+    font-style: normal;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: rgba(160, 130, 95, 0.14);
+    color: var(--text-muted);
+}
+
+.method-tab:hover {
+    border-color: rgba(245, 179, 1, 0.45);
+    transform: translateY(-1px);
+}
+
+.method-tab.active {
+    border-color: var(--accent-cyan);
+    background: var(--bg-card-hover);
+    box-shadow: 0 6px 18px rgba(245, 179, 1, 0.14);
+}
+
+.method-tab.active svg { color: var(--accent-cyan); }
+
+.method-tab.active .method-tab-tag {
+    background: rgba(245, 179, 1, 0.18);
+    color: var(--accent-cyan);
+}
+
+.method-detail {
+    margin-top: 16px;
+    padding: 16px 18px;
+    border-radius: var(--radius-sm);
+    background: var(--bg-primary);
+    border: 1px dashed rgba(160, 130, 95, 0.28);
+}
+
+.method-detail-main {
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+}
+
+.method-detail-icon {
+    width: 44px;
+    height: 44px;
+    flex-shrink: 0;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(245, 179, 1, 0.14);
+    color: var(--accent-cyan);
+}
+
+.method-detail-icon svg { width: 24px; height: 24px; }
+
+.method-detail-text { flex: 1; min-width: 0; }
+
+.method-detail-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 4px;
+}
+
+.method-detail-name { font-size: 15px; font-weight: 700; color: var(--text-primary); }
+
+.method-detail-stat {
+    font-size: 11.5px;
+    font-weight: 600;
+    padding: 2px 9px;
+    border-radius: 999px;
+    background: rgba(79, 107, 72, 0.14);
+    color: var(--accent-green);
+    font-family: var(--font-mono);
+}
+
+.method-detail-desc {
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.7;
+}
+
+.method-note {
+    margin-top: 12px;
+    font-size: 12.5px;
+    color: var(--text-muted);
+}
+
+.keypad-block {
+    margin-top: 14px;
+    padding-top: 14px;
+    border-top: 1px dashed rgba(160, 130, 95, 0.28);
+}
+
+.keypad-block h4 { font-size: 13px; color: var(--text-secondary); margin-bottom: 4px; }
+
+.keypad-hint { font-size: 12px; color: var(--text-muted); margin-bottom: 10px; }
+
+/* 入户方式彩色标签：人脸 / 刷卡 / 密码 */
+.status-tag.face { background: rgba(245, 179, 1, 0.16); color: var(--accent-cyan); }
+.status-tag.rfid { background: rgba(71, 96, 68, 0.16); color: var(--accent-blue); }
+.status-tag.keypad { background: rgba(154, 122, 160, 0.18); color: #8a6a90; }
+
+/* 人员凭证徽章 */
+.person-meta { min-width: 0; }
+
+.person-cred { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+
+.cred-chip {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 999px;
+}
+
+.cred-chip.on.face { background: rgba(245, 179, 1, 0.16); color: var(--accent-cyan); }
+.cred-chip.on.card { background: rgba(71, 96, 68, 0.16); color: var(--accent-blue); }
+.cred-chip.off { background: rgba(160, 130, 95, 0.12); color: var(--text-muted); }
+
+.enroll-btn { flex-shrink: 0; }
+
+/* 门口与安防底部：人脸事件 + 门禁日志，宽屏并排 */
+.access-tables {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 20px;
+    margin-top: 20px;
+    align-items: start;
+}
+
+.security-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
+    gap: 20px;
+    align-items: start;
+}
 
 .status-list { display: flex; flex-direction: column; }
 
@@ -2446,10 +2640,15 @@ body {
     .rule-layout { grid-template-columns: 1fr; }
     .rule-detail { position: static; }
     .security-grid { grid-template-columns: 1fr; }
+    .access-tables { grid-template-columns: 1fr; }
     .voice-shell { grid-template-columns: 1fr; }
     .settings-shell { grid-template-columns: 1fr; }
     .settings-nav { position: static; flex-direction: row; flex-wrap: wrap; }
     .room-scene { grid-template-columns: 1fr 1fr; }
+}
+
+@media (max-width: 760px) {
+    .method-tabs { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 1024px) {
@@ -2640,6 +2839,15 @@ html[lang="en"] h3 {
 @media (min-width: 1201px) {
     html[lang="en"] .dashboard-grid:not(.grid-4) {
         grid-template-columns: repeat(3, 1fr);
+    }
+}
+
+/* —— 英文文案更长：房间页设备卡放宽最小宽度 ——
+   「Air Conditioner (Midea IR)」等标题与 Full/Half/Night/Off 四枚按钮
+   需要更宽卡面才能单行；放宽后标题、按钮均不折行。 */
+@media (min-width: 1201px) {
+    html[lang="en"] .device-grid {
+        grid-template-columns: repeat(auto-fill, minmax(248px, 1fr));
     }
 }
 
