@@ -4,8 +4,18 @@
 
 {% block head %}
 <style>
-    /* 门口与安防页内容较宽：放宽上限，避免宽屏下两侧留白过多 */
-    .main-content { max-width: 1720px; }
+    /* 门口与安防页：取消宽度上限，超宽屏也填满，避免两侧留白 */
+    .main-content { max-width: 100%; }
+
+    /* 超宽屏：授权人员改为自适应多列，消除行内大片横向空隙 */
+    @media (min-width: 1500px) {
+        .card-persons .person-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
+            gap: 10px;
+        }
+        .card-persons .person-item { margin-bottom: 0; }
+    }
 </style>
 {% endblock %}
 
@@ -30,29 +40,38 @@
             <p class="methods-hint" data-i18n="access.methods_hint">点击切换，查看三种开门方式的说明与当前状态</p>
             <div class="method-tabs" id="methodTabs">
                 <button type="button" class="method-tab active" data-method="face" onclick="selectMethod('face')">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-                        <circle cx="12" cy="12" r="9"/>
-                        <circle cx="9" cy="10" r="1.2" fill="currentColor" stroke="none"/>
-                        <circle cx="15" cy="10" r="1.2" fill="currentColor" stroke="none"/>
-                        <path d="M8.5 15c1 1.2 2.2 1.8 3.5 1.8s2.5-.6 3.5-1.8"/>
-                    </svg>
-                    <span data-i18n="access.method_face_name">人脸识别</span>
+                    <span class="method-tab-top">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                            <circle cx="12" cy="12" r="9"/>
+                            <circle cx="9" cy="10" r="1.2" fill="currentColor" stroke="none"/>
+                            <circle cx="15" cy="10" r="1.2" fill="currentColor" stroke="none"/>
+                            <path d="M8.5 15c1 1.2 2.2 1.8 3.5 1.8s2.5-.6 3.5-1.8"/>
+                        </svg>
+                        <em class="method-tab-current" data-i18n="access.method_current">当前</em>
+                    </span>
+                    <span class="method-tab-name" data-i18n="access.method_face_name">人脸识别</span>
                     <em class="method-tab-tag" data-i18n="access.method_status_on">启用中</em>
                 </button>
                 <button type="button" class="method-tab" data-method="rfid" onclick="selectMethod('rfid')">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-                        <rect x="3" y="5" width="18" height="14" rx="2"/>
-                        <path d="M3 10h18M7 15h4"/>
-                    </svg>
-                    <span data-i18n="access.method_rfid_name">RFID 刷卡</span>
+                    <span class="method-tab-top">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                            <rect x="3" y="5" width="18" height="14" rx="2"/>
+                            <path d="M3 10h18M7 15h4"/>
+                        </svg>
+                        <em class="method-tab-current" data-i18n="access.method_current">当前</em>
+                    </span>
+                    <span class="method-tab-name" data-i18n="access.method_rfid_name">RFID 刷卡</span>
                     <em class="method-tab-tag" data-i18n="access.method_status_ready">可用</em>
                 </button>
                 <button type="button" class="method-tab" data-method="keypad" onclick="selectMethod('keypad')">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-                        <rect x="4" y="3" width="16" height="18" rx="2"/>
-                        <path d="M8 7h1M11.5 7h1M15 7h1M8 11h1M11.5 11h1M15 11h1M8 15h1M11.5 15h1M15 15h1"/>
-                    </svg>
-                    <span data-i18n="access.method_keypad_name">矩阵键盘密码</span>
+                    <span class="method-tab-top">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                            <rect x="4" y="3" width="16" height="18" rx="2"/>
+                            <path d="M8 7h1M11.5 7h1M15 7h1M8 11h1M11.5 11h1M15 11h1M8 15h1M11.5 15h1M15 15h1"/>
+                        </svg>
+                        <em class="method-tab-current" data-i18n="access.method_current">当前</em>
+                    </span>
+                    <span class="method-tab-name" data-i18n="access.method_keypad_name">矩阵键盘密码</span>
                     <em class="method-tab-tag" data-i18n="access.method_status_ready">可用</em>
                 </button>
             </div>

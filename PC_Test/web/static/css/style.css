@@ -2331,17 +2331,17 @@ body {
 .method-tabs {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 12px;
+    gap: 14px;
 }
 
 .method-tab {
     display: flex;
     flex-direction: column;
     align-items: flex-start;
-    gap: 8px;
-    padding: 16px;
+    gap: 12px;
+    padding: 18px 18px 16px;
     border-radius: var(--radius-sm);
-    border: 1px solid var(--border-color);
+    border: 1.5px solid var(--border-color);
     background: var(--bg-secondary);
     color: var(--text-secondary);
     cursor: pointer;
@@ -2350,16 +2350,34 @@ body {
     transition: var(--transition);
 }
 
+.method-tab-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+}
+
 .method-tab svg {
-    width: 26px;
-    height: 26px;
+    width: 34px;
+    height: 34px;
     color: var(--text-muted);
     transition: var(--transition);
 }
 
-.method-tab > span {
-    font-size: 14px;
-    font-weight: 600;
+.method-tab-current {
+    display: none;
+    font-style: normal;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 3px 9px;
+    border-radius: 999px;
+    background: var(--accent-cyan);
+    color: #3a2c00;
+}
+
+.method-tab-name {
+    font-size: 15.5px;
+    font-weight: 700;
     color: var(--text-primary);
 }
 
@@ -2381,10 +2399,12 @@ body {
 .method-tab.active {
     border-color: var(--accent-cyan);
     background: var(--bg-card-hover);
-    box-shadow: 0 6px 18px rgba(245, 179, 1, 0.14);
+    box-shadow: 0 8px 22px rgba(245, 179, 1, 0.18);
 }
 
 .method-tab.active svg { color: var(--accent-cyan); }
+
+.method-tab.active .method-tab-current { display: inline-flex; }
 
 .method-tab.active .method-tab-tag {
     background: rgba(245, 179, 1, 0.18);
