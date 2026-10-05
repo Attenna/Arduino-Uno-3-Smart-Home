@@ -67,34 +67,22 @@ def restore_rules():
                     "message": f"内置规则已恢复，当前共 {len(rules)} 条"})
 
 
+# 全屋模式状态机已由上游拆除，模式/档位统一由全局状态（g:全屋模式 等）承载。
+# 这两个接口保留路由以兼容旧版界面：返回 410 提示前端优雅降级，页面不崩。
+_HOME_MODE_GONE = {"error": "该功能已由全局状态替代",
+                   "error_en": "This feature is now provided by global state"}
+
+
 @bp.route("/api/automation/home_mode", methods=["GET"])
 def get_home_mode():
-    """全屋模式状态（自动/手动/离家 + 风扇/灯光覆盖档位 + 逗留/关门倒计时）。"""
-    engine = extensions.automation
-    if engine is None:
-        return jsonify({"error": "自动化引擎未启动"}), 503
-    return jsonify(engine.home_mode.config())
+    """全屋模式状态：状态机已拆除，改由全局状态承载（410 优雅降级）。"""
+    return jsonify(_HOME_MODE_GONE), 410
 
 
 @bp.route("/api/automation/home_mode", methods=["PUT"])
 def put_home_mode():
-    """设置全屋模式。body: {mode?, fan_override?, light_level?, enabled?, 阈值...}。"""
-    engine = extensions.automation
-    if engine is None:
-        return jsonify({"error": "自动化引擎未启动"}), 503
-    try:
-        data = request.get_json(force=True) or {}
-        reason = str(data.pop("reason", "") or "页面设置")
-        cfg = engine.home_mode.configure(reason=reason, **data)
-        # 手动模式下 tick 不重发覆盖档；页面显式切换风扇/灯光覆盖档时立即执行
-        # 一次（_apply_* 去重保证目标未变不下发串口）
-        if "fan_override" in data or "light_level" in data:
-            engine.home_mode.apply_overrides_now(
-                reason="页面切换" + ("风扇覆盖" if "fan_override" in data
-                                    else "灯光档位"))
-    except Exception as e:                               # noqa: BLE001
-        return jsonify({"error": f"全屋模式设置失败：{e}"}), 500
-    return jsonify({"ok": True, "config": cfg, "message": "全屋模式设置已生效"})
+    """设置全屋模式：状态机已拆除，改由全局状态承载（410 优雅降级）。"""
+    return jsonify(_HOME_MODE_GONE), 410
 
 
 @bp.route("/api/automation/logs", methods=["GET"])
