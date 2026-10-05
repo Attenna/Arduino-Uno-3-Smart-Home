@@ -13,15 +13,131 @@ from werkzeug.security import check_password_hash
 logger = logging.getLogger(__name__)
 SERVICE_ROUTES = {("GET", "/api/hardware/tools"),
                   ("POST", "/api/hardware/tool"), ("GET", "/api/status")}
-LOGIN = """<!doctype html><html lang="zh-CN"><meta charset="utf-8">
+LOGIN = """<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>智能家居登录</title><style>body{font:18px sans-serif;max-width:360px;
-margin:12vh auto;padding:24px}input,button{box-sizing:border-box;width:100%;
-padding:12px;margin:10px 0}p{color:#b22}</style><h1>智能家居</h1>
-<form method="post"><input type="hidden" name="csrf" value="{{ csrf }}">
-<label>用户名<input name="username" autocomplete="username" required></label>
-<label>密码<input type="password" name="password" autocomplete="current-password" required></label>
-<button>登录</button><p>{{ error }}</p></form></html>"""
+<title data-zh="智能家居登录" data-en="Smart Home Login">智能家居登录</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400..700&family=Noto+Serif+SC:wght@500;600;700&family=Plus+Jakarta+Sans:wght@400..800&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg-primary:#fdf3d7;--bg-card:#fffef7;--border:#ead5a0;
+  --text-primary:#3b362c;--text-secondary:#7c7466;--text-muted:#b2a992;
+  --accent:#f5b301;--accent-strong:#e0a200;--danger:#b5544a;
+  --radius:18px;--radius-sm:10px;
+  --transition:all .3s cubic-bezier(.4,0,.2,1);
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;
+  color:var(--text-primary);background:var(--bg-primary);line-height:1.5;
+  background-image:radial-gradient(1200px 600px at 50% -10%,#fffdf0 0%,rgba(253,243,215,0) 70%),
+                   radial-gradient(900px 520px at 92% 112%,rgba(245,179,1,.16) 0%,rgba(253,243,215,0) 62%);
+  display:flex;align-items:center;justify-content:center;min-height:100vh;padding:24px;
+}
+.login-card{
+  position:relative;width:100%;max-width:400px;
+  background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);
+  box-shadow:0 18px 48px rgba(196,158,44,.22);padding:42px 34px 30px;
+}
+.lang-switch{
+  position:absolute;top:16px;right:16px;height:32px;min-width:46px;padding:0 12px;
+  background:#fffbf0;border:1px solid var(--border);border-radius:999px;
+  color:var(--text-secondary);font-size:13px;font-weight:600;cursor:pointer;transition:var(--transition);
+}
+.lang-switch:hover{color:var(--text-primary);border-color:var(--accent);background:#fdecc0}
+.brand{text-align:center;margin-bottom:26px}
+.brand-icon{
+  display:inline-flex;align-items:center;justify-content:center;width:56px;height:56px;margin-bottom:14px;
+  color:#fff;background:var(--accent);border-radius:16px;box-shadow:0 8px 20px rgba(245,179,1,.35);
+}
+.brand-icon svg{width:30px;height:30px}
+h1{font-size:24px;font-weight:600;letter-spacing:.5px}
+.brand-sub{margin-top:6px;font-size:13px;color:var(--text-secondary)}
+.field{display:block;margin-bottom:16px}
+.field>span{display:block;margin-bottom:6px;font-size:13px;font-weight:600;color:var(--text-secondary)}
+.field input{
+  width:100%;padding:12px 14px;font-size:15px;color:var(--text-primary);
+  background:#fffef7;border:1px solid var(--border);border-radius:var(--radius-sm);
+  outline:none;transition:var(--transition);
+}
+.field input:focus{border-color:var(--accent);background:#fff;box-shadow:0 0 0 3px rgba(245,179,1,.18)}
+.submit{
+  width:100%;margin-top:6px;padding:13px;font-size:15px;font-weight:700;color:#3b362c;
+  background:var(--accent);border:none;border-radius:var(--radius-sm);cursor:pointer;transition:var(--transition);
+}
+.submit:hover{background:var(--accent-strong);box-shadow:0 6px 18px rgba(245,179,1,.35);transform:translateY(-1px)}
+.submit:active{transform:translateY(0)}
+.error{
+  margin-top:14px;padding:10px 12px;text-align:center;font-size:13px;color:var(--danger);
+  background:rgba(181,84,74,.1);border:1px solid rgba(181,84,74,.3);border-radius:var(--radius-sm);
+}
+.error[hidden]{display:none}
+.foot{margin-top:24px;text-align:center;font-size:12px;color:var(--text-muted)}
+html[lang="en"] body{font-family:'Plus Jakarta Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
+html[lang="en"] h1{font-family:'Fraunces',Georgia,serif;font-weight:600}
+</style>
+</head>
+<body>
+  <div class="login-card">
+    <button class="lang-switch" id="langSwitch" type="button" aria-label="language">EN</button>
+    <div class="brand">
+      <span class="brand-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+      </span>
+      <h1 data-zh="智能家居" data-en="Smart Home">智能家居</h1>
+      <p class="brand-sub" data-zh="请登录以继续" data-en="Sign in to continue">请登录以继续</p>
+    </div>
+    <form method="post">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label class="field">
+        <span data-zh="用户名" data-en="Username">用户名</span>
+        <input name="username" autocomplete="username" required>
+      </label>
+      <label class="field">
+        <span data-zh="密码" data-en="Password">密码</span>
+        <input type="password" name="password" autocomplete="current-password" required>
+      </label>
+      <button class="submit" data-zh="登录" data-en="Sign in">登录</button>
+      <p class="error" id="errBox"{% if not error %} hidden{% endif %}>{{ error }}</p>
+    </form>
+    <div class="foot" data-zh="智能家居控制系统 · v2.9" data-en="Smart Home System · v2.9">智能家居控制系统 · v2.9</div>
+  </div>
+  <script>
+  (function(){
+    var KEY='smart_home_lang';
+    var WRONG=['用户名或密码错误','Incorrect username or password'];
+    function apply(lang){
+      var en=lang==='en';
+      document.documentElement.lang=en?'en':'zh-CN';
+      document.querySelectorAll('[data-zh]').forEach(function(el){
+        el.textContent=en?el.dataset.en:el.dataset.zh;
+      });
+      var sw=document.getElementById('langSwitch');
+      if(sw){sw.textContent=en?'中':'EN';}
+      var err=document.getElementById('errBox');
+      if(err){
+        var v=(err.textContent||'').trim();
+        if(v===WRONG[0]){err.textContent=WRONG[1];}
+        else if(v===WRONG[1]){err.textContent=WRONG[0];}
+      }
+    }
+    var saved='zh';
+    try{saved=localStorage.getItem(KEY)||'zh';}catch(e){}
+    apply(saved);
+    var sw=document.getElementById('langSwitch');
+    if(sw){sw.addEventListener('click',function(){
+      var next=document.documentElement.lang==='en'?'zh':'en';
+      try{localStorage.setItem(KEY,next);}catch(e){}
+      apply(next);
+    });}
+  })();
+  </script>
+</body>
+</html>"""
 
 
 def install_auth(app):
