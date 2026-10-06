@@ -2784,10 +2784,6 @@ body {
 }
 
 @media (max-width: 1024px) {
-    .sidebar { width: 72px; padding: 20px 10px; }
-    .side-brand span, .side-link span, .side-foot { display: none; }
-    .side-link { justify-content: center; }
-    .app-main { margin-left: 72px; }
     .login-shell { grid-template-columns: 1fr; }
     .login-visual { display: none; }
 }
