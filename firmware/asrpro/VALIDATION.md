@@ -1,23 +1,18 @@
 # 本次交付验证（2026-10-07）
 
 - Issue：[#42](https://github.com/Attenna/Arduino-Uno-3-Smart-Home/issues/42)。
-- 工作分支：`feat/42-asrpro-voice`，独立工作目录 `.worktrees/asrpro-voice`。
-- 开发基线：`b3b9c6abb709bd47ee491b6e2fca0c9db92ac568`，已联网 fetch 后同步。
-- SSH 密码认证成功；当前部署标记 `.deployed-git-commit` 为上述主分支基线。
-  活动目录为部署展开目录，不含 `.git`，不能用 `git rev-parse` 查询部署版本。
-- `/api/ready` 返回 `status=ok`，数据库、硬件桥、A/B 板新鲜度均正常；
-  匿名 `/api/status` 返回 401。容器启动阶段的 health 状态可能短暂为 starting。
+- 工作分支：`feat/42-asrpro-voice`，已从最新主分支同步。
 - 用户明确要求审核通过后才部署。本次只上传待审查代码并运行隔离测试；
   未部署 ASRPRO 服务、未烧录、未执行开灯/开门等真实硬件动作。
 
 ## 已完成
 
-1. 使用本机天问 Block AI 的 `riscv-nuclei-elf-g++`，配合安装 SDK 的实际头文件、
+1. 使用天问 Block AI 的 `riscv-nuclei-elf-g++`，配合 SDK 的实际头文件、
    `-march=rv32imafc -mabi=ilp32f -fshort-enums -fpermissive -fno-exceptions -Os`，
    对 `smart_home.cpp` 完成源文件语法检查和 `-c` 目标文件编译，均成功。
    SDK 自带 `asr_event.h` 有枚举及回调类型宽松转换警告，沿用其原有编译模式。
 2. `python -m compileall PC_Test/asrpro_bridge.py PC_Test/tests/test_asrpro_bridge.py` 成功。
-3. 在香橙派独立 Linux 测试容器中运行
+3. 在独立 Linux 测试容器中运行
    `python -m unittest discover -s PC_Test/tests -v`，设置 `PYTHONPATH=/src/PC_Test`，
    共 **170 项全部通过**，包括新增 7 项 ASRPRO 测试。
    容器使用已有测试镜像、`--network none --read-only --tmpfs /tmp`，
