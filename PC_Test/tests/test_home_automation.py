@@ -42,18 +42,49 @@ class HomeRulesTests(unittest.TestCase):
     def test_occupied_temperature_and_light_hysteresis(self):
         self.apply("temp_hot"); self.apply("light_dark")
         self.assertEqual((self.status["fan_speed"], self.status["light_status"]), (100, "on"))
-        self.snapshot(temperature=26, light=250)
+        self.snapshot(temperature=26, light=550)
         self.apply("temp_cool"); self.apply("light_off")
         self.assertEqual((self.status["fan_speed"], self.status["light_status"]), (100, "on"))
-        self.snapshot(temperature=25, light=300)
+        self.snapshot(temperature=25, light=701)
         self.apply("temp_cool"); self.apply("light_off")
         self.assertEqual((self.status["fan_speed"], self.status["light_status"]), (0, "off"))
 
     def test_threshold_boundaries_do_not_start_devices(self):
-        self.snapshot(temperature=26, light=200)
+        self.snapshot(temperature=26, light=400)
         self.apply("temp_hot"); self.apply("light_dark")
         self.bridge.control_fan.assert_not_called()
         self.bridge.control_light.assert_not_called()
+
+        self.status["light_status"] = "on"
+        self.snapshot(temperature=26, light=700)
+        self.apply("light_off")
+        self.bridge.control_light.assert_not_called()
+
+    def test_v7_upgrade_only_updates_light_threshold_presets(self):
+        old_dark = dict(self.rules["light_dark"])
+        old_dark["conditions"] = [dict(c) for c in old_dark["conditions"]]
+        old_dark["conditions"][-1] = {
+            "sensor": "light", "op": "<", "value": 200}
+        old_off = dict(self.rules["light_off"])
+        old_off["conditions"] = [dict(c) for c in old_off["conditions"]]
+        old_off["conditions"][-1] = {
+            "sensor": "light", "op": ">=", "value": 300}
+        untouched = dict(self.rules["temp_hot"])
+        untouched["name"] = "保留的温度规则"
+        self.engine.rules_path.write_text(json.dumps({
+            "presets_version": 6,
+            "rules": [old_dark, old_off, untouched],
+        }))
+
+        self.engine.load()
+        rules = {r["preset"]: r for r in self.engine.rules}
+        dark = rules["light_dark"]["conditions"][-1]
+        bright = rules["light_off"]["conditions"][-1]
+        self.assertEqual((dark["op"], dark["value"]), ("<", 400))
+        self.assertEqual((bright["op"], bright["value"]), (">", 700))
+        self.assertEqual(rules["temp_hot"]["name"], "保留的温度规则")
+        saved = json.loads(self.engine.rules_path.read_text())
+        self.assertEqual(saved["presets_version"], 7)
 
     def test_access_uses_one_unconditional_open_close_sequence(self):
         r = self.rules["access_open_door"]

@@ -72,7 +72,7 @@
 // D11=MOSI, D12=MISO, D13=SCK（SPI 硬件固定）
 
 // ---- 周期上报 ----
-#define REPORT_INTERVAL_MS  2000
+#define REPORT_INTERVAL_MS  1000
 
 // ---- 事件防抖 (ms) ----
 #define DEBOUNCE_TOUCH_MS   300
