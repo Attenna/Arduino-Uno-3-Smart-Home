@@ -74,6 +74,12 @@ void Protocol::handleLine(const char* line) {
         return;
     }
 
+    if (strcmp(cmd.device, "ultrasonic") == 0) {
+        if (strcmp(cmd.action, "read") == 0) sendDistance(cmd.id);
+        else respondError("unknown_command", cmd.id);
+        return;
+    }
+
     // 系统命令
     if (strcmp(cmd.device, "system") == 0) {
         if (strcmp(cmd.action, "status") == 0) {
@@ -105,6 +111,34 @@ void Protocol::handleLine(const char* line) {
     } else {
         respondError("unknown_command", cmd.id);
     }
+}
+
+void Protocol::sendDistance(long id) {
+    unsigned long echo = _dispatcher->measureDistance();
+    bool valid = echo >= ULTRASONIC_MIN_ECHO_US && echo <= ULTRASONIC_MAX_ECHO_US;
+    Serial.print(F("{\"module\":\"output\",\"type\":\"distance\""));
+    if (id >= 0) {
+        Serial.print(F(",\"id\":"));
+        Serial.print(id);
+    }
+    Serial.print(F(",\"sensor\":\"HC-SR04\",\"valid\":"));
+    Serial.print(valid ? F("true") : F("false"));
+    Serial.print(F(",\"status\":\""));
+    Serial.print(valid ? F("ok") : (echo == 0 ? F("timeout") : F("out_of_range")));
+    Serial.print(F("\",\"distance_cm\":"));
+    if (valid) {
+        unsigned long mm = (echo * 10UL + 29UL) / 58UL;
+        Serial.print(mm / 10UL);
+        Serial.print('.');
+        Serial.print(mm % 10UL);
+    } else {
+        Serial.print(F("null"));
+    }
+    Serial.print(F(",\"echo_us\":"));
+    Serial.print(echo);
+    Serial.print(F(",\"uptime_ms\":"));
+    Serial.print(millis());
+    Serial.println('}');
 }
 
 // 回显请求 id：客户端带了 id 就原样带回，服务端据此判断响应属于哪条命令，

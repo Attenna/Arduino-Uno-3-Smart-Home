@@ -10,7 +10,7 @@
 > | 板 | 固件版本 | 说明 |
 > |----|---------|------|
 > | Module A | `V2.1` | 移除超声波 / 土壤湿度，新增矩阵键盘 |
-> | Module B | `V2.9` | 移除 TM1637 数码管；红外支持 NEC + 美的空调长码；风扇引脚每 loop 自愈；响应回显请求 `id`（V2.6）；看门狗 `WDTO_2S`（V2.7，固件挂死 2s 自动复位）；灯带全局亮度 60→255（V2.8）；**命令响应/就绪帧回附固件状态快照 `state`，新增 `system/selftest` 自检**（V2.9） |
+> | Module B | `V2.10` | HC-SR04 按需测距（Trig D6 / Echo D5）； 移除 TM1637 数码管；红外支持 NEC + 美的空调长码；风扇引脚每 loop 自愈；响应回显请求 `id`（V2.6）；看门狗 `WDTO_2S`（V2.7，固件挂死 2s 自动复位）；灯带全局亮度 60→255（V2.8）；**命令响应/就绪帧回附固件状态快照 `state`，新增 `system/selftest` 自检**（V2.9） |
 >
 > 下文中，被裁剪的字段/命令均以 **「（已裁剪）」** 标注。
 
@@ -263,3 +263,9 @@ Module A 原则上"只报告"，下行仅支持少量**无业务含义**的控�
 | `smarthome/output/command` | HA → B | Module B 命令 JSON |
 | `smarthome/output/response` | B → HA | Module B 响应 JSON |
 | `smarthome/output/state` | B → HA | Module B 状态 JSON |
+
+## B 板新增 HC-SR04（V2.10）
+
+`{"cmd":"ultrasonic","action":"read","id":42}` 返回带匹配 `id` 的 `distance` 帧。
+Trig=D6、Echo=D5；仅 `valid=true` 时 `distance_cm` 可用。
+接线、超时语义和 HTTP/MCP 调用见 [超声波测距](ultrasonic.md)。

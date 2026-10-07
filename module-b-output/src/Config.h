@@ -14,8 +14,19 @@
 // ============================================
 // 硬件裁剪开关（硬件小组 2026-09 正式版会议决定）
 // ============================================
-#define ENABLE_TM1637       0   // 四位数码管时钟单元已移除 → D5/D6 悬空（保持高阻）
+#define ENABLE_TM1637       0   // 四位数码管已移除；D5/D6 改接 HC-SR04
 #define ENABLE_IR_TX        1   // 红外发射（D12，NEC 38kHz）保留
+
+// ---- HC-SR04（B 板，用户接线：Trig=D6 / Echo=D5）----
+#define ULTRASONIC_TRIG_PIN  6
+#define ULTRASONIC_ECHO_PIN  5
+#define ULTRASONIC_TIMEOUT_US 25000UL
+#define ULTRASONIC_INTERVAL_MS 65UL
+#define ULTRASONIC_MIN_ECHO_US 116UL   // 2 cm
+#define ULTRASONIC_MAX_ECHO_US 23200UL // 400 cm
+#if ENABLE_TM1637
+#error "HC-SR04 and TM1637 cannot share D5/D6"
+#endif
 
 // ---- 舵机 ----
 #define DOOR_SERVO_PIN      2
@@ -80,6 +91,6 @@
 // ---- 设备标识 ----
 #define BOARD_TYPE          "MODULE_B"
 #define BOARD_ROLE          "OUTPUT_NODE"
-#define FW_VERSION          "V2.9"  // V2.2 起红外支持美的长码；V2.3 修 D12(SPI MISO) 被 OLED 抢成 INPUT 导致发不出红外；V2.4 setup 开头提前锁死风扇 D7/D8；V2.5 风扇每 loop 引脚自愈（被外设改回 INPUT 时抢回并上报）；V2.6 响应回显请求 id，服务端可丢弃迟到响应；V2.7 看门狗 WDTO_2S；V2.8 灯带全局亮度 60→255（原来 255 会被缩成约 24%，看着像没亮）；V2.9 命令响应/就绪帧回附固件状态快照与复位原因，新增 system/selftest 自检
+#define FW_VERSION          "V2.10"  // V2.10 新增 HC-SR04 按需测距； V2.2 起红外支持美的长码；V2.3 修 D12(SPI MISO) 被 OLED 抢成 INPUT 导致发不出红外；V2.4 setup 开头提前锁死风扇 D7/D8；V2.5 风扇每 loop 引脚自愈（被外设改回 INPUT 时抢回并上报）；V2.6 响应回显请求 id，服务端可丢弃迟到响应；V2.7 看门狗 WDTO_2S；V2.8 灯带全局亮度 60→255（原来 255 会被缩成约 24%，看着像没亮）；V2.9 命令响应/就绪帧回附固件状态快照与复位原因，新增 system/selftest 自检
 
 #endif // CONFIG_B_H

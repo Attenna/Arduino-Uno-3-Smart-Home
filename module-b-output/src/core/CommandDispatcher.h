@@ -9,6 +9,7 @@
 #include "../drivers/Fan.h"
 #include "../drivers/Light.h"
 #include "../drivers/Buzzer.h"
+#include "../drivers/Ultrasonic.h"
 #if ENABLE_TM1637
 #include "../drivers/Display.h"
 #endif
@@ -31,6 +32,7 @@ public:
     // 自检快照：命令成败计数 / 引脚方向与电平 / 灯带 show 次数，用于把
     // 「灯不亮 / 风扇自转」二分到 固件未执行 / 引脚被外设抢走 / 引脚物理短路。
     void printSelfTest();
+    unsigned long measureDistance();  // Echo pulse duration, zero on timeout.
 
 private:
     bool _route(const Command& cmd);     // 真正的路由，dispatch 外包一层计数
@@ -41,6 +43,7 @@ private:
     Fan _fan;
     Light _light;
     Buzzer _buzzer;
+    Ultrasonic _ultrasonic;
 #if ENABLE_TM1637
     Display _display;
 #endif

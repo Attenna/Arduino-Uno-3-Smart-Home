@@ -11,6 +11,7 @@
 | | [development-guide.md](development-guide.md) | 开发规范（依赖方向、命名、禁止跨层、PC_Test/Web 前端硬约定） |
 | | [git-workflow.md](git-workflow.md) | 多人并行开发、分支、worktree、提交、评审和部署规范 |
 | **接口 / 配置** | [api.md](api.md) | 全部编程接口（Web REST / 语音 HTTP / MCP 工具 / LLM / 摄像头） |
+| | [ultrasonic.md](ultrasonic.md) | B 板 HC-SR04 接线、实时测距、HTTP/MCP 调用和异常处理 |
 | | [extension-guide.md](extension-guide.md) | 二次开发接口指南（对外表面、四条扩展缝、加积木的清单与落地顺序） |
 | | [configuration.md](configuration.md) | 配置项参考（yaml / .env / 环境变量 / Config.h） |
 | | [face-models.md](face-models.md) | 人脸嵌入模型：实测延迟与判别余量、下载校验、换模型后重建人脸库 |

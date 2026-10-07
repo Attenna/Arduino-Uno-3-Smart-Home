@@ -1,8 +1,9 @@
 """mcp_home_server.py — 智能家居 MCP server（stdio）
 
 独占持有 Module A（传感器）/Module B（执行器）两块 Arduino 串口，
-通过标准 MCP 协议向大模型暴露 10 个控制/查询工具：
+通过标准 MCP 协议向大模型暴露控制/查询工具：
     light / door / window / fan / buzzer / oled / display / ir / ac / get_sensor_status
+    get_distance / get_serial_health / get_output_state / self_test
 
 数据流：
     LLM(voice_assistant) ──MCP stdio──▶ 本 server ──JSON 命令──▶ Module B (USB)
@@ -388,7 +389,7 @@ class HomeController:
         # 心跳/只读查询（system）与 OLED 轮播逐行刷新不算「设备命令」：前者每 10s、
         # 后者每 ~5s 各来一次，若也记账，「最近命令」会被它们永远顶掉，排查时反而
         # 看不到真正的用户操作（面板/语音/自动化）。
-        if cmd.get("cmd") in ("system", "oled"):
+        if cmd.get("cmd") in ("system", "oled", "ultrasonic"):
             return
         self._b_last_cmd = {
             "cmd": cmd.get("cmd"), "action": cmd.get("action"),
@@ -455,10 +456,12 @@ class HomeController:
             return "error: B 板响应超时"
         if resp.get("type") != "response":
             # state 等非 response 帧即代表链路通；自检帧要把内容原样带回上层
-            if "selftest" in expect:
+            if resp.get("type") in ("selftest", "distance"):
                 return json.dumps(resp, ensure_ascii=False)
             return "ok"
         if resp.get("result") == "ok":
+            if "distance" in expect:
+                return "error: B 板未返回测距数据，请确认固件 V2.10 或以上"
             return "ok"
         return f"error: B 板返回 {resp}"
 
@@ -545,6 +548,13 @@ class HomeController:
                     return
             print(f"[B] 丢弃非本次响应（等待者={wid}, 收到 id={rid}）: {text}",
                   file=sys.stderr, flush=True)
+        elif mtype == "distance":
+            # New firmware always echoes the request id. Reject stale/unowned samples.
+            with self._b_resp_lock:
+                if (self._b_waiter and "distance" in self._b_expect
+                        and msg.get("id") == self._b_waiter_id):
+                    self._b_resp = msg
+                    self._b_resp_event.set()
         elif mtype == "state":
             self._b_last_state = msg
             self._b_last_state_ts = time.time()
@@ -799,6 +809,12 @@ class HomeController:
             self._ac = new_state
             return f"ok 空调已更新（{len(frames)} 帧）"
 
+    def handle_get_distance(self) -> str:
+        """按需测量 B 板 HC-SR04；保留测距状态，不把无回波当成零距离。"""
+        # Also accept response so old firmware's unknown_command fails immediately.
+        return self._send_b({"cmd": "ultrasonic", "action": "read"},
+                            allow_reopen=False, expect=("distance", "response"))
+
     def handle_get_sensor_status(self) -> str:
         with self._snapshot_lock:
             snap = dict(self._snapshot)
@@ -945,8 +961,20 @@ async def ac(
 
 
 @mcp.tool()
+async def get_distance() -> str:
+    """读取 B 板 HC-SR04 距离（Trig D6、Echo D5），单位厘米，范围 2~400 cm。
+
+    每次调用实时测量；JSON 中 valid=true 才能使用 distance_cm。
+    无回波/超范围时 valid=false、distance_cm=null，status 给出原因。
+    仅测距，不控制任何执行器。串口断开或旧固件返回 error。
+    """
+    _audit("get_distance")
+    return await asyncio.to_thread(HOME.handle_get_distance)
+
+
+@mcp.tool()
 async def get_sensor_status() -> str:
-    """查询当前传感器状态：温度、湿度、光照、烟雾、雨、距离、人体运动、土壤湿度等 + 最近事件。"""
+    """查询 A 板温度、湿度、光照、烟雾、雨、人体运动及最近事件。B 板距离请调用 get_distance。"""
     _audit("get_sensor_status")
     return await asyncio.to_thread(HOME.handle_get_sensor_status)
 
@@ -1011,8 +1039,8 @@ def main():
             print("[警告] 未连接任何 Arduino 模块；工具将返回错误信息。", file=sys.stderr)
 
     HOME = HomeController(ser_a=ser_a, ser_b=ser_b, port_a=port_a, port_b=port_b)
-    print("[MCP] 暴露 13 个工具：light/door/window/fan/buzzer/oled/display/ir/ac"
-          "/get_sensor_status/get_serial_health/get_output_state/self_test",
+    print("[MCP] 暴露 14 个工具：light/door/window/fan/buzzer/oled/display/ir/ac"
+          "/get_sensor_status/get_distance/get_serial_health/get_output_state/self_test",
           file=sys.stderr)
     print("[MCP] stdio 传输已就绪，等待 client。", file=sys.stderr)
     mcp.run(transport="stdio")

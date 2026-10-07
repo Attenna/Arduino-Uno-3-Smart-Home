@@ -777,6 +777,7 @@ curl http://<host>:8101/trigger
 | `get_sensor_status` | 无 | 查询全部传感器 + 最近事件 |
 | `get_serial_health` | 无 | 串口链路健康度：A/B 连接、B 板复位次数、最近引脚告警、心跳失败数、**最近一条设备命令及其固件回读**（只读排障） |
 | `get_output_state` | 无 | B 板（执行器）硬件回读状态：门/窗/风扇/灯/蜂鸣器实际电平 + 观测时刻 + 最近命令（只读） |
+| `get_distance` | 无 | B 板 HC-SR04 实时测距（V2.10+），厘米；仅 `valid=true` 时距离有效。见 [调用示例](ultrasonic.md) |
 | `self_test` | 无 | B 板固件自检（V2.9+）：命令成败计数、风扇两脚方向/电平、灯带 `show()` 次数、数据脚拉高/拉低读回（只读） |
 
 调用示例（`POST /api/hardware/tool` 的 body）：
