@@ -979,45 +979,6 @@ body {
     gap: 6px;
 }
 
-/* ==================== 空调卡片（美的红外） ==================== */
-.ac-opt.active {
-    background: rgba(0, 229, 255, 0.15);
-    border-color: var(--accent-cyan);
-    color: var(--accent-cyan);
-}
-
-.ac-indicator {
-    width: 12px;
-    height: 12px;
-    border-radius: 50%;
-    background: var(--text-muted);
-    transition: var(--transition);
-}
-
-.ac-indicator.on {
-    background: var(--accent-cyan);
-    box-shadow: 0 0 10px var(--accent-cyan);
-}
-
-.ac-readout {
-    display: flex;
-    align-items: baseline;
-    gap: 12px;
-    margin-bottom: 4px;
-}
-
-.ac-temp {
-    font-size: 28px;
-    font-weight: 700;
-    color: var(--accent-cyan);
-    font-family: 'Courier New', monospace;
-}
-
-.ac-mode {
-    font-size: 14px;
-    color: var(--text-secondary);
-}
-
 /* ==================== 远程控制面板 ==================== */
 .remote-grid {
     display: grid;
