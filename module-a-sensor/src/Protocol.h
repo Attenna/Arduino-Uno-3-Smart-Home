@@ -10,6 +10,7 @@
 
 #include <Arduino.h>
 #include "core/SensorManager.h"
+#include "outputs/Light.h"
 
 class Protocol {
 public:
@@ -20,7 +21,7 @@ public:
     static void sendEvent(const Event& e);
 
     // 下行（可选）：REPORT / INTERVAL:<ms> / WHO
-    static void handleInput(SensorManager& s);
+    static void handleInput(SensorManager& s, LightOutput& light);
 
     static unsigned long reportInterval();
 
@@ -29,7 +30,8 @@ private:
 
     static void printFloat(float v);
     static void printBool(bool v);
-    static void processLine(char* line, SensorManager& s);
+    static void processLine(char* line, SensorManager& s, LightOutput& light);
+    static bool processLightJson(char* line, LightOutput& light);
     static void respondWho();
 };
 

@@ -21,6 +21,12 @@
 #define ENABLE_IR_RECV      1   // 红外遥控接收（D3）保留
 #define ENABLE_PIR          1   // PIR 人体红外（D8）保留
 #define ENABLE_RFID         1   // RC522 保留
+#define ENABLE_LIGHT_OUTPUT 1   // 8 颗 NeoPixel 已迁移到 A0
+
+// ---- RGB 灯带（NeoPixel，A0 作为数字 D14）----
+#define RGB_PIN             A0
+#define RGB_LED_COUNT       8
+#define RGB_SAFE_BRIGHTNESS 128 // 全局限流约 50%；亮度仍由命令按 0~255 相对调节
 
 // ---- DHT11 温湿度 ----
 #define DHT_PIN             7
@@ -85,6 +91,6 @@
 // ---- 设备标识 ----
 #define BOARD_TYPE          "MODULE_A"
 #define BOARD_ROLE          "SENSOR_NODE"
-#define FW_VERSION          "V2.1"  // 正式版：移除超声波/土壤，新增矩阵键盘；红外全保留
+#define FW_VERSION          "V2.2"  // V2.2：A0 接管 8 颗 NeoPixel 灯带
 
 #endif // CONFIG_A_H

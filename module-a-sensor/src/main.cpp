@@ -11,13 +11,16 @@
 #include "Config.h"
 #include "core/SensorManager.h"
 #include "Protocol.h"
+#include "outputs/Light.h"
 
 SensorManager sensors;
+LightOutput light;
 unsigned long lastReport = 0;
 
 void setup() {
     Protocol::init();
     sensors.begin();
+    light.begin();
 
     // 上电就绪上报（含设备标识，供网关识别）
     Serial.print(F("{\"module\":\"sensor\",\"type\":\"ready\",\"board\":\""));
@@ -47,5 +50,5 @@ void loop() {
     }
 
     // 4. 可选下行控制命令
-    Protocol::handleInput(sensors);
+    Protocol::handleInput(sensors, light);
 }

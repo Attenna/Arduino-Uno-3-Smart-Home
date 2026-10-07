@@ -148,8 +148,8 @@ void Protocol::sendEvent(const Event& e) {
 }
 
 // ---------- 下行（可选） ----------
-void Protocol::handleInput(SensorManager& s) {
-    static char buf[32];
+void Protocol::handleInput(SensorManager& s, LightOutput& light) {
+    static char buf[160];
     static byte pos = 0;
     while (Serial.available()) {
         char c = Serial.read();
@@ -157,7 +157,7 @@ void Protocol::handleInput(SensorManager& s) {
             if (pos > 0) {
                 buf[pos] = '\0';
                 pos = 0;
-                processLine(buf, s);
+                processLine(buf, s, light);
             }
         } else {
             if (pos < sizeof(buf) - 1) buf[pos++] = c;
@@ -165,8 +165,58 @@ void Protocol::handleInput(SensorManager& s) {
     }
 }
 
-void Protocol::processLine(char* line, SensorManager& s) {
+static long jsonLong(const char* line, const char* key, long fallback) {
+    const char* p = strstr(line, key);
+    if (!p) return fallback;
+    p = strchr(p, ':');
+    return p ? atol(p + 1) : fallback;
+}
+
+static bool jsonAction(const char* line, char* out, byte len) {
+    const char* p = strstr(line, "\"action\"");
+    if (!p || !(p = strchr(p, ':')) || !(p = strchr(p, '\"'))) return false;
+    p++;
+    byte i = 0;
+    while (*p && *p != '\"' && i + 1 < len) out[i++] = *p++;
+    out[i] = 0;
+    return i > 0;
+}
+
+bool Protocol::processLightJson(char* line, LightOutput& light) {
+    if (!strstr(line, "\"cmd\":\"light\"") && !strstr(line, "\"cmd\": \"light\"")) return false;
+    char action[12] = {0};
+    long id = jsonLong(line, "\"id\"", -1);
+    bool ok = jsonAction(line, action, sizeof(action));
+    int value = constrain(jsonLong(line, "\"value\"", 255), 0L, 255L);
+    int count = constrain(jsonLong(line, "\"count\"", RGB_LED_COUNT), 1L, (long)RGB_LED_COUNT);
+    if (ok && strcmp(action, "off") == 0) light.off();
+    else if (ok && strcmp(action, "white") == 0) light.white(value, count);
+    else if (ok && strcmp(action, "night") == 0) light.white(value, 2);
+    else if (ok && strcmp(action, "red") == 0) light.rgb(255, 0, 0, value, count);
+    else if (ok && strcmp(action, "green") == 0) light.rgb(0, 255, 0, value, count);
+    else if (ok && strcmp(action, "blue") == 0) light.rgb(0, 0, 255, value, count);
+    else if (ok && strcmp(action, "yellow") == 0) light.rgb(255, 180, 0, value, count);
+    else if (ok && strcmp(action, "purple") == 0) light.rgb(160, 0, 255, value, count);
+    else if (ok && strcmp(action, "cyan") == 0) light.rgb(0, 180, 255, value, count);
+    else if (ok && (strcmp(action, "rgb") == 0 || strcmp(action, "pixels") == 0)) {
+        light.rgb(jsonLong(line, "\"r\"", 0), jsonLong(line, "\"g\"", 0),
+                  jsonLong(line, "\"b\"", 0), value, count);
+    } else ok = false;
+    Serial.print(F("{\"module\":\"sensor\",\"type\":\"response\",\"result\":\""));
+    Serial.print(ok ? F("ok") : F("error"));
+    Serial.print(F("\",\"cmd\":\"light\",\"action\":\""));
+    Serial.print(action);
+    Serial.print('"');
+    if (id >= 0) { Serial.print(F(",\"id\":")); Serial.print(id); }
+    Serial.print(F(",\"state\":{\"light\":")); Serial.print(light.level());
+    Serial.print(F(",\"lit\":")); Serial.print(light.count());
+    Serial.println(F("}}"));
+    return true;
+}
+
+void Protocol::processLine(char* line, SensorManager& s, LightOutput& light) {
     trim(line);
+    if (line[0] == '{' && processLightJson(line, light)) return;
     toUpper(line);
     if (line[0] == '\0') return;
 
