@@ -7,7 +7,7 @@
 
 数据流：
     LLM(voice_assistant) ──MCP stdio──▶ 本 server ──JSON 命令──▶ Module B (USB)
-                                         │
+                                         ├─ light 命令 ───────▶ Module A (USB)
                                          └─ A 板读线程缓存最新传感器状态
 
 启动：
@@ -146,6 +146,14 @@ class HomeController:
         self._a_err_first_ts = 0.0
         self._a_err_last_log = 0.0
         self._a_reopen_delay = _A_REOPEN_BASE_DELAY
+        # A 板同时负责传感器上报与灯带命令。读取仍由唯一后台线程完成；命令发送方
+        # 只登记 id 并等待该线程分发 response，避免两个读者争抢串口帧。
+        self._a_cmd_lock = threading.Lock()
+        self._a_resp_lock = threading.Lock()
+        self._a_resp_event = threading.Event()
+        self._a_resp: Optional[dict] = None
+        self._a_waiter_id = -1
+        self._a_next_id = 0
 
         # ── B 板：常驻读取线程 + 等待者表（与 A 板同构）──
         # B 板串口也必须**只有一个读者**。原先"发一条等一条"内联读，没有命令时
@@ -300,7 +308,12 @@ class HomeController:
                         })
                     if ev_name == "keypad":
                         self._handle_keypad(msg.get("key", ""))
-                # response / who 忽略
+                elif mtype == "response":
+                    with self._a_resp_lock:
+                        if msg.get("id") == self._a_waiter_id:
+                            self._a_resp = msg
+                            self._a_resp_event.set()
+                # who 忽略
             except (serial.SerialException, OSError) as e:
                 # 设备级错误（USB 断连/重枚举/多访问者）：关闭旧句柄并退避重开
                 self._note_a_error(e)
@@ -342,6 +355,32 @@ class HomeController:
             })
 
     # ── B 板发命令 + 收响应 ──
+    def _send_a(self, cmd: dict) -> str:
+        """向 Module A 下发灯带命令，并等待 A 读线程按请求 id 交付响应。"""
+        if self.ser_a is None:
+            return "error: Module A 未连接，无法执行灯光操作"
+        with self._a_cmd_lock:
+            self._a_next_id = (self._a_next_id + 1) & 0x7FFFFFFF
+            request_id = self._a_next_id
+            packet = dict(cmd, id=request_id)
+            with self._a_resp_lock:
+                self._a_waiter_id = request_id
+                self._a_resp = None
+                self._a_resp_event.clear()
+            try:
+                self.ser_a.write((json.dumps(packet, separators=(",", ":")) + "\n").encode())
+                self.ser_a.flush()
+            except Exception as e:
+                return f"error: A 板写入失败: {e}"
+            if not self._a_resp_event.wait(_B_CMD_TIMEOUT):
+                return "error: A 板响应超时"
+            with self._a_resp_lock:
+                response = self._a_resp or {}
+                self._a_waiter_id = -1
+            if response.get("result") != "ok":
+                return "error: A 板拒绝灯光命令"
+            return "ok"
+
     def _send_b(self, cmd: dict, allow_reopen: bool = True,
                 expect: tuple = ("response",)) -> str:
         """发命令给 Module B；连续多次超时才重开串口自愈。
@@ -729,7 +768,7 @@ class HomeController:
             cmd.update({"r": r, "g": g, "b": b})
             if value is not None:
                 cmd["value"] = value          # 整体亮度缩放，缺省由固件按 255 处理
-        return self._send_b(cmd)
+        return self._send_a(cmd)
 
     def handle_door(self, action) -> str:
         return self._send_b({"cmd": "door", "action": action})

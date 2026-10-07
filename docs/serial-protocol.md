@@ -142,7 +142,7 @@ Module A 原则上"只报告"，下行仅支持少量**无业务含义**的控�
 | `fan` | `set_speed` | `value` 0~255 | 保留 | PWM 调速；D8 非 PWM，退化为开关（0=停，>0=全速） |
 | `fan` | `on` / `full` | - | 保留 | 全速 |
 | `fan` | `off` / `stop` | - | 保留 | 停止 |
-| `light` | `white` | `value` 0~255 | 保留 | 白光亮度（整条灯带） |
+| `light` | `white` | `value` 0~255 | 保留 | 白光亮度（整条灯带）；命令由 Module A 执行 |
 | `light` | `night` | `value` 0~255（缺省 `LIGHT_NIGHT_LEVEL`=60） | 保留 | 夜灯：只点亮居中 `LIGHT_NIGHT_COUNT`（默认 2）颗灯珠，其余保持熄灭 |
 | `light` | `temp` | `temp` 2700~6500(K)，`value` 0~255（缺省 255） | 保留 | 色温白光：`temp` 定冷暖，`value` 定亮度（查表插值，无浮点运算） |
 | `light` | `red` / `green` / `blue` / `yellow` / `purple` / `cyan` | - | 保留 | 预设颜色（固定亮度，不带 `value`） |
