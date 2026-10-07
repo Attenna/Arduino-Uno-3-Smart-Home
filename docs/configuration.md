@@ -249,7 +249,7 @@ ls -l /dev/ttyUSB* /dev/ttyACM* /dev/serial/by-id/* /dev/video*
 
 | 宏 | 默认 | 说明 |
 |----|------|------|
-| `ENABLE_TM1637` | `0` | 四位数码管（已移除，D5/D6 悬空） |
+| `ENABLE_TM1637` | `0` | 四位数码管（已移除，D5/D6 改接 HC-SR04，必须保持关闭） |
 | `ENABLE_IR_TX` | `1` | 红外发射（D12） |
 
 常用参数宏：门/窗舵机引脚与角度（`DOOR_*` / `WINDOW_*` / `SERVO_SETTLE_TIME`）、

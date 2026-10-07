@@ -26,7 +26,7 @@ Module B 是一块 Arduino Uno，负责执行硬件动作并驱动显示设备�
 
 | 设备 | 原引脚 | 裁剪开关 |
 |------|--------|---------|
-| TM1637 四位数码管 | D5/D6 | `ENABLE_TM1637=0`（引脚悬空，`display` 命令将返回 error） |
+| TM1637 四位数码管 | D5/D6 | `ENABLE_TM1637=0`（D5/D6 改接 HC-SR04，`display` 命令返回 error） |
 
 所有命令由上位机（Home Assistant 经 Orange Pi 网关，或 MCP server）下发，Module B 只执行、不做决定。
 
@@ -60,8 +60,8 @@ Module B 是一块 Arduino Uno，负责执行硬件动作并驱动显示设备�
 | D2 | 门舵机 |
 | D3 | 窗舵机 |
 | D4 | NeoPixel RGB 灯带（数据线） |
-| D5 | （悬空；原 TM1637 CLK） |
-| D6 | （悬空；原 TM1637 DIO） |
+| D5 | HC-SR04 Echo（输入） |
+| D6 | HC-SR04 Trig（输出） |
 | D7 | 风扇 INB（方向） |
 | D8 | 风扇 INA（开关控制） |
 | D9 | 蜂鸣器 |
@@ -222,3 +222,8 @@ pio run -t upload --upload-port COM4
 | 数码管命令返回 error | TM1637 已裁剪 | 属预期（`ENABLE_TM1637=0`） |
 | 命令报 `parse_error` | 全角引号/冒号 | 已内置全角转半角兼容；仍报错则检查 JSON 是否单行、字段是否完整 |
 | 命令无响应 | JSON 格式错误 | 确认单行 JSON，`cmd`/`action` 必填 |
+
+## HC-SR04 测距（V2.10）
+
+Trig=D6、Echo=D5、VCC=5V、GND 共地。调用 `get_distance` 获取实时厘米距离；
+接线、协议、无效读数与 HTTP 示例见 [测距接口文档](../docs/ultrasonic.md)。

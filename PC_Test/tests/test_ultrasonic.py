@@ -1,0 +1,122 @@
+"""HC-SR04 gateway tests with an in-memory serial peer; never opens a device."""
+import asyncio
+import json
+import os
+import unittest
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
+
+import mcp_home_server as server
+
+
+class DistanceTests(unittest.TestCase):
+    def setUp(self):
+        self.home = server.HomeController()  # No serial handles or reader threads.
+
+    def peer(self, frames):
+        home = self.home
+
+        class Peer:
+            def write(self, raw):
+                request = json.loads(raw)
+                self.request = request
+                for frame in frames(request):
+                    home._dispatch_b_frame(frame, json.dumps(frame))
+
+        self.home.ser_b = Peer()
+
+    def test_fresh_distance_preserved_and_stale_id_ignored(self):
+        self.peer(lambda req: [
+            {"type": "distance", "id": req["id"] + 10, "distance_cm": 999},
+            {"type": "distance", "distance_cm": 888},
+            {"type": "distance", "id": req["id"], "valid": True,
+             "status": "ok", "distance_cm": 25.0, "echo_us": 1450},
+        ])
+        for _ in range(2):
+            result = json.loads(self.home.handle_get_distance())
+            self.assertEqual(result["distance_cm"], 25.0)
+            self.assertTrue(result["valid"])
+        self.assertEqual(self.home.ser_b.request,
+                         {"cmd": "ultrasonic", "action": "read", "id": 1})
+        self.assertEqual(self.home._b_last_cmd, {})
+        self.assertEqual(self.home._b_last_state, {})
+
+    def test_invalid_readings_remain_null(self):
+        for status in ("timeout", "out_of_range"):
+            with self.subTest(status=status):
+                self.peer(lambda req: [{"type": "distance", "id": req["id"],
+                          "valid": False, "status": status, "distance_cm": None}])
+                result = json.loads(self.home.handle_get_distance())
+                self.assertFalse(result["valid"])
+                self.assertIsNone(result["distance_cm"])
+                self.assertEqual(result["status"], status)
+
+    def test_old_firmware_returns_error_without_waiting_or_reopening(self):
+        self.peer(lambda req: [{"type": "response", "id": req["id"],
+                               "result": "error", "error": "unknown_command"}])
+        with patch.object(self.home, "_reopen_b") as reopen:
+            self.assertIn("unknown_command", self.home.handle_get_distance())
+            reopen.assert_not_called()
+
+    def test_disconnected_is_error(self):
+        self.assertTrue(self.home.handle_get_distance().startswith("error:"))
+
+    def test_ack_without_measurement_is_not_success(self):
+        self.peer(lambda req: [{"type": "response", "id": req["id"], "result": "ok"}])
+        self.assertTrue(self.home.handle_get_distance().startswith("error:"))
+
+    def test_read_timeout_does_not_reset_actuators(self):
+        self.peer(lambda req: [])
+        with patch.object(self.home._b_resp_event, "wait", return_value=False), \
+             patch.object(self.home, "_reopen_b") as reopen:
+            for _ in range(4):
+                self.assertIn("响应超时", self.home.handle_get_distance())
+            reopen.assert_not_called()
+
+    def test_distance_cannot_complete_an_actuator_waiter(self):
+        self.home._b_waiter = True
+        self.home._b_waiter_id = 7
+        self.home._b_expect = ("response",)
+        self.home._dispatch_b_frame({"type": "distance", "id": 7}, "")
+        self.assertFalse(self.home._b_resp_event.is_set())
+
+    def test_tool_discovery_and_call(self):
+        async def check():
+            tools = await server.mcp.list_tools()
+            tool = next(t for t in tools if t.name == "get_distance")
+            self.assertFalse(tool.inputSchema.get("required"))
+            with patch.object(server, "HOME", self.home):
+                with patch.object(self.home, "handle_get_distance", return_value='{"valid":false}'):
+                    self.assertEqual(await server.get_distance(), '{"valid":false}')
+        asyncio.run(check())
+
+
+class DistanceGatewayTests(unittest.TestCase):
+    def test_authenticated_http_tool_and_anonymous_rejection(self):
+        from web.app import create_app
+        from web.api import devices
+        from werkzeug.security import generate_password_hash
+
+        with patch.dict(os.environ, {
+            "SMART_HOME_ADMIN_USER": "test-admin",
+            "SMART_HOME_ADMIN_PASSWORD_HASH": generate_password_hash("test-password"),
+            "SMART_HOME_SESSION_SECRET": "s" * 48,
+            "SMART_HOME_SERVICE_TOKEN": "u" * 48,
+        }):
+            app = create_app({"serial": {"enabled": True}}, start_hardware=False)
+        client = app.test_client()
+        body = {"name": "get_distance", "arguments": {}}
+        sample = json.dumps({"valid": True, "distance_cm": 25.0, "status": "ok"})
+        bridge = SimpleNamespace(call_tool=Mock(return_value=(True, sample)))
+        with patch.object(devices.extensions, "bridge", bridge):
+            self.assertEqual(client.post("/api/hardware/tool", json=body).status_code, 401)
+            bridge.call_tool.assert_not_called()
+            response = client.post("/api/hardware/tool", json=body,
+                                   headers={"Authorization": "Bearer " + "u" * 48})
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(json.loads(response.json["result"])["distance_cm"], 25.0)
+            bridge.call_tool.assert_called_once_with("get_distance", {}, timeout=10.0)
+
+
+if __name__ == "__main__":
+    unittest.main()

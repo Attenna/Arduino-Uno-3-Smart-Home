@@ -27,6 +27,7 @@ private:
     byte _pos;
 
     void handleLine(const char* line);
+    void sendDistance(long id);
     void normalizeFullWidth();             // 全角引号/冒号/逗号 → 半角
     bool handleLegacy(const char* line);   // 旧文本命令兼容
     void respondOk(const char* device, const char* action, long id);

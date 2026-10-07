@@ -47,6 +47,7 @@ void CommandDispatcher::begin() {
     _fan.begin();
     _light.begin();
     _buzzer.begin();
+    _ultrasonic.begin();
 #if ENABLE_TM1637
     _display.begin();
 #endif
@@ -54,6 +55,10 @@ void CommandDispatcher::begin() {
 #if ENABLE_IR_TX
     _ir.begin();
 #endif
+}
+
+unsigned long CommandDispatcher::measureDistance() {
+    return _ultrasonic.measure();
 }
 
 bool CommandDispatcher::dispatch(const Command& cmd) {
