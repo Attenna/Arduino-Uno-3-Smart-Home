@@ -38,7 +38,7 @@ from .capabilities import CONDITION_SOURCES, EVENT_TRIGGERS
 from .default_rules import DEFAULT_RULES, PRESETS_VERSION
 from .global_state import GlobalStateStore
 from .oled_carousel import (DEFAULT_PAGES, PAGES_VERSION, OledCarousel,
-                            is_legacy_default_pages)
+                            OLED_MIN_INTERVAL, is_legacy_default_pages)
 from .schema import validate_rule, validate_rules
 from . import webhook
 import midea_ac
@@ -99,7 +99,7 @@ class AutomationEngine:
         # ── OLED 轮播（默认关闭，避免扰民） ──
         self.oled_path = Path(rules_path).parent / "oled_carousel.json"
         self.oled_enabled = False
-        self.oled_interval = 5.0
+        self.oled_interval = OLED_MIN_INTERVAL
         self.oled_pages: list[dict] | None = None
         self._oled_carousel = OledCarousel(emitter=self._oled_emit,
                                            on_log=self._oled_log)
@@ -607,7 +607,7 @@ class AutomationEngine:
         if interval is not None:
             if isinstance(interval, bool) or not isinstance(interval, (int, float)):
                 raise ValueError("间隔必须是数字（秒）")
-            self.oled_interval = max(1.0, float(interval))
+            self.oled_interval = max(OLED_MIN_INTERVAL, float(interval))
             self._oled_carousel.interval = self.oled_interval
         if pages is not None:
             if not isinstance(pages, list) or not pages:
@@ -644,7 +644,8 @@ class AutomationEngine:
                 if self.oled_path.exists():
                     cfg = json.loads(self.oled_path.read_text(encoding="utf-8"))
                     self.oled_enabled = bool(cfg.get("enabled", False))
-                    self.oled_interval = float(cfg.get("interval", 5.0))
+                    self.oled_interval = max(
+                        OLED_MIN_INTERVAL, float(cfg.get("interval", OLED_MIN_INTERVAL)))
                     # 默认页随代码升级：磁盘里是旧版默认页时自动换新文案，
                     # 并默认开启轮播（需求7：OLED 实时显示全屋状态，可在页面关掉）
                     pages = cfg.get("pages")

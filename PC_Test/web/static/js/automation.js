@@ -2090,8 +2090,8 @@ async function loadOledConfig() {
     try {
         const cfg = await api('/api/automation/oled');
         on.checked = !!cfg.enabled;
-        iv.value = cfg.interval || 5;
-        if (st) st.textContent = cfg.enabled ? '✅ 已开，每 ' + (cfg.interval || 5) + ' 秒切页' : '⏸ 已关闭';
+        iv.value = cfg.interval || 15;
+        if (st) st.textContent = cfg.enabled ? '✅ 已开，每 ' + (cfg.interval || 15) + ' 秒切页' : '⏸ 已关闭';
     } catch (e) {
         if (st) st.textContent = '接口暂不可用（引擎未启动）';
     }
@@ -2101,7 +2101,7 @@ async function saveOledConfig() {
     const iv = document.getElementById('oledInterval');
     const body = {
         enabled: !!document.getElementById('oledEnabled').checked,
-        interval: Number(iv.value) || 5,
+        interval: Math.max(15, Number(iv.value) || 15),
     };
     try {
         const r = await api('/api/automation/oled', {

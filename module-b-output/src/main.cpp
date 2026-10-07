@@ -44,14 +44,14 @@ void setup() {
     protocol.begin(dispatcher);
     protocol.sendReady();
 
-    // 初始化全部完成后再使能看门狗：固件挂死 2 秒内自动复位重来，不再需要人工
-    // 插拔。复位后执行器回固件默认，上位机侧已有「B 板复位→DB 对账」按硬件回读
-    // 把状态拉回一致（见 PC_Test/web/hardware.py）。
-    wdt_enable(WDTO_2S);
+    // OLED/SPI、红外和串口输出都可能产生短时阻塞。2 秒与上位机命令超时相同，
+    // 容易把一次拥塞升级成「WDT 复位 → DTR 重开」循环；4 秒仍可快速自愈。
+    wdt_enable(WDTO_4S);
 }
 
 void loop() {
     wdt_reset();              // 喂狗：一次 loop 远快于 2s，正常时永不触发
     protocol.handleSerial();  // 处理下行命令
+    wdt_reset();              // 一批串口/OLED 命令处理后重新起算看门狗窗口
     dispatcher.update();      // 舵机释放 / 蜂鸣 / 数码管刷新
 }

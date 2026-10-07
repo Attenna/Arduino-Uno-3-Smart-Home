@@ -3,7 +3,7 @@
 > 面向：在 **Linux 主机** 上编译烧录 Module B 固件、安装接线、调试、扩展新执行器。
 > 基础信息（用途/引脚/命令表）见 [README.md](README.md) 与 [docs/serial-protocol.md](../docs/serial-protocol.md)。
 
-**功能一句话**：Module B 是一块 Arduino Uno，当前固件 `V2.9` 带 7 类现役执行器/显示设备，接收命令并执行硬件动作，不做业务判断。TM1637 数码管已于 2026-09 正式版裁剪；红外支持 NEC 与美的空调长码；V2.7 起带看门狗（`WDTO_2S`）；V2.9 起命令响应/就绪帧回附固件状态快照，并新增 `system/selftest` 自检（见 [docs/serial-protocol.md](../docs/serial-protocol.md) §4.4）。
+**功能一句话**：Module B 是一块 Arduino Uno，当前固件 `V2.11` 带 7 类现役执行器/显示设备，接收命令并执行硬件动作，不做业务判断。TM1637 数码管已于 2026-09 正式版裁剪；红外支持 NEC 与美的空调长码；V2.11 使用 4 秒看门狗并限制灯带 USB 电流，避免短时 OLED/SPI 拥塞或满白灯带负载触发复位（见 [docs/serial-protocol.md](../docs/serial-protocol.md) §4.4）。
 
 ---
 

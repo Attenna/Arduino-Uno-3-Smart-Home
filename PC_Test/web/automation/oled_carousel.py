@@ -30,6 +30,7 @@ __all__ = ["OledCarousel", "DEFAULT_PAGES", "DEFAULT_PAGES_V5",
 #     占位符改由全局状态供数（g:全屋模式 / g:有人在家 / g:允许自动开风扇；
 #     覆盖档位已不存在，换成风扇安全线一行）。
 PAGES_VERSION = 6
+OLED_MIN_INTERVAL = 15.0
 
 # 默认页面模板（覆盖常见传感器 + 全屋状态 + 执行器状态 + 最近自动化）
 # 每行 16 个 ASCII 列宽，务必只用英文/数字/符号。
@@ -193,7 +194,8 @@ class OledCarousel:
         """
         self.emitter = emitter
         self.pages = pages or DEFAULT_PAGES
-        self.interval = interval
+        # 一次换页会改 4~8 行。限制轮播频率，避免连续 OLED/SPI 写入挤占 B 板串口。
+        self.interval = max(OLED_MIN_INTERVAL, float(interval))
         self.line_delay = line_delay
         self.on_log = on_log or (lambda m: None)
 
