@@ -1819,3 +1819,16 @@ body {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.5; }
 }
+
+/* 八灯珠面板：档位与亮度分开呈现。 */
+.light-power-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.light-beads { display: flex; justify-content: center; gap: 10px; margin: 0 0 22px; }
+.light-beads span { width: 15px; height: 15px; border-radius: 50%; background: #294858; border: 1px solid #557788; }
+.light-beads .lit { box-shadow: 0 0 12px #ffffff50; }
+.light-levels { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.light-level { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 12px 4px; }
+.light-level small { font-size: 12px; opacity: .75; }
+.light-level.active { border-color: #00d9ef; background: #00d9ef18; color: #00e5ff; }
+.light-hint { color: #8aafc2; font-size: 12px; line-height: 1.6; margin: 12px 0 18px; }
+.light-colors { display: flex; gap: 8px; flex-wrap: wrap; }
+.light-level:focus-visible, .light-colors button:focus-visible { outline: 2px solid #00e5ff; outline-offset: 3px; }

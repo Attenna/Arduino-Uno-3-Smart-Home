@@ -85,6 +85,15 @@ bool CommandDispatcher::_route(const Command& cmd) {
         if (strcmp(cmd.action, "off") == 0 || strcmp(cmd.action, "stop") == 0) { _fan.stop(); return true; }
     }
     else if (strcmp(cmd.device, "light") == 0) {
+        if (strcmp(cmd.action, "pixels") == 0) {
+            if (cmd.count < 1 || cmd.count > LED_COUNT) return false;
+            _light.pixels((int)constrain(cmd.r, 0L, 255L),
+                          (int)constrain(cmd.g, 0L, 255L),
+                          (int)constrain(cmd.b, 0L, 255L),
+                          cmd.hasValue ? (int)constrain(cmd.value, 0L, 255L) : 255,
+                          (byte)cmd.count);
+            return true;
+        }
         if (strcmp(cmd.action, "off") == 0)   { _light.off();  return true; }
         if (strcmp(cmd.action, "white") == 0) { _light.white((int)cmd.value); return true; }
         // 夜灯：只点中间几颗；未带 value 时用 Config 里的 LIGHT_NIGHT_LEVEL

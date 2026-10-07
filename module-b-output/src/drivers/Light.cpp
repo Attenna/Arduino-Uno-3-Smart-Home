@@ -143,6 +143,18 @@ void Light::rgb(int r, int g, int b, int level) {
     setRgb(r, g, b);
 }
 
+void Light::pixels(int r, int g, int b, int level, byte count) {
+    _r = scaleLightChannel(constrain(r, 0, 255), constrain(level, 0, 255));
+    _g = scaleLightChannel(constrain(g, 0, 255), constrain(level, 0, 255));
+    _b = scaleLightChannel(constrain(b, 0, 255), constrain(level, 0, 255));
+    _level = max(_r, max(_g, _b));
+    _count = constrain(count, 1, LED_COUNT);
+    _strip.clear();
+    _strip.fill(_strip.Color(_r, _g, _b), (LED_COUNT - _count) / 2, _count);
+    _strip.show();
+    _shows++;
+}
+
 int Light::getLevel() const { return _level; }
 uint8_t Light::litCount() const { return _count; }
 uint16_t Light::showCount() const { return _shows; }
