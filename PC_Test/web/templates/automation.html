@@ -193,10 +193,10 @@
                             </label>
                             <label style="display:flex;align-items:center;gap:8px;font-size:14px">
                                 每
-                                <input type="number" id="oledInterval" value="5" min="1" max="3600" step="1"
+                                <input type="number" id="oledInterval" value="15" min="15" max="3600" step="1"
                                        style="width:70px"> 秒切页
                             </label>
-                            <span style="font-size:12px;color:var(--text-secondary)">仅英文/数字，每行 16 字符</span>
+                            <span style="font-size:12px;color:var(--text-secondary)">仅英文/数字，每行 16 字符；为保护 B 板，最短 15 秒切页</span>
                             <button class="btn btn-primary" onclick="saveOledConfig()">💾 保存设置</button>
                             <span id="oledStatus" style="font-size:12px;color:var(--text-secondary)"></span>
                         </div>
