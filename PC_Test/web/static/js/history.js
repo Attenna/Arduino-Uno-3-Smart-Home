@@ -103,10 +103,12 @@ function applyStatView(dataType) {
         grid.style.display = (dataType === 'door_window' || dataType === 'light') ? 'none' : '';
     }
     const isHumidity = dataType === 'humidity';
-    const unit = isHumidity ? '%' : '°C';
+    const isLightLevel = dataType === 'light_level';
+    const unit = isHumidity ? '%' : (isLightLevel ? 'ADC' : '°C');
     ['max', 'min', 'avg'].forEach(name => {
         const suffix = name.charAt(0).toUpperCase() + name.slice(1);
-        const key = isHumidity ? `history.stat_${name}_humidity` : `history.stat_${name}`;
+        const key = isHumidity ? `history.stat_${name}_humidity`
+            : (isLightLevel ? `history.stat_${name}_light` : `history.stat_${name}`);
         const label = document.getElementById(`stat${suffix}Label`);
         if (label) {
             label.setAttribute('data-i18n', key);
@@ -145,6 +147,13 @@ async function loadHistory() {
             chartColor = '#00b4d8';
             chartBgColor = 'rgba(0, 180, 216, 0.1)';
             break;
+        case 'light_level':
+            data = await apiGet(`/api/light-level/history?hours=${hours}`);
+            title = t('chart.light_level_history');
+            chartLabel = t('chart.light_level');
+            chartColor = '#ffca28';
+            chartBgColor = 'rgba(255, 202, 40, 0.12)';
+            break;
         case 'door_window':
             data = await apiGet(`/api/door_window/history?hours=${hours}`);
             title = t('chart.door_history');
@@ -173,7 +182,10 @@ async function loadHistory() {
         const labels = reversed.map(d => {
             const dt = serverDate(d.timestamp);
             const locale = I18N.currentLang === 'zh' ? 'zh-CN' : 'en-US';
-            return dt ? dt.toLocaleString(locale, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '--';
+            const timeOptions = { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' };
+            // 1 小时光照视图保留每秒采样，横轴也显示秒，避免相邻点看成同一时刻。
+            if (dataType === 'light_level' && Number(hours) === 1) timeOptions.second = '2-digit';
+            return dt ? dt.toLocaleString(locale, timeOptions) : '--';
         });
         
         let values;
@@ -181,6 +193,8 @@ async function loadHistory() {
             values = reversed.map(d => d.temperature);
         } else if (dataType === 'humidity') {
             values = reversed.map(d => d.humidity);
+        } else if (dataType === 'light_level') {
+            values = reversed.map(d => d.light_raw);
         } else if (dataType === 'door_window') {
             values = reversed.map(d => d.status === 'open' ? 1 : 0);
         } else if (dataType === 'light') {
@@ -217,6 +231,14 @@ async function loadHistory() {
             document.getElementById('statAvg').textContent = (hums.reduce((a, b) => a + b, 0) / hums.length).toFixed(1);
         }
         document.getElementById('statCount').textContent = reversed.length;
+    } else if (dataType === 'light_level') {
+        const levels = reversed.map(d => d.light_raw).filter(v => v !== null && v !== undefined);
+        if (levels.length > 0) {
+            document.getElementById('statMax').textContent = Math.max(...levels).toFixed(1);
+            document.getElementById('statMin').textContent = Math.min(...levels).toFixed(1);
+            document.getElementById('statAvg').textContent = (levels.reduce((a, b) => a + b, 0) / levels.length).toFixed(1);
+        }
+        document.getElementById('statCount').textContent = reversed.length;
     } else {
         document.getElementById('statMax').textContent = '--';
         document.getElementById('statMin').textContent = '--';
@@ -248,6 +270,9 @@ function updateTable(dataType, data) {
         case 'humidity':
             headerHTML += '<th>' + t('chart.humidity') + '</th><th>' + t('chart.temp') + '</th>';
             break;
+        case 'light_level':
+            headerHTML += '<th>' + t('chart.light_level') + '</th>';
+            break;
         case 'door_window':
             headerHTML += '<th>' + t('history.device_type') + '</th><th>' + t('history.device_name') + '</th><th>' + t('history.status') + '</th>';
             break;
@@ -273,6 +298,9 @@ function updateTable(dataType, data) {
                 break;
             case 'humidity':
                 bodyHTML += `<td>${num1(d.humidity)}</td><td>${num1(d.temperature)}</td>`;
+                break;
+            case 'light_level':
+                bodyHTML += `<td>${num1(d.light_raw)}</td>`;
                 break;
             case 'door_window':
                 const dwStatus = d.status === 'open' ? '已打开' : '已关闭';

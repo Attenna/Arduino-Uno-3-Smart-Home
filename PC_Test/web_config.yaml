@@ -14,7 +14,7 @@ serial:
   port_b: auto        # Module B 执行器，如 COM6
 
 # 后台轮询 MCP get_sensor_status 的间隔（秒），新快照写入 SQLite
-sensor_poll_interval: 2.0
+sensor_poll_interval: 1.0
 
 # ── 语音助手 HTTP 服务（面板「语音」页与自动化「语音」动作的代理目标）────
 # 环境变量 SMART_HOME_VOICE_URL 优先（Docker 里为 http://voice:8101）。
