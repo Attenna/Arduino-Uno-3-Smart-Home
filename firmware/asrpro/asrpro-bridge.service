@@ -1,0 +1,21 @@
+[Unit]
+Description=ASRPRO voice serial bridge to Smart Home gateway
+After=network.target docker.service
+
+[Service]
+Type=simple
+User=HwHiAiUser
+SupplementaryGroups=dialout
+WorkingDirectory=/home/HwHiAiUser/smart-home
+EnvironmentFile=/home/HwHiAiUser/smart-home/PC_Test/.auth.asrpro.env
+ExecStart=/home/HwHiAiUser/.venvs/asrpro/bin/python PC_Test/asrpro_bridge.py
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
