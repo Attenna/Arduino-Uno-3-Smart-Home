@@ -59,7 +59,9 @@ ls -l /dev/serial/by-id/
 
 识别新增 CH340 的稳定路径，不要选 A/B 板端口。
 如果多个同型号适配器没有唯一序列号，使用 `/dev/serial/by-path/` 对应固定 USB 插口。
-在 `PC_Test/.auth.asrpro.env` 中配置以下两项，文件权限设为 `600`：
+源码检出环境在 `PC_Test/.auth.asrpro.env` 中配置以下两项；部署脚本会将
+`PC_Test` 内容平铺到 `/home/HwHiAiUser/smart-home`，因此香橙派运行时文件为
+`/home/HwHiAiUser/smart-home/.auth.asrpro.env`。文件权限设为 `600`：
 
 ```text
 ASRPRO_PORT=/dev/serial/by-id/替换为ASRPRO适配器实际名称
