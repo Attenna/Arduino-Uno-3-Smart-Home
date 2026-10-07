@@ -16,6 +16,8 @@
 """
 from __future__ import annotations
 
+import math
+
 from . import webhook
 from .capabilities import (
     ACCESS_METHOD_IDS, ACTION_DEVICES, COMPARATORS, CONDITION_SOURCES,
@@ -63,6 +65,12 @@ def _as_number(value, where: str) -> float:
     return float(value)
 
 
+def _distance_threshold(sensor, value):
+    if sensor == "distance_cm" and (type(value) not in (int, float)
+            or not math.isfinite(value) or not 2 <= value <= 400):
+        raise ValidationError("超声波距离需为 2~400 厘米的有效数字")
+
+
 def validate_trigger(trig: dict, var_types: dict | None = None) -> dict:
     _require(trig, ("kind",), "触发块")
     kind = trig["kind"]
@@ -72,6 +80,7 @@ def validate_trigger(trig: dict, var_types: dict | None = None) -> dict:
         if trig["op"] not in COMPARATOR_IDS:
             raise ValidationError(f"非法比较符: {trig['op']}")
         value = trig["value"]
+        _distance_threshold(trig["sensor"], value)
         if isinstance(value, bool):
             pass
         elif isinstance(value, str) and value in ("true", "false"):
@@ -135,6 +144,7 @@ def validate_condition(cond: dict, var_types: dict | None = None) -> dict:
     if cond["op"] not in COMPARATOR_IDS:
         raise ValidationError(f"条件块非法比较符: {cond['op']}")
     value = cond["value"]
+    _distance_threshold(cond["sensor"], value)
     if isinstance(value, str) and value in ("true", "false"):
         value = value == "true"
     if not isinstance(value, (int, float, bool, str)):
@@ -150,6 +160,10 @@ def validate_action(action: dict, where: str = "动作块",
     if device not in ACTION_DEVICES:
         raise ValidationError(f"{where}未知设备: {device}")
     clean = {"device": device}
+    if device == "camera":
+        if action.get("action", "snapshot") != "snapshot":
+            raise ValidationError("摄像头动作只能是 snapshot")
+        return {"device": "camera", "action": "snapshot"}
     if device == "delay":
         seconds = _as_number(action.get("seconds", 1), where)
         if not 0 < seconds <= 300:

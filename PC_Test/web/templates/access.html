@@ -65,6 +65,9 @@
                         </div>
                     </div>
 
+                    <p aria-live="polite">门口超声波距离：<strong id="doorwayDistance">等待测量…</strong>
+                    <a href="/automation">设置距离、持续时间与拍照联动</a> · <a href="/security">查看照片</a></p>
+                    <script src="{{ url_for('static', filename='js/doorway.js') }}?v=1" defer></script>
                     <!-- 最新识别结果展示 -->
                     <div class="face-result-display" id="faceResultDisplay">
                         <div class="face-result-waiting" id="faceResultWaiting">

@@ -95,11 +95,20 @@ class SecurityMonitor:
         tmp.write_text(json.dumps(event, ensure_ascii=False), encoding="utf-8")
         tmp.replace(path)
 
-    def record(self, reason, details):
+    def capture_rule(self, rule, measurement):
+        event = self.record("distance_rule", {"rule_id": rule.get("id"),
+                            "rule_name": rule.get("name"), "trigger": rule.get("trigger"),
+                            "distance_cm": measurement.get("distance_cm")}, enqueue=False)
+        self.capture(event)
+        return event["capture"] == "saved", event.get("error") or "门口照片已存储"
+
+    def record(self, reason, details, enqueue=True):
         event = {"id": uuid.uuid4().hex, "timestamp": datetime.now(timezone.utc).isoformat(),
                  "status": "suspicious", "reason": reason, "details": details,
                  "capture": "pending", "image": None}
         self._save(event)
+        if not enqueue:
+            return event
         try:
             self.pending.put_nowait(event)
         except queue.Full:

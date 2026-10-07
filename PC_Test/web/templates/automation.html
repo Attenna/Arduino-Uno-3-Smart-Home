@@ -164,6 +164,9 @@
     <div id="cardMenu" class="card-menu hidden"></div>
 
     <main class="main-content">
+        <p><button class="btn" onclick="createDoorwayRule()">📷 新建门口测距拍照规则</button>
+        默认小于 50 cm 持续 2 秒，可在积木中修改距离和时间，保存后生效。
+        <a href="/security">查看照片记录</a></p>
         <!-- ==================== 视图一：规则列表 ==================== -->
         <div id="listView">
             <div class="card" style="margin-bottom:12px">
@@ -242,6 +245,6 @@
     </main>
 
     <script src="{{ url_for('static', filename='js/lang.js') }}?v=20261004a"></script>
-    <script src="{{ url_for('static', filename='js/automation.js') }}?v=20261004a"></script>
+    <script src="{{ url_for('static', filename='js/automation.js') }}?v=20261007-doorway"></script>
 </body>
 </html>

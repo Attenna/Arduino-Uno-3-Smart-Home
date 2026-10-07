@@ -34,6 +34,7 @@ COMPARATORS = [
 # 可作为「触发/条件」的数据源：id 即规则 JSON 里的 sensor 字段
 # kind: number=数值比较；bool=与 true/false 比较；enum=与给定字符串比较
 CONDITION_SOURCES = {
+    "distance_cm": {"label": "门口超声波距离", "kind": "number", "unit": "cm"},
     "sensor_fresh": {"label": "传感器数据新鲜（10秒内）", "kind": "bool"},
     # ── Module A 周期上报的传感器 ──
     "temperature": {"label": "温度", "kind": "number", "unit": "°C"},
@@ -134,6 +135,7 @@ EVENT_TRIGGERS = {
 
 # 执行器动作块
 ACTION_DEVICES = {
+    "camera": {"label": "门口拍照存储", "params": {}},
     "door": {"label": "门", "params": {"status": {"choices": ["open", "close"],
                                                   "labels": ["打开", "关闭"]}}},
     "window": {"label": "窗户", "params": {"status": {"choices": ["open", "close", "normal"],
