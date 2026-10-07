@@ -79,18 +79,18 @@ static bool replyMatches(char *line, unsigned long request, unsigned command) {
 }
 
 static void requestCommand(unsigned command) {
-    while (Serial1.available()) Serial1.read();
+    while (Serial.available()) Serial.read();
     if (++sequence > 999999999UL) sequence = 1;
     char request[40];
     snprintf(request, sizeof(request), "SH1 %lu %u\n", sequence, command);
-    Serial1.print(request);
+    Serial.print(request);
     char line[64];
     unsigned used = 0;
     bool dropping = false;
     uint32_t started = millis();
     while ((uint32_t)(millis() - started) < 12000UL) {
-        while (Serial1.available()) {
-            int ch = Serial1.read();
+        while (Serial.available()) {
+            int ch = Serial.read();
             if (ch == '\n') {
                 line[used] = 0;
                 if (!dropping && replyMatches(line, sequence, command)) return;
@@ -131,10 +131,8 @@ void ASR_CODE() {
 }
 
 void hardware_init() {
-    // UART1: PA2 TX / PA3 RX, fourth alternate function in this SDK.
-    setPinFun(2, FORTH_FUNCTION);
-    setPinFun(3, FORTH_FUNCTION);
-    Serial1.begin(115200);
+    // UART0 is wired to the development board's onboard CH340/Type-C port.
+    Serial.begin(115200);
     commands = xQueueCreate(1, sizeof(unsigned));
     if (commands && xTaskCreate(bridgeTask, "home_uart", 1024, NULL, 4, NULL) != pdPASS) {
         vQueueDelete(commands); commands = NULL;
