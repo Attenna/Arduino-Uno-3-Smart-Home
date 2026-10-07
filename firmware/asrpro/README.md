@@ -1,25 +1,20 @@
 # ASRPRO V2.0 + 香橙派语音控制
 
 `smart_home.cpp` 是天问 Block AI 的 ASRPRO 字符编程源代码。
-香橙派运行 `PC_Test/asrpro_bridge.py`：ASRPRO → 专用 USB 转 TTL 串口 →
+香橙派运行 `PC_Test/asrpro_bridge.py`：ASRPRO 板载 Type-C/CH340 → USB 串口 →
 香橙派桥接进程 → 已认证 Web 硬件网关 → A/B 板。
 仅烧录 C++ 而没有启动桥接进程时，设备会提示等待回复超时。
 
 ## 1. 接线
 
-使用 **3.3V TTL 信号电平**的 USB 转串口适配器，USB 插到香橙派。
-本代码明确选择 UART1 的 PA2/PA3 复用，与烧录串口分开。
+本版本使用 ASRPRO 开发板板载 Type-C/CH340 对应的默认 `Serial`（UART0），
+波特率 115200、8N1。使用支持数据传输的 USB 线连接到香橙派 **USB Host** 口；
+若 Type-C 对 Type-C 连接后 `lsusb` 没有出现 CH340，请改用香橙派 USB-A Host 口和
+USB-A 转 Type-C 数据线。仅供电的 Type-C 口或充电线不能工作。
 
-| ASRPRO | USB 转 TTL |
-|---|---|
-| PA2（UART1 TX） | RXD |
-| PA3（UART1 RX） | TXD |
-| GND | GND |
-
-ASRPRO 开发板按板上标识独立供电；TTL 的 3.3V 信号电平不代表板子的电源输入电压。
-不要把 5V TTL 或 RS232 信号接到 PA2/PA3，也不要并联多个供电输出。
-本程序不使用 UART0；仅插开发板自带的烧录 USB，未必能连接 UART1。
-现有 A/B 板继续使用各自的串口。
+连接成功后，香橙派应新增一个 CH340 和 `/dev/ttyUSB*`，同时保留两块 Arduino 的
+`/dev/ttyACM0`、`/dev/ttyACM1`。不得将任一 `ttyACM` 配置给 ASRPRO 桥接服务。
+ASRPRO 的 PA2/PA3 不再需要外接，现有 A/B 板继续使用各自的串口。
 
 ## 2. 在天问 Block AI 烧录
 
@@ -62,7 +57,7 @@ python3 -m venv /home/HwHiAiUser/.venvs/asrpro
 ls -l /dev/serial/by-id/
 ```
 
-识别新增 ASRPRO 适配器的稳定路径，不要选 A/B 板端口。
+识别新增 CH340 的稳定路径，不要选 A/B 板端口。
 如果多个同型号适配器没有唯一序列号，使用 `/dev/serial/by-path/` 对应固定 USB 插口。
 在 `PC_Test/.auth.asrpro.env` 中配置以下两项，文件权限设为 `600`：
 
