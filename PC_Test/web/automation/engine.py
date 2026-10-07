@@ -104,6 +104,7 @@ class AutomationEngine:
         self.oled_enabled = False
         self.oled_interval = OLED_MIN_INTERVAL
         self.oled_pages: list[dict] | None = None
+        self._oled_config_loaded = False
         self._oled_carousel = OledCarousel(emitter=self._oled_emit,
                                            on_log=self._oled_log)
         self._oled_thread: threading.Thread | None = None
@@ -139,6 +140,7 @@ class AutomationEngine:
 
     def start(self) -> None:
         self.load()
+        self._load_oled_config()
         self._tick_thread = threading.Thread(
             target=self._tick_loop, name="automation-tick", daemon=True)
         self._tick_thread.start()
@@ -631,6 +633,7 @@ class AutomationEngine:
         interval: 每页停留秒数（>=1）
         enabled:  是否启用轮播
         """
+        self._load_oled_config()
         if interval is not None:
             if isinstance(interval, bool) or not isinstance(interval, (int, float)):
                 raise ValueError("间隔必须是数字（秒）")
@@ -664,9 +667,20 @@ class AutomationEngine:
 
     def oled_config(self) -> dict:
         """返回当前 OLED 轮播配置（含持久化文件里的历史配置）。"""
-        # 本进程从未显式配置且未持久化过：尝试把磁盘配置并入内存
-        if not (self.oled_enabled or self.oled_pages
-                or self.oled_interval != 5.0):
+        self._load_oled_config()
+        return {"enabled": self.oled_enabled, "interval": self.oled_interval,
+                "pages": self.oled_pages or DEFAULT_PAGES}
+
+    def _load_oled_config(self) -> None:
+        """首次使用前把持久化配置载入轮播器。
+
+        使用显式标志记录加载状态，避免把某个合法的默认间隔当作“尚未加载”
+        哨兵。启动流程会在线程运行前调用本方法；API 入口也保留一次性兜底。
+        """
+        with self._lock:
+            if self._oled_config_loaded:
+                return
+            self._oled_config_loaded = True
             try:
                 if self.oled_path.exists():
                     cfg = json.loads(self.oled_path.read_text(encoding="utf-8"))
@@ -685,8 +699,6 @@ class AutomationEngine:
                     self._oled_carousel.interval = self.oled_interval
             except Exception as e:                   # noqa: BLE001
                 logger.debug("[自动化] OLED 配置读取失败: %s", e)
-        return {"enabled": self.oled_enabled, "interval": self.oled_interval,
-                "pages": self.oled_pages or DEFAULT_PAGES}
 
     def _oled_loop(self) -> None:
         """独立轮播线程：仅当启用时填充数据源并 tick。"""
