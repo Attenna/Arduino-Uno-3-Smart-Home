@@ -707,7 +707,7 @@ class HomeController:
             self.ser_b = None
 
     # ── 工具实现 ──
-    def handle_light(self, action, value=None, r=None, g=None, b=None, temp=None) -> str:
+    def handle_light(self, action, value=None, r=None, g=None, b=None, temp=None, count=None) -> str:
         cmd = {"cmd": "light", "action": action}
         if action == "white":
             cmd["value"] = value if value is not None else 255
@@ -719,9 +719,13 @@ class HomeController:
                 return "error: temp 需要 temp 参数(2700~6500)"
             cmd["temp"] = temp
             cmd["value"] = value if value is not None else 255
-        elif action == "rgb":
+        elif action in ("rgb", "pixels"):
             if None in (r, g, b):
                 return "error: rgb 需要 r/g/b 三个参数(0~255)"
+            if action == "pixels":
+                if type(count) is not int or not 1 <= count <= 8:
+                    return "error: pixels count 必须为 1~8 的整数"
+                cmd["count"] = count
             cmd.update({"r": r, "g": g, "b": b})
             if value is not None:
                 cmd["value"] = value          # 整体亮度缩放，缺省由固件按 255 处理
@@ -855,20 +859,22 @@ def _audit(name: str) -> None:
 @mcp.tool()
 async def light(
     action: Literal["off", "white", "night", "temp", "red", "green", "blue",
-                    "yellow", "purple", "cyan", "rgb"],
+                    "yellow", "purple", "cyan", "rgb", "pixels"],
     value: Optional[int] = None,
     r: Optional[int] = None,
     g: Optional[int] = None,
     b: Optional[int] = None,
     temp: Optional[int] = None,
+    count: Optional[int] = None,
 ) -> str:
     """控制灯光。action：off/white(可带 value 亮度 0-255)/night(夜灯，只亮中间几颗，value 可选)/
     temp(色温，需 temp 2700-6500K，value 可选亮度)/red/green/blue/yellow/purple/cyan/rgb(需 r,g,b 0-255，value 可选亮度缩放)。
 
+    pixels：居中点亮 count(1~8) 颗，需 r/g/b，value 为亮度；旧固件会拒绝此动作。
     注意：B 板固件没有 "on" 分支，开灯请用 white（或彩色预设/色温）。
     """
     _audit("light")
-    return await asyncio.to_thread(HOME.handle_light, action, value, r, g, b, temp)
+    return await asyncio.to_thread(HOME.handle_light, action, value, r, g, b, temp, count)
 
 
 @mcp.tool()

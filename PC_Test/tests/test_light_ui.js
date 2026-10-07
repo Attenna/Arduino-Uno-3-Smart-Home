@@ -21,7 +21,7 @@ function lightSandbox() {
     const element = id => {
         if (!elements.has(id)) {
             elements.set(id, {id, value: '', textContent: '', style: {},
-                              classList: {toggle() {}}, addEventListener() {}});
+                              classList: {toggle() {}}, addEventListener() {}, setAttribute() {}});
         }
         return elements.get(id);
     };
@@ -39,7 +39,7 @@ function lightSandbox() {
     });
     vm.runInContext(fs.readFileSync(path.join(web, 'static/js/main.js'), 'utf8'), context);
     vm.runInContext(`bindActuatorSlider = capture; apiPost = record;
-        loadStatus = () => {}; showNotification = () => {};
+        loadStatus = () => {}; showNotification = () => {}; t = key => key;
         initControlSliders();`, context);
     return {
         context, posted, elements,
@@ -56,80 +56,40 @@ function lightSandbox() {
     };
 }
 
-test('brightness changes preserve night, temperature and RGB selection', async () => {
+test('levels preserve RGB and brightness and survive brightness changes', async () => {
     const ui = lightSandbox();
-    for (const [select, expected] of [
-        ['setLightNight()', {mode: 'night'}],
-        ['applyLightTemp(3000)', {temp: 3000}],
-        ["document.getElementById('lightColor').value = '#ff8000'; applyLightColor()", {rgb: [255, 128, 0]}],
-    ]) {
-        ui.run(select);
+    ui.run("syncLightControls({light_status:'on',light_brightness:40,light_mode:'rgb',light_rgb:[255,128,0],light_count:8})");
+    for (const count of [2,4,6,8]) {
+        ui.run(`setLightCount(${count})`);
         await ui.flush();
-        await ui.commit('brightnessSlider', '40');
-        await ui.flush();
-        assert.deepEqual(ui.last(), {status: 'on', brightness: 40, ...expected});
+        assert.deepEqual(ui.last(), {status:'on',brightness:40,rgb:[255,128,0],count});
     }
+    ui.run('setLightCount(4)'); await ui.flush();
+    ui.commit('brightnessSlider','60'); await ui.flush();
+    assert.deepEqual(ui.last(), {status:'on',brightness:60,rgb:[255,128,0],count:4});
 });
-
-// #27 的核心：全亮/半亮只是亮度快捷键，绝不能再把色温或颜色清成白光
-test('brightness shortcuts keep the persisted style', async () => {
+test('power restores brightness, color and count in the current page', async () => {
     const ui = lightSandbox();
-    ui.run("syncLightControls({light_status: 'on', light_brightness: 80,"
-        + " light_mode: 'temp', light_temp: 4000})");
-    ui.run('setLightBrightness(100)');
-    await ui.flush();
-    assert.deepEqual(ui.last(), {status: 'on', brightness: 100, temp: 4000});
-
-    ui.run("syncLightControls({light_status: 'on', light_brightness: 100,"
-        + " light_mode: 'rgb', light_rgb: [10, 20, 30]})");
-    ui.run('setLightBrightness(50)');
-    await ui.flush();
-    assert.deepEqual(ui.last(), {status: 'on', brightness: 50, rgb: [10, 20, 30]});
-
-    // 关灯不带亮法：由服务端沿用库里当前值
-    ui.run('turnLightOff()');
-    await ui.flush();
-    assert.deepEqual(ui.last(), {status: 'off', brightness: 0});
-
-    // 白光是显式按钮给的，不是副作用；刚关过灯，所以从 100% 起步
-    ui.run('setLightWhite()');
-    await ui.flush();
-    assert.deepEqual(ui.last(), {status: 'on', brightness: 100, mode: 'white'});
+    ui.run("syncLightControls({light_status:'on',light_brightness:35,light_mode:'rgb',light_rgb:[10,20,30],light_count:6})");
+    ui.run('toggleLightPower()'); await ui.flush();
+    assert.deepEqual(ui.last(), {status:'off',brightness:0});
+    ui.run("syncLightControls({light_status:'off',light_brightness:0,light_mode:'rgb',light_rgb:[10,20,30],light_count:6})");
+    ui.run('toggleLightPower()'); await ui.flush();
+    assert.deepEqual(ui.last(), {status:'on',brightness:35,rgb:[10,20,30],count:6});
 });
-
-test('status report restores the style into the controls', async () => {
+test('color presets and picker preserve level', async () => {
     const ui = lightSandbox();
-    ui.run("syncLightControls({light_status: 'on', light_brightness: 40,"
-        + " light_mode: 'temp', light_temp: 3000})");
-    assert.deepEqual(ui.json('lightStyle'), {temp: 3000});
-    assert.equal(ui.elements.get('tempSlider').value, 3000);
-    assert.equal(ui.elements.get('lightTempValue').textContent, '3000K');
-    assert.equal(ui.json('lightStyleFromStatus({light_mode: "night"})').mode, 'night');
-    assert.equal(ui.json('lightStyleFromStatus({})').mode, 'white');
-
-    ui.run("syncLightControls({light_status: 'on', light_brightness: 40,"
-        + " light_mode: 'rgb', light_rgb: [255, 0, 128]})");
-    assert.deepEqual(ui.json('lightStyle'), {rgb: [255, 0, 128]});
-    assert.equal(ui.elements.get('lightColor').value, '#ff0080');
-    assert.equal(ui.elements.get('bulb').style.background, 'rgb(255,0,128)');
-    // 白光/夜灯不染色，沿用主题的暖黄
-    ui.run("syncLightControls({light_status: 'on', light_brightness: 40, light_mode: 'white'})");
-    assert.equal(ui.elements.get('bulb').style.background, '');
+    ui.run("syncLightControls({light_status:'on',light_brightness:45,light_mode:'rgb',light_rgb:[10,20,30],light_count:2})");
+    ui.run("setLightColor('#ffffff')"); await ui.flush();
+    assert.deepEqual(ui.last(), {status:'on',brightness:45,rgb:[255,255,255],count:2});
+    assert.equal(ui.elements.get('lightColor').value,'#ffffff');
 });
-
-// 页面按钮与 JS 函数必须同名：改了函数名忘了改模板会静默失效
-test('dashboard light buttons are wired to defined functions', () => {
-    const html = fs.readFileSync(path.join(web, 'templates/dashboard.html'), 'utf8');
-    const js = fs.readFileSync(path.join(web, 'static/js/main.js'), 'utf8');
-    const calls = [...html.matchAll(/onclick="(setLight[A-Za-z]*|turnLightOff)\(([^)]*)\)/g)]
-        .map(m => `${m[1]}(${m[2]})`);
-    assert.deepEqual(calls, ['setLightBrightness(100)', 'setLightBrightness(50)',
-                             'setLightWhite()', 'setLightNight()', 'turnLightOff()']);
-    for (const name of ['setLightBrightness', 'setLightWhite', 'setLightNight',
-                        'turnLightOff', 'applyLightTemp', 'applyLightColor']) {
-        assert.match(js, new RegExp(`function ${name}\\(`), `${name} 已不存在`);
-    }
-    assert.equal(/function setLight\(/.test(js), false, 'setLight 应已被显式入口取代');
+test('dashboard exposes four count levels and no temperature control', () => {
+    const html = fs.readFileSync(path.join(web, 'templates/dashboard.html'),'utf8');
+    assert.equal(html.includes('tempSlider'),false);
+    assert.equal(html.includes('setLightNight'),false);
+    for (const n of [2,4,6,8]) assert.ok(html.includes(`setLightCount(${n})`));
+    assert.ok(html.includes('toggleLightPower()'));
 });
 
 test('dashboard no longer renders or binds the AC control card', () => {
@@ -158,15 +118,11 @@ test('every light entry point called in main.js is defined', () => {
     }
 });
 
-test('remote control light buttons still drive the light and keep the style', async () => {
+test('remote control preserves RGB and level', async () => {
     const ui = lightSandbox();
-    ui.run("syncLightControls({light_status: 'on', light_brightness: 40,"
-        + " light_mode: 'temp', light_temp: 3000})");
-    ui.run("remoteControl('light_on')");
-    await ui.flush();
-    assert.deepEqual(ui.last(), {status: 'on', brightness: 100, temp: 3000});
-
-    ui.run("remoteControl('light_off')");
-    await ui.flush();
-    assert.deepEqual(ui.last(), {status: 'off', brightness: 0});
+    ui.run("syncLightControls({light_status:'on',light_brightness:40,light_mode:'rgb',light_rgb:[10,20,30],light_count:4})");
+    ui.run("remoteControl('light_on')"); await ui.flush();
+    assert.deepEqual(ui.last(), {status:'on',brightness:100,rgb:[10,20,30],count:4});
+    ui.run("remoteControl('light_off')"); await ui.flush();
+    assert.deepEqual(ui.last(), {status:'off',brightness:0});
 });

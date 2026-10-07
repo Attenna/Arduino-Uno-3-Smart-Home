@@ -269,3 +269,12 @@ Module A 原则上"只报告"，下行仅支持少量**无业务含义**的控�
 `{"cmd":"ultrasonic","action":"read","id":42}` 返回带匹配 `id` 的 `distance` 帧。
 Trig=D6、Echo=D5；仅 `valid=true` 时 `distance_cm` 可用。
 接线、超时语义和 HTTP/MCP 调用见 [超声波测距](ultrasonic.md)。
+
+### 八灯珠分档（pixels）
+
+新增原子指令：`{"cmd":"light","action":"pixels","count":4,"r":255,"g":128,"b":0,"value":128}`。
+`count` 为 1~8，面板提供 2/4/6/8 四档；灯珠居中点亮，剩余灯珠清零。
+`r/g/b` 为 0~255，`value` 为整体亮度 0~255（缺省 255）。颜色与数量独立。
+A 板无需修改。B 板必须更新此版本固件，网关同步更新 `light` 工具。
+旧 B 板不识别 `pixels` 时返回失败，服务端不能更新灯的状态，也不得降级为全亮。
+旧 `white/night/temp/rgb/off` 协议保留兼容，面板已移除色温入口。

@@ -64,7 +64,7 @@ def _record_window(new_status):
     _note_manual("window", status=new_status)
 
 
-def _record_light(status, brightness, style=None):
+def _record_light(status, brightness, style=None, count=None):
     """灯状态落库 + 写历史 + 通知引擎；``style=None`` 表示本次不改亮法。
 
     记账字段一律由 light_state 生成，面板/语音/自动化四条写入路径口径一致；
@@ -72,7 +72,9 @@ def _record_light(status, brightness, style=None):
     """
     if style is None:
         style = light_state.from_status(db.get_current_status())
-    values = light_state.status_values(status, brightness, style)
+    if status == "off" and count is None:
+        count = db.get_current_status().get("light_count")
+    values = light_state.status_values(status, brightness, style, count)
     db.update_status(**values)
     db.add_light_event("客厅主灯", values["light_status"], values["light_brightness"])
     _note_manual("light", status=values["light_status"],
@@ -343,6 +345,7 @@ def _light_payload(status_row):
     mode, kelvin, color = light_state.from_status(status_row)
     return {"light_status": status_row.get("light_status", "off"),
             "light_brightness": int(status_row.get("light_brightness") or 0),
+            "light_count": status_row.get("light_count") or (2 if mode == "night" else 8),
             "light_mode": mode, "light_temp": kelvin,
             "light_rgb": list(color) if color else None}
 
@@ -362,15 +365,23 @@ def control_light():
     # 于是拖一下亮度就把色温/颜色打回白光（#27）。
     style = light_state.from_request(data) or light_state.from_status(current)
     cid, seq = _client_token(data)
-    target = (light_status, brightness, style)
+    count = data.get("count", current.get("light_count"))
+    if count is not None and (type(count) is not int or not 1 <= count <= 8):
+        return jsonify({"error": "count 必须为 1~8 的整数"}), 400
+    # 显式旧模式仍兼容旧客户端；新面板用 RGB + count。
+    if "count" not in data and (data.get("mode") in ("white", "night", "temp") or data.get("temp") is not None):
+        count = None
+    if "count" in data and style[0] == "temp":
+        return jsonify({"error": "分档请使用 rgb 颜色"}), 400
+    target = (light_status, brightness, style, count)
 
     def _run(v):
-        status, level, chosen = v
+        status, level, chosen, selected_count = v
         # 四种亮法互斥，由 hardware_plan 选一条固件命令：关灯 > 自定义颜色 > 色温 > 白光/夜灯
-        method, args, kwargs = light_state.hardware_plan(status, level, chosen)
+        method, args, kwargs = light_state.hardware_plan(status, level, chosen, selected_count)
         ok, msg = _hw_call(method, *args, **kwargs)
         if ok:
-            _record_light(status, level, chosen)
+            _record_light(status, level, chosen, selected_count)
         return ok, msg
 
     # 灯光**不做基于 DB 的状态幂等**（与 /api/fan 同理，见那里的说明）：web 以
@@ -583,6 +594,8 @@ def _tool_state_report(name, args):
         # 关灯不回传亮法：库里当前亮法保持原样，下次开灯回到原来的颜色
         if style is not None:
             report.update(light_state.to_request(style))
+            if action == "pixels":
+                report["count"] = args.get("count")
         return report
 
     if name == "fan":
@@ -628,7 +641,10 @@ def _bookkeep(data, who):
         status, brightness = light_state.target_from_request(
             data, int(current.get("light_brightness") or 0))
         style = light_state.from_request(data) or light_state.from_status(current)
-        _record_light(status, brightness, style)
+        count = data.get("count")
+        if count is not None and (type(count) is not int or not 1 <= count <= 8):
+            return 400, {"error": "count 必须为 1~8 的整数"}
+        _record_light(status, brightness, style, count)
         return 200, {"ok": True, **_light_payload(db.get_current_status())}
     if device == "fan":
         speed = _pct(data.get("speed"), 0)

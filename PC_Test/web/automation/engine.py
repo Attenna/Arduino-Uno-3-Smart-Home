@@ -1102,7 +1102,8 @@ class AutomationEngine:
             style = (light_state.from_color_param(
                 color, action.get("r"), action.get("g"), action.get("b"))
                 if color else light_state.from_status(current))
-            target_light = (status, brightness, style)
+            count = current.get("light_count") if not color else None
+            target_light = (status, brightness, style, count)
             if not color and self._last_cmd.get("light") == target_light \
                     and (current.get("light_status"), current.get("light_brightness")) == (status, brightness):
                 return True, "灯重复指令跳过"
@@ -1121,13 +1122,13 @@ class AutomationEngine:
                     brightness = 100
             else:
                 # 与面板同一条口径：下发前把亮法展开成固件能执行的完整命令
-                method, args, kwargs = light_state.hardware_plan(status, brightness, style)
+                method, args, kwargs = light_state.hardware_plan(status, brightness, style, count)
                 ok, msg = getattr(self.bridge, method)(*args, **kwargs)
             if ok:
                 self._last_cmd["light"] = target_light if not color else None
                 # 亮法一并记账：规则把灯设成红色/色温后，面板显示的才是灯真正的
                 # 样子，而不是上一次面板命令留下的颜色（#27）。关灯不改亮法。
-                values = light_state.status_values(status, brightness, style)
+                values = light_state.status_values(status, brightness, style, count)
                 self.db.update_status(**values)
                 self.db.add_light_event("客厅主灯(自动化)", values["light_status"],
                                         values["light_brightness"])
