@@ -8,10 +8,6 @@ let lastStatusUpdate = Date.now();
 let pendingRequests = new Set(); // 跟踪进行中请求，防止并发堆积
 let lastStatus = null;         // 缓存最近一次 /api/status，供语言切换时重渲染指示器
 
-// 空调最后一次成功下发的状态（来自 /api/status 回显），供"合并式"操作补齐
-let acState = { power: false, mode: 'auto', temperature: 26, fan: 'auto',
-                swing_ud: false, swing_lr: false };
-
 // 最近一次 /api/status 回显的风扇/灯光状态：值没变就不下发，
 // 屏蔽移动端滑块连续 change、重复点击造成的无意义指令
 let lastKnownFanSpeed = null;
@@ -163,7 +159,7 @@ function debounce(func, wait) {
     return executedFunction;
 }
 
-// 动作防连点：门/窗/空调经串口往返要数秒，手机上点击没有即时反馈时用户会
+// 动作防连点：门/窗/远程空调控制经串口往返要数秒，手机上点击没有即时反馈时用户会
 // 连点，移动端触摸还可能对同一元素双发 click。同名动作执行期间（+500ms）
 // 忽略重复触发；风扇/灯光另有 300ms 防抖收口，不走这里。
 const _tapsInFlight = new Set();
@@ -195,7 +191,7 @@ document.addEventListener('DOMContentLoaded', () => {
 // range 补发一次 change（change 的语义是"值被提交"，不等价于用户操作）。补发一次就
 // 会把 DB 里的旧值当成用户指令发出去 → 表现为「没人碰它，风扇自己启动了」。
 // 判据用 input 事件：程序化赋值 .value 不会触发 input，只有真实操作才会，可靠且无需
-// 额外监听。三个滑块（风扇/灯光/空调）都是执行器，一律照此收口。
+// 额外监听。风扇和灯光滑块都是执行器，一律照此收口。
 function bindActuatorSlider(slider, label, formatLabel, onCommit) {
     if (!slider) return;
     let userTouched = false;
@@ -229,10 +225,6 @@ function initControlSliders() {
                        v => applyLightTemp(parseInt(v)));
     const colorInput = document.getElementById('lightColor');
     if (colorInput) colorInput.addEventListener('change', applyLightColor);
-    bindActuatorSlider(document.getElementById('acTempSlider'),
-                       document.getElementById('acTempLabel'),
-                       v => Number(v).toFixed(1) + '\u00b0C',
-                       v => setACTemp(v));
 }
 
 function startStatusPolling() {
@@ -419,38 +411,6 @@ function updateDashboard(data) {
         lightEl.textContent = lightText;
         lightEl.className = 'status-text ' + (data.light_status === 'on' ? 'active' : 'normal');
     }
-
-    // 空调（美的红外）：回写读数、滑块与各按钮选中态
-    acState = {
-        power: data.ac_status === 'on',
-        mode: data.ac_mode || 'auto',
-        temperature: Number(data.ac_temperature) || 26,
-        fan: data.ac_fan || 'auto',
-        swing_ud: !!data.ac_swing_ud,
-        swing_lr: !!data.ac_swing_lr,
-    };
-    const acIndicator = document.getElementById('acIndicator');
-    if (acIndicator) acIndicator.classList.toggle('on', acState.power);
-    const acTempEl = document.getElementById('acTempValue');
-    if (acTempEl) acTempEl.textContent = acState.power ? Math.round(acState.temperature) + '°C' : '--';
-    const acModeEl = document.getElementById('acModeValue');
-    if (acModeEl) acModeEl.textContent = acState.power ? t('ac.mode_' + acState.mode) : t('ac.off_hint');
-    const acSliderEl = document.getElementById('acTempSlider');
-    if (acSliderEl && document.activeElement !== acSliderEl) acSliderEl.value = acState.temperature;
-    const acTempLabel = document.getElementById('acTempLabel');
-    if (acTempLabel) acTempLabel.textContent = Math.round(acState.temperature) + '°C';
-    document.querySelectorAll('#acModeButtons [data-ac-mode]').forEach(btn => {
-        btn.classList.toggle('active', acState.power && btn.dataset.acMode === acState.mode);
-    });
-    document.querySelectorAll('#acFanButtons [data-ac-fan]').forEach(btn => {
-        btn.classList.toggle('active', acState.power && btn.dataset.acFan === acState.fan);
-    });
-    [['acSwingUdBtn', 'swing_ud'], ['acSwingLrBtn', 'swing_lr']].forEach(([id, key]) => {
-        const btn = document.getElementById(id);
-        if (btn) btn.classList.toggle('active', acState[key]);
-    });
-    const acPowerBtn = document.getElementById('acPowerBtn');
-    if (acPowerBtn) acPowerBtn.textContent = t(acState.power ? 'ac.power_off' : 'ac.power_on');
 
     // 硬件回读一致性指示器
     updateMismatchIndicator(data);
@@ -719,27 +679,6 @@ window.addEventListener('pagehide', () => {
     postFanDebounced.cancel();
     postLightDebounced.cancel();
 });
-
-// ==================== 空调（美的红外）====================
-// 空调每条指令都会带上完整状态（红外一帧就含开关/模式/温度/风速），
-// 所以这里只传变化项，由后端按库里当前值补齐后整帧下发。
-
-async function setAC(partial) {
-    const body = { ...partial };
-    // 未开机时改模式/温度/风速 → 自动带开机，避免"设置被忽略"这种哑路径
-    if (body.power === undefined && !acState.power) body.power = true;
-    const result = await apiPost('/api/ac', body);
-    if (result) {
-        showNotification(getMessage(result));
-        loadStatus();
-    }
-}
-
-function toggleAC() { setAC({ power: !acState.power }); }
-function setACMode(mode) { setAC({ mode }); }
-function setACTemp(value) { setAC({ temperature: Number(value) }); }
-function setACFan(fan) { setAC({ fan }); }
-function toggleACOption(key) { setAC({ [key]: !acState[key] }); }
 
 // 远程控制面板：light_on/off、fan_on/off、door_open/close、ac_on/off
 function remoteControl(action) {
