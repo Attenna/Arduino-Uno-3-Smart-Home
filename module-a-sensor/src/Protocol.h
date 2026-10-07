@@ -32,6 +32,7 @@ private:
     static void printBool(bool v);
     static void processLine(char* line, SensorManager& s, LightOutput& light);
     static bool processLightJson(char* line, LightOutput& light);
+    static bool processLightCompact(char* line, LightOutput& light);
     static void respondWho();
 };
 

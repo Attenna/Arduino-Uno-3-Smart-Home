@@ -6,6 +6,20 @@ from web.hardware import McpHardwareBridge
 
 
 class PixelTransportTests(unittest.TestCase):
+    def test_compact_a_board_frames_fit_uno_rx_buffer(self):
+        actions = [
+            {"action": "off"},
+            {"action": "white", "value": 255},
+            {"action": "night", "value": 60},
+            {"action": "pixels", "value": 255, "r": 255, "g": 255, "b": 255, "count": 8},
+            {"action": "purple"},
+        ]
+        for command in actions:
+            packet = server.encode_a_light_command(command, 2147483647)
+            self.assertLess(len(packet), 64)
+            self.assertTrue(packet.startswith(b"L,"))
+            self.assertTrue(packet.endswith(b"\n"))
+
     def test_gateway_sends_one_atomic_command(self):
         home = server.HomeController()
         home._send_a = Mock(return_value="ok")

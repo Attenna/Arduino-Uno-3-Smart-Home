@@ -100,6 +100,35 @@ def nec_code(address: int, command: int) -> int:
     return ((a << 24) | ((~a & 0xFF) << 16) | (c << 8) | (~c & 0xFF)) & 0xFFFFFFFF
 
 
+def encode_a_light_command(cmd: dict, request_id: int) -> bytes:
+    """Encode a light command below Uno's 64-byte serial RX buffer limit."""
+    action = str(cmd.get("action") or "").lower()
+    value = int(cmd.get("value", 255))
+    count = int(cmd.get("count", 8))
+    presets = {
+        "red": (255, 0, 0), "green": (0, 255, 0), "blue": (0, 0, 255),
+        "yellow": (255, 180, 0), "purple": (160, 0, 255), "cyan": (0, 180, 255),
+    }
+    if action == "off":
+        code, value, r, g, b, count = "O", 0, 0, 0, 0, 0
+    elif action in ("white", "night"):
+        code, r, g, b = "W", 255, 255, 255
+        if action == "night":
+            count = 2
+    elif action in ("rgb", "pixels"):
+        code = "P"
+        r, g, b = (int(cmd.get(k, 0)) for k in ("r", "g", "b"))
+    elif action in presets:
+        code = "P"
+        r, g, b = presets[action]
+    else:
+        raise ValueError(f"unsupported A-board light action: {action}")
+    packet = f"L,{code},{value},{r},{g},{b},{count},{request_id}\n".encode("ascii")
+    if len(packet) >= 64:
+        raise ValueError("A-board light command exceeds serial RX buffer")
+    return packet
+
+
 # ==================== 智能家居控制器（持有串口）====================
 
 # A 板读线程自愈参数
@@ -362,13 +391,12 @@ class HomeController:
         with self._a_cmd_lock:
             self._a_next_id = (self._a_next_id + 1) & 0x7FFFFFFF
             request_id = self._a_next_id
-            packet = dict(cmd, id=request_id)
             with self._a_resp_lock:
                 self._a_waiter_id = request_id
                 self._a_resp = None
                 self._a_resp_event.clear()
             try:
-                self.ser_a.write((json.dumps(packet, separators=(",", ":")) + "\n").encode())
+                self.ser_a.write(encode_a_light_command(cmd, request_id))
                 self.ser_a.flush()
             except Exception as e:
                 return f"error: A 板写入失败: {e}"

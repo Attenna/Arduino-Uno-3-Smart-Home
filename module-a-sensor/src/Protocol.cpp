@@ -214,8 +214,38 @@ bool Protocol::processLightJson(char* line, LightOutput& light) {
     return true;
 }
 
+bool Protocol::processLightCompact(char* line, LightOutput& light) {
+    if (line[0] != 'L' || line[1] != ',') return false;
+    char* save = NULL;
+    strtok_r(line, ",", &save);               // L
+    char* action = strtok_r(NULL, ",", &save);
+    char* fields[6];
+    for (byte i = 0; i < 6; i++) fields[i] = strtok_r(NULL, ",", &save);
+    if (!action || !fields[0] || !fields[1] || !fields[2] || !fields[3] ||
+            !fields[4] || !fields[5]) return true;
+    int value = constrain(atol(fields[0]), 0L, 255L);
+    int r = constrain(atol(fields[1]), 0L, 255L);
+    int g = constrain(atol(fields[2]), 0L, 255L);
+    int b = constrain(atol(fields[3]), 0L, 255L);
+    int count = constrain(atol(fields[4]), 1L, (long)RGB_LED_COUNT);
+    long id = atol(fields[5]);
+    bool ok = true;
+    if (strcmp(action, "O") == 0) light.off();
+    else if (strcmp(action, "W") == 0) light.white(value, count);
+    else if (strcmp(action, "P") == 0) light.rgb(r, g, b, value, count);
+    else ok = false;
+    Serial.print(F("{\"module\":\"sensor\",\"type\":\"response\",\"result\":\""));
+    Serial.print(ok ? F("ok") : F("error"));
+    Serial.print(F("\",\"cmd\":\"light\",\"id\":")); Serial.print(id);
+    Serial.print(F(",\"state\":{\"light\":")); Serial.print(light.level());
+    Serial.print(F(",\"lit\":")); Serial.print(light.count());
+    Serial.println(F("}}"));
+    return true;
+}
+
 void Protocol::processLine(char* line, SensorManager& s, LightOutput& light) {
     trim(line);
+    if (processLightCompact(line, light)) return;
     if (line[0] == '{' && processLightJson(line, light)) return;
     toUpper(line);
     if (line[0] == '\0') return;
