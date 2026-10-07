@@ -46,11 +46,12 @@
             <div class="card-body">
                 <div class="filter-row">
                     <label data-i18n="history.data_type">数据类型:</label>
-                    <select id="dataType" onchange="loadHistory()" class="select-input" data-i18n-options="history.type">
-                        <option value="temperature">温度</option>
-                        <option value="humidity">湿度</option>
-                        <option value="door_window">门窗状态</option>
-                        <option value="light">灯光状态</option>
+                    <select id="dataType" onchange="loadHistory()" class="select-input">
+                        <option value="temperature" data-i18n="history.type_temp">温度</option>
+                        <option value="humidity" data-i18n="history.type_humidity">湿度</option>
+                        <option value="light_level" data-i18n="history.type_light_level">光照强度</option>
+                        <option value="door_window" data-i18n="history.type_door">门窗状态</option>
+                        <option value="light" data-i18n="history.type_light">灯光状态</option>
                     </select>
                     <label data-i18n="history.time_range">时间范围:</label>
                     <select id="timeRange" onchange="loadHistory()" class="select-input" data-i18n-options="history.range">
@@ -133,7 +134,7 @@
         </div>
     </main>
 
-    <script src="{{ url_for('static', filename='js/lang.js') }}?v=20261003f"></script>
-    <script src="{{ url_for('static', filename='js/history.js') }}?v=20261003f"></script>
+    <script src="{{ url_for('static', filename='js/lang.js') }}?v=20261007a"></script>
+    <script src="{{ url_for('static', filename='js/history.js') }}?v=20261007a"></script>
 </body>
 </html>

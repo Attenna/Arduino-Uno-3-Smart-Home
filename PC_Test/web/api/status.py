@@ -60,6 +60,13 @@ def get_temperature_stats():
     return jsonify(db.get_statistics().get("temperature_24h", {}))
 
 
+@bp.route("/api/light-level/history")
+def get_light_level_history():
+    """环境光敏 ADC 历史；与灯具开关历史 /api/light/history 分开。"""
+    hours = request.args.get("hours", 24, type=int)
+    return jsonify(db.get_light_level_history(hours))
+
+
 @bp.route("/api/statistics")
 def get_statistics():
     return jsonify(db.get_statistics())

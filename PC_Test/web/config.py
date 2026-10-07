@@ -46,7 +46,7 @@ DEFAULTS: dict = {
     # web 是全系统唯一硬件网关：语音助手经 /api/hardware/tool 调用硬件，
     # 串口只能被 web 拉起的 mcp_home_server 独占。
     # MCP 传感器快照轮询间隔（秒），拿到新数据即写入 SQLite
-    "sensor_poll_interval": 2.0,
+    "sensor_poll_interval": 1.0,
     # 语音助手 HTTP 服务（唤醒/文本指令/对话实况代理的目标地址）。
     # 环境变量 SMART_HOME_VOICE_URL 优先。
     "voice": {

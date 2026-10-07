@@ -131,7 +131,7 @@ class McpHardwareBridge:
         self.enabled = bool(serial_cfg.get("enabled", True))
         self.port_a = serial_cfg.get("port_a") or "auto"
         self.port_b = serial_cfg.get("port_b") or "auto"
-        self.poll_interval = float(cfg.get("sensor_poll_interval", 2.0))
+        self.poll_interval = float(cfg.get("sensor_poll_interval", 1.0))
         # B 板硬件回读轮询间隔：与 voice 侧心跳（10s）同频即可——回读值来自心跳
         # 缓存的 state 帧，这里只是搬运，不额外占用串口。
         self.readback_interval = float(cfg.get("readback_interval", 10.0))

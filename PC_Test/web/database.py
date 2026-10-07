@@ -75,7 +75,7 @@ def boolean(value):
 
 
 class SmartHomeDB:
-    # 原始遥测 2 秒一行 ≈ 8.6 万行/天；超过保留期的先聚合进 sensor_hourly
+    # 原始遥测 1 秒一行 ≈ 8.6 万行/天；超过保留期的先聚合进 sensor_hourly
     # 再删原始行，防派上磁盘写满导致入库整体停摆。
     HISTORY_RETENTION_DAYS = 7
     _MAINTENANCE_INTERVAL_S = 3600.0
@@ -181,13 +181,14 @@ class SmartHomeDB:
                 'sensor_history': 'id INTEGER PRIMARY KEY AUTOINCREMENT, received_at TEXT NOT NULL, device_uptime_ms INTEGER, temperature REAL, humidity REAL, light_raw INTEGER, smoke INTEGER, rain INTEGER, distance INTEGER, touch INTEGER, motion INTEGER, soil_moisture INTEGER, soil_dry INTEGER',
                 'hardware_events': 'id INTEGER PRIMARY KEY AUTOINCREMENT, received_at TEXT NOT NULL, module TEXT NOT NULL, event_type TEXT NOT NULL, payload_json TEXT NOT NULL',
                 'automation_logs': 'id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT DEFAULT CURRENT_TIMESTAMP, rule_id TEXT NOT NULL, rule_name TEXT NOT NULL, triggered INTEGER NOT NULL, conditions_hold INTEGER NOT NULL, reason TEXT, success INTEGER NOT NULL DEFAULT 0, detail_json TEXT',
-                'sensor_hourly': 'hour_start TEXT PRIMARY KEY, temperature REAL, humidity REAL, samples INTEGER NOT NULL',
+                'sensor_hourly': 'hour_start TEXT PRIMARY KEY, temperature REAL, humidity REAL, light_raw REAL, samples INTEGER NOT NULL',
             }
             for table, definition in definitions.items():
                 c.execute(f'CREATE TABLE IF NOT EXISTS {table} ({definition})')
             additions = {'authorized_persons': {'rfid_uid':'TEXT', 'enabled':'INTEGER NOT NULL DEFAULT 0'},
                          'access_logs': {'credential':'TEXT', 'command_status':'TEXT', 'deny_reason':'TEXT'},
-                         'face_events': {'deny_reason':'TEXT'}}
+                         'face_events': {'deny_reason':'TEXT'},
+                         'sensor_hourly': {'light_raw':'REAL'}}
             for table, fields in additions.items():
                 names = {r['name'] for r in c.execute(f'PRAGMA table_info({table})')}
                 for key, definition in fields.items():
@@ -337,12 +338,23 @@ class SmartHomeDB:
             c.execute('BEGIN IMMEDIATE')
             c.execute(
                 "INSERT OR REPLACE INTO sensor_hourly"
-                "(hour_start,temperature,humidity,samples) "
+                "(hour_start,temperature,humidity,light_raw,samples) "
                 "SELECT strftime('%Y-%m-%d %H:00:00',timestamp),"
-                "AVG(temperature),AVG(humidity),COUNT(*) "
+                "AVG(temperature),AVG(humidity),NULL,COUNT(*) "
                 "FROM temperature_history "
                 "WHERE source='hardware' AND timestamp<? GROUP BY 1",
                 (cutoff,))
+            # sensor_history 是 A 板原始快照，光照 ADC 只存在这里。温湿度聚合仍以
+            # temperature_history 为准，避免改变旧库兼容逻辑；这里只补同小时光照均值。
+            c.execute(
+                "UPDATE sensor_hourly SET light_raw=("
+                "SELECT AVG(s.light_raw) FROM sensor_history s "
+                "WHERE strftime('%Y-%m-%d %H:00:00',s.received_at)="
+                "sensor_hourly.hour_start AND s.received_at<?) "
+                "WHERE hour_start IN (SELECT DISTINCT "
+                "strftime('%Y-%m-%d %H:00:00',received_at) "
+                "FROM sensor_history WHERE received_at<?)",
+                (cutoff, cutoff))
             deleted_th = c.execute(
                 "DELETE FROM temperature_history "
                 "WHERE source='hardware' AND timestamp<?", (cutoff,)).rowcount
@@ -413,6 +425,29 @@ class SmartHomeDB:
 
     def get_sensor_history(self, hours=24):
         return self._history('sensor_history',hours)
+
+    def get_light_level_history(self, hours=24):
+        """返回环境光照 ADC 历史，而不是灯具的开关/亮度历史。
+
+        最近 1 小时保留每秒原始读数；更长的 7 天内窗口按时间分桶，避免一次把
+        数十万点送进浏览器；超过原始保留期后与 sensor_hourly 小时归档拼接。
+        """
+        hours = max(1, min(int(hours), 720))
+        since = (datetime.now(timezone.utc)-timedelta(hours=hours)).strftime('%Y-%m-%d %H:%M:%S')
+        if hours > self.HISTORY_RETENTION_DAYS * 24:
+            return self._rows(
+                "SELECT hour_start AS timestamp, light_raw, samples "
+                "FROM sensor_hourly WHERE hour_start>? UNION ALL "
+                "SELECT strftime('%Y-%m-%d %H:00:00',received_at) AS timestamp, "
+                "AVG(light_raw),COUNT(*) FROM sensor_history "
+                "WHERE received_at>? GROUP BY strftime('%Y-%m-%d %H:00:00',received_at) "
+                "ORDER BY timestamp DESC LIMIT 5000", (since, since))
+        bucket_seconds = 1 if hours == 1 else max(5, hours*3600//5000)
+        return self._rows(
+            "SELECT MIN(received_at) timestamp, AVG(light_raw) light_raw, COUNT(*) samples "
+            "FROM sensor_history WHERE received_at>? "
+            "GROUP BY CAST(strftime('%s',received_at) AS INTEGER)/? "
+            "ORDER BY timestamp DESC LIMIT 5000", (since, bucket_seconds))
 
     def get_hardware_events(self, hours=24):
         return self._history('hardware_events',hours)
