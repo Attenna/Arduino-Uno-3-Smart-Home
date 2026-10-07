@@ -14,6 +14,9 @@ try{const response=await fetch('/api/security/events');if(!response.ok)throw Err
 const events=await response.json();box.replaceChildren();if(!events.length)box.textContent='暂无可疑行为记录';
 for(const event of events){const card=document.createElement('article');const title=document.createElement('h2');
 title.textContent=event.reason==='keypad_failures'?'连续密码错误 '+event.details.failures+' 次':'门口持续停留';
+if(event.reason==='distance_rule'){
+const info=document.createElement('p');const d=event.details||{};const trig=d.trigger||{};
+info.textContent=(d.rule_name||'自定义拍照')+' · 拍照时距离 '+(d.distance_cm??'无有效读数')+' cm · 触发条件 '+(trig.op||'')+' '+(trig.value??'')+' cm，持续 '+(trig.hold_sec||0)+' 秒';card.append(info);}
 const date=document.createElement('p');date.textContent=new Date(event.timestamp).toLocaleString();card.append(title,date);
 if(event.capture==='saved'){const photo=document.createElement('img');photo.src='/api/security/images/'+encodeURIComponent(event.id);photo.alt='事件发生时的摄像头照片';photo.loading='lazy';card.append(photo);}
 else{const status=document.createElement('p');status.textContent=event.capture==='pending'?'等待拍照':'拍照失败：'+(event.error||'未知原因');card.append(status);}

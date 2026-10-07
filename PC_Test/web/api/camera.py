@@ -46,6 +46,14 @@ def _camera_health(stream_url: str) -> dict:
         return {"online": False, "error": f"摄像头服务无响应: {e}"}
 
 
+@bp.route("/api/camera/distance")
+def doorway_distance():
+    from .. import extensions
+    engine = extensions.automation
+    return jsonify(engine.doorway.snapshot() if engine else
+                   {"distance_cm": None, "valid": False, "status": "unavailable"})
+
+
 @bp.route("/api/camera/status")
 def camera_status():
     url = _stream_url()

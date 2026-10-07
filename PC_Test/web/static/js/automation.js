@@ -516,6 +516,14 @@ function defineBlocks() {
         },
     };
     // 语音联动：按键触发后免唤醒词直接说话
+    Blockly.Blocks['act_camera'] = {
+        init: function () {
+            this.appendDummyInput().appendField('📷 门口拍照并存储');
+            this.setPreviousStatement(true, 'ACT');
+            this.setNextStatement(true, 'ACT');
+            this.setColour(120);
+        },
+    };
     Blockly.Blocks['act_voice'] = {
         init: function () {
             this.appendDummyInput().appendField('🎙️ 语音')
@@ -852,6 +860,7 @@ function buildToolbox() {
         <block type="act_light_rgb"></block>
         <block type="act_fan"></block>
         <block type="act_ac"></block>
+        <block type="act_camera"></block>
         <block type="act_voice"></block>
         <block type="act_http"></block>
         <block type="act_ir"></block>
@@ -1023,6 +1032,7 @@ function summarizeAction(a) {
             }
             return `状态「${label}」= ${val}`;
         }
+        case 'camera': return '门口拍照并存储';
         case 'voice':  return a.action === 'say' ? '语音播报' : '唤醒语音';
         case 'http':   return `HTTP ${String(a.method || 'post').toUpperCase()} `
                             + String(a.url || '').replace(/^https?:\/\//, '').slice(0, 40);
@@ -1231,6 +1241,18 @@ async function persistRules(msg) {
         showNotification(e.message, 'error');
         await reloadRules();
     }
+}
+
+function createDoorwayRule() {
+    EDIT_KIND = 'rule';
+    editingIndex = -1;
+    editingRule = {
+        id: null, name: '门口靠近拍照', enabled: true,
+        trigger: { kind: 'sensor', sensor: 'distance_cm', op: '<', value: 50, hold_sec: 2 },
+        match: 'all', conditions: [], actions: [{ device: 'camera', action: 'snapshot' }],
+        else_actions: [], cooldown: 3,
+    };
+    showEditor();
 }
 
 function createRule() {
@@ -1751,6 +1773,7 @@ function actionToJson(b) {
             return { device: 'state', name, op: 'set',
                      value: b.getFieldValue('TEXT') || '' };
         }
+        case 'act_camera': return { device: 'camera', action: 'snapshot' };
         case 'act_voice': {
             const json = { device: 'voice', action: b.getFieldValue('ACT') || 'wake' };
             const text = (b.getFieldValue('TEXT') || '').trim();
@@ -1987,6 +2010,7 @@ function fillAction(a) {
             }
             break;
         }
+        case 'camera': b = createTyped('act_camera'); break;
         case 'voice':
             b = createTyped('act_voice');
             b.setFieldValue(a.action || 'wake', 'ACT');

@@ -36,6 +36,7 @@ from pathlib import Path
 
 from .capabilities import CONDITION_SOURCES, EVENT_TRIGGERS
 from .default_rules import DEFAULT_RULES, PRESETS_VERSION
+from ..doorway import DoorwayDistance
 from .global_state import GlobalStateStore
 from .oled_carousel import (DEFAULT_PAGES, PAGES_VERSION, OledCarousel,
                             OLED_MIN_INTERVAL, is_legacy_default_pages)
@@ -66,6 +67,8 @@ class AutomationEngine:
         self._lock = threading.RLock()          # 保护规则热更新
         self._snapshot: dict = {}               # A 板最新一帧（原始字段名）
         self._snapshot_ts: float = 0.0
+        self.doorway = DoorwayDistance()
+        self.capture_photo = None
         # 事件队列（带序号），规则按各自 last_event_id 消费
         self._events: list[tuple[int, dict]] = []
         self._event_seq = 0
@@ -421,11 +424,17 @@ class AutomationEngine:
                                http_policy=self.http_policy)
         with self._lock:
             old_ids = {r["id"] for r in self.rules}
+            old_rules = {r["id"]: r for r in self.rules}
             for rule in clean:
                 if not rule["id"]:
                     rule["id"] = uuid.uuid4().hex[:8]
             for cancelled in self._running.values():
                 cancelled.set()
+            for rule in clean:
+                if (rule["trigger"].get("sensor") == "distance_cm"
+                        and old_rules.get(rule["id"]) != rule):
+                    for store in (self._prev_trigger, self._hold_since, self._hold_fired, self._last_fire):
+                        store.pop(rule["id"], None)
             self.rules = clean
             # 页面保存的规则里带 preset 标记的，同样计入「已注入过」
             self._presets_seen |= {r["preset"] for r in clean if r.get("preset")}
@@ -476,16 +485,34 @@ class AutomationEngine:
 
     # ==================== 外部输入（bridge / face API 调用） ====================
 
+    def on_distance(self, payload):
+        with self._lock:
+            interrupted = self.doorway.update(payload)
+            for rule in list(self._iter_enabled()):
+                trig = rule["trigger"]
+                if trig.get("sensor") != "distance_cm" or trig["kind"] != "sensor":
+                    continue
+                rid = rule["id"]
+                if interrupted or not self.doorway.snapshot()["valid"]:
+                    self._hold_since.pop(rid, None)
+                    self._hold_fired.pop(rid, None)
+                    self._prev_trigger[rid] = False
+                # Fresh measurements may start a dwell immediately after startup.
+                self._armed.add(rid)
+                self._evaluate_sensor_rule(rule)
+
     def on_snapshot(self, snap: dict) -> None:
         """A 板周期数据（字段名：temperature/humidity/light/smoke/rain/touch/motion）。"""
         try:
             if self._snapshot_ts and time.time() - self._snapshot_ts > 10:
-                self._hold_since.clear()
-                self._hold_fired.clear()
+                for rule in self.rules:
+                    if rule["trigger"].get("sensor") != "distance_cm":
+                        self._hold_since.pop(rule["id"], None)
+                        self._hold_fired.pop(rule["id"], None)
             self._snapshot = dict(snap or {})
             self._snapshot_ts = time.time()
             for rule in list(self._iter_enabled()):
-                if rule["trigger"]["kind"] == "sensor":
+                if rule["trigger"]["kind"] == "sensor" and rule["trigger"].get("sensor") != "distance_cm":
                     self._evaluate_sensor_rule(rule)
         except Exception as e:                       # noqa: BLE001
             logger.debug("[自动化] 快照求值异常: %s", e)
@@ -742,6 +769,7 @@ class AutomationEngine:
     def _context(self) -> dict:
         """传感器快照 + SQLite 中的执行器当前状态 + 全局状态（g: 变量）。"""
         ctx = dict(self._snapshot)
+        ctx["distance_cm"] = self.doorway.snapshot()["distance_cm"]
         ctx["sensor_fresh"] = bool(self._snapshot_ts and time.time() - self._snapshot_ts <= 10)
         if not ctx["sensor_fresh"]:
             for key in ("temperature", "humidity", "light", "motion", "touch", "rain", "smoke"):
@@ -838,11 +866,12 @@ class AutomationEngine:
                     self._fire(rule, reason=reason)
                 return
             # 「持续 N 秒」：连续保持满 N 秒触发一次，中断（条件转假）则重新计时
+            clock = time.monotonic if trig["sensor"] == "distance_cm" else time.time
             start = self._hold_since.get(rid)
             if start is None:
-                self._hold_since[rid] = time.time()
+                self._hold_since[rid] = clock()
                 return
-            if time.time() - start >= hold_sec and not self._hold_fired.get(rid):
+            if clock() - start >= hold_sec and not self._hold_fired.get(rid):
                 self._hold_fired[rid] = True
                 self._fire(rule, reason=f"{reason} 持续 {hold_sec:g} 秒")
 
@@ -940,6 +969,13 @@ class AutomationEngine:
 
     def _perform(self, action: dict, rule: dict | None = None) -> tuple[bool, str]:
         device = action["device"]
+        if device == "camera":
+            if self.capture_photo is None:
+                return False, "拍照服务未初始化"
+            try:
+                return self.capture_photo(rule or {}, self.doorway.snapshot())
+            except Exception as exc:
+                return False, f"照片存储失败: {exc}"
         # 「手动优先 30 秒让位」不再是引擎仲裁：面板/语音广播 manual_control
         # 事件，manual_mark_*/manual_clear_* 预设维护 g:手动优先_x，设备类预设
         # 带 ``g:手动优先_x == false`` 条件自行让位（见 default_rules.py）。

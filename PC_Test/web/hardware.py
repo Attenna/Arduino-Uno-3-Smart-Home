@@ -32,7 +32,7 @@ from .readback import output_mismatch
 logger = logging.getLogger(__name__)
 
 # 钩子通道（见 McpHardwareBridge.add_listener）
-HOOK_KINDS = ("snapshot", "event", "ack")
+HOOK_KINDS = ("snapshot", "event", "ack", "distance")
 # 收到成功 ACK 即视为「输出板在线」并广播 ack 钩子的执行器工具
 ACK_TRACKED_TOOLS = ("door", "window", "light", "fan", "buzzer", "ir", "ac")
 
@@ -262,7 +262,15 @@ class McpHardwareBridge:
                         } for t in tools.tools]
                         logger.info("[硬件桥] MCP 已连接，工具: %s",
                                     [t.name for t in tools.tools])
-                        await self._poll_loop(session)
+                        distance_task = asyncio.create_task(self._distance_loop(session))
+                        try:
+                            await self._poll_loop(session)
+                        finally:
+                            distance_task.cancel()
+                            try:
+                                await distance_task
+                            except asyncio.CancelledError:
+                                pass
             except asyncio.CancelledError:
                 raise
             except Exception as e:
@@ -286,6 +294,20 @@ class McpHardwareBridge:
             self._last_error = error
 
     # ==================== 传感器轮询入库 ====================
+
+    async def _distance_loop(self, session):
+        try:
+            while not self._stopping:
+                payload = {}
+                if any(t["name"] == "get_distance" for t in self.tool_schemas):
+                    try:
+                        payload = json.loads(await self._call(session, "get_distance", {}))
+                    except Exception:
+                        pass
+                self._fire("distance", payload)
+                await asyncio.sleep(0.5)
+        finally:
+            self._fire("distance", {})
 
     async def _poll_loop(self, session) -> None:
         last_readback = 0.0

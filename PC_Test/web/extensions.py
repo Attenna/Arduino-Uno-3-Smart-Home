@@ -50,6 +50,8 @@ def init_bridge(cfg: dict) -> McpHardwareBridge:
             # 自动化引擎挂在硬件桥的快照/事件钩子上；动作经 bridge 下发
             rules_path = DATA_DIR / "automation_rules.json"
             automation = AutomationEngine(bridge, db, rules_path, cfg)
+            automation.capture_photo = security_monitor.capture_rule
+            bridge.add_listener("distance", automation.on_distance)
             bridge.snapshot_listener = automation.on_snapshot
             bridge.event_listener = automation.on_event
             # 门禁：刷卡/键盘密码事件进鉴权，鉴权结果走积木（开门不再有硬编码）
