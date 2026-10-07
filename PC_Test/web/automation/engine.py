@@ -335,6 +335,11 @@ class AutomationEngine:
             if pid in self._REMOVED_PRESETS:
                 dropped.append(name)
                 continue
+            if (presets_version == 6 and pid in v4_by_pid
+                    and pid not in {"light_dark", "light_off"}):
+                # v7 只调整光敏回差阈值；保留其他现有预设的全部用户配置。
+                out.append(rule)
+                continue
             if pid in v4_by_pid and presets_version < PRESETS_VERSION:
                 new = copy.deepcopy(v4_by_pid[pid])
                 new["id"] = rule.get("id") or None
