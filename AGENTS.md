@@ -11,4 +11,8 @@ For every requested code change in this repository:
 7. After merge, update local `main` with `git pull --ff-only origin main`. One deployer then synchronizes that exact commit to the Orange Pi with `scripts/sync_orangepi.sh` (or `powershell -File scripts/sync_orangepi.ps1`). The script transfers a Git bundle because the Orange Pi may not have direct GitHub access. It verifies Docker health, `/api/ready`, and anonymous API rejection without issuing actuator commands.
 8. Report the local commit, GitHub commit, Orange Pi deployed commit, test result, and service health together.
 
+9. Every change to the face-recognition subsystem or its direct API/UI/data path must update
+   `PC_Test/web/face/changes_log.md` in Chinese. Add a version, release date (or `未发布`),
+   categorized entries, and concise impact/migration notes for each change.
+
 The active Orange Pi runtime is `/home/HwHiAiUser/smart-home`. Its persistent `data/`, `models/`, `.env`, `.auth*.env`, and credential files must be preserved during deployments.

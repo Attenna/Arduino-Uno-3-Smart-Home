@@ -106,7 +106,11 @@ def face_notify():
     result = access_guard.handle_face_result(
         face_id, confidence=data.get("confidence"),
         image_path=data.get("image_path", ""),
-        device_source=data.get("device_source", "orange_pi"))
+        device_source=data.get("device_source", "orange_pi"),
+        # 新调用方明确传 score；旧边缘端曾把 ArcFace 相似度放在 confidence，
+        # 这里兼容读取，但落到独立 score 列后页面才会展示。
+        score=data.get("score", data.get("confidence")),
+        detection_confidence=data.get("detection_confidence"))
     granted, person = result["granted"], result["person"]
     reason_zh, reason_en = (("", "") if granted
                             else deny_texts(result.get("reason")))

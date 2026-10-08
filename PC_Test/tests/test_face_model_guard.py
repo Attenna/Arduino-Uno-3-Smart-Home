@@ -25,6 +25,8 @@ from web.config import PC_TEST_DIR, RECOGNITION_MODEL_PATH
 from web.face import engine as engine_mod
 from web.face.engine import FaceEngine
 from web.face.recognizer import (FaceRecognizer, build_embedding_database,
+                                 FACE_PREPROCESSING_VERSION,
+                                 LEGACY_PREPROCESSING_VERSION,
                                  model_fingerprint, normalize_embedding)
 
 
@@ -35,7 +37,8 @@ def make_engine(web_face_cfg: dict, config_path: Path) -> FaceEngine:
                                "serial": {"enabled": False}})
 
 
-def stub_recognizer(method="arcface_onnx", library_fp="", current_model=None):
+def stub_recognizer(method="arcface_onnx", library_fp="", current_model=None,
+                    preprocessing=FACE_PREPROCESSING_VERSION):
     """够用的识别器替身：引擎只读这三个属性做校验。"""
     class Stub:
         def __init__(self):
@@ -43,6 +46,7 @@ def stub_recognizer(method="arcface_onnx", library_fp="", current_model=None):
             self.identities = [{"name": "A"}, {"name": "B"}]
             self.library_fingerprint = library_fp
             self.model_fingerprint = model_fingerprint(method, current_model)
+            self.library_preprocessing = preprocessing
     return Stub()
 
 
@@ -86,6 +90,7 @@ class DatabaseFingerprintTests(unittest.TestCase):
             authorized_dir=self.root / "authorized",
             method="simple_grayscale_cosine", model_path=None)
         self.assertEqual(database["model_fingerprint"], "simple_grayscale_cosine")
+        self.assertEqual(database["preprocessing"], LEGACY_PREPROCESSING_VERSION)
         self.assertEqual(len(database["identities"]), 2)
 
     def test_recognizer_exposes_both_fingerprints(self):
@@ -145,6 +150,16 @@ class LibraryModelGuardTests(unittest.TestCase):
         # 停用认人但不停用检测：mode 退回 yolov8，门禁只是不放行
         self.assertEqual(status["mode"], "yolov8")
 
+    def test_legacy_arcface_preprocessing_is_blocked(self):
+        rec = stub_recognizer(
+            library_fp="arcface_onnx:100:aaa",
+            preprocessing=LEGACY_PREPROCESSING_VERSION)
+        rec.model_fingerprint = rec.library_fingerprint
+        self.engine.recognizer = rec
+        self.engine._check_library_model()
+        self.assertIn("五点对齐", self.engine.recognition_block)
+        self.assertIn("重建人脸库", self.engine.recognition_block)
+
     def test_legacy_library_keeps_working_without_stampede(self):
         """老库没记指纹：按当前模型继续认人，不能因为升级就把门停了。"""
         self.engine.recognizer = stub_recognizer(library_fp="")
@@ -159,9 +174,11 @@ class LibraryModelGuardTests(unittest.TestCase):
         self.engine.recognizer = rec
         self.engine._apply_database({"version": 2, "method": rec.method,
                                      "model_fingerprint": "arcface_onnx:9:新指纹",
+                                     "preprocessing": FACE_PREPROCESSING_VERSION,
                                      "image_size": 112,
                                      "identities": [{"name": "甲", "prototype": [1.0]}]})
         self.assertEqual(rec.library_fingerprint, "arcface_onnx:9:新指纹")
+        self.assertEqual(rec.library_preprocessing, FACE_PREPROCESSING_VERSION)
         self.assertEqual(
             self.engine.get_status()["recognition"]["library_fingerprint"],
             "arcface_onnx:9:新指纹")
@@ -356,6 +373,7 @@ class EmptyDatabaseTests(unittest.TestCase):
                                  Path(tmp) / "face_config.json")
             database = engine._empty_database("simple_grayscale_cosine", 112)
             self.assertEqual(database["model_fingerprint"], "simple_grayscale_cosine")
+            self.assertEqual(database["preprocessing"], FACE_PREPROCESSING_VERSION)
             self.assertEqual(database["version"], 2)
             self.assertEqual(database["identities"], [])
 

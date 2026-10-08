@@ -13,10 +13,13 @@ import threading
 import time
 import unittest
 from pathlib import Path
+import sys
 from unittest.mock import patch
 
 import cv2
 import numpy as np
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from web.face import engine as engine_mod
 from web import face_watcher as watcher_mod
@@ -25,9 +28,10 @@ from web.face_watcher import FaceWatcher
 
 
 class FakeBox:
-    def __init__(self, x1, y1, x2, y2, confidence=0.9):
+    def __init__(self, x1, y1, x2, y2, confidence=0.9, landmarks=None):
         self.bbox = (x1, y1, x2, y2)
         self.confidence = confidence
+        self.landmarks = landmarks
 
     def xyxy_int(self):
         return self.bbox
@@ -40,7 +44,7 @@ class FakeDetector:
 
     def detect(self, frame):
         self.frames.append(getattr(frame, "shape", None))
-        return [FakeBox(*b) for b in self.boxes]
+        return [b if isinstance(b, FakeBox) else FakeBox(*b) for b in self.boxes]
 
 
 class FakeRecognizer:
@@ -48,6 +52,7 @@ class FakeRecognizer:
         self.calls = []
         self.score = score
         self.authorized = authorized
+        self.image_size = 112
 
     def recognize(self, crop):
         self.calls.append(crop.shape[:2])
@@ -90,6 +95,16 @@ class RecognizePathTests(unittest.TestCase):
         self.assertEqual(engine.detector.frames, [(240, 320, 3)])
         self.assertEqual(engine.recognizer.calls, [(120, 120)])
         self.assertEqual(result["face_id"], "爱丽丝")
+        self.assertEqual(result["score"], 0.8)
+
+    def test_five_landmarks_align_before_arcface(self):
+        landmarks = ((58.0, 82.0), (128.0, 82.0), (93.0, 122.0),
+                     (65.0, 162.0), (121.0, 162.0))
+        engine = build_engine([FakeBox(30, 40, 160, 190, landmarks=landmarks)])
+        result = engine.recognize_jpeg(jpeg(220, 220))
+        self.assertEqual(engine.recognizer.calls, [(112, 112)])
+        self.assertTrue(result["faces"][0]["aligned"])
+        self.assertEqual(result["faces"][0]["score"], 0.8)
 
     def test_base64_entry_still_accepts_data_uri_prefix(self):
         engine = build_engine([(10, 10, 130, 130)])
@@ -197,7 +212,7 @@ class MotionEdgeWakeTests(unittest.TestCase):
             return dict(self.result)
 
     class Guard:
-        def handle_face_result(self, face_id, confidence=None, device_source=""):
+        def handle_face_result(self, face_id, confidence=None, device_source="", **kwargs):
             return {"granted": False, "reason": "no_identity"}
 
     def setUp(self):

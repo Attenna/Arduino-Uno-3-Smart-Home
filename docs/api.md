@@ -535,7 +535,7 @@ GET 与 POST 等价（便于浏览器地址栏直接点）。
 `POST /api/face/recognize` 命中节流时不改状态、不报错，返回 200：
 
 ```json
-{ "detected": false, "face_id": null, "confidence": 0, "faces": [],
+{ "detected": false, "face_id": null, "confidence": 0, "score": null, "faces": [],
   "mode": "throttled", "message": "请求过于频繁，请等待 1.2 秒" }
 ```
 
@@ -561,11 +561,17 @@ GET 与 POST 等价（便于浏览器地址栏直接点）。
 ```json
 {
   "face_id": "person_01",
-  "confidence": 0.72,
+  "score": 0.72,
+  "detection_confidence": 0.96,
   "image_path": "data/face/captures/x.jpg",
   "device_source": "orange_pi"
 }
 ```
+
+`score` 是 ArcFace 嵌入余弦相似度，也是门禁页展示的数值；
+`detection_confidence` 是 YOLO 判断画面中是否有人脸的置信度，两者不能混用。
+旧边缘端若仍把 ArcFace 相似度放在 `confidence`，后端会兼容接收，但新代码应改传
+`score`。旧历史事件没有独立 `score`，页面显示 `--`，不会把 YOLO 数值误标成 ArcFace。
 
 授权通过时返回 `{"granted": true, "person": "张三", "face_id": "…", "event_id": 12,
 "reason": "matched", "message": "欢迎 张三!"}`，并：

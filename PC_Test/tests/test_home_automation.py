@@ -311,4 +311,3 @@ class SecurityTests(unittest.TestCase):
         with client.session_transaction() as session: session["user"]="test-admin"
         self.assertEqual(client.get("/security").status_code,200)
         self.assertEqual(client.get("/api/security/images/bad").status_code,404)
-

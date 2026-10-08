@@ -564,12 +564,17 @@ full_test.py / Arduino IDE 串口监视器`抢口**。④ `voice_assistant.py` �
 
 ### 人脸识别（YOLOv8-face + ArcFace）
 
+版本与迁移记录见 [`web/face/changes_log.md`](web/face/changes_log.md)。
+
 当前 `web_config.yaml` 已启用**真实模式**（`face.simulation_mode: false`）：
 
-- 检测：YOLOv8n-face（`models/face/yolov8n-face.pt`，ultralytics 推理，CPU 即可）。
+- 检测：YOLOv8n-face（`models/face/yolov8n-face.pt`，ultralytics 推理，CPU 即可），
+  支持读取模型输出的人脸框与五点关键点；带关键点的权重会在 ArcFace 前按双眼、鼻尖、
+  双嘴角对齐到 112×112 标准模板。
 - 身份识别：ArcFace ONNX（`models/face/recognition.onnx`，~174MB，onnxruntime CPU 推理）。
 - 身份 = `data/face/authorized/<目录名>` = `face_id` = 清洗后的姓名，原型是该目录最新
-  20 张注册照的均值嵌入；相似度阈值默认 0.5（10 张注册照的实测相似度 0.61~0.82）。
+  20 张注册照的均值嵌入；相似度阈值默认 0.62，并要求第一名至少领先第二名 0.08，
+  避免相似人员分数接近时误认。
 
 依赖安装（首次启用时）：
 
@@ -594,6 +599,9 @@ py -3.13 scripts/enroll_faces.py
 #    零依赖快速回退方案（精度一般）：--method simple_grayscale_cosine
 # 3. 重启 run_web.py
 ```
+
+启用五点对齐后必须用上面的脚本重建 `embeddings.pkl`。库里记录预处理版本，旧的框裁剪
+向量不会和新对齐向量混用；门禁页显示的是 ArcFace `score`，不再显示 YOLO 检测置信度。
 
 - 鉴权只回答「这张脸/这张卡是谁」：命中白名单才广播 `access_granted`，
   开不开门由积木规则决定（见 ② 节）；房卡同样要经过白名单，未登记的卡只会记一条拒绝。

@@ -139,13 +139,16 @@ class AccessGuard:
                     reason or "unspecified")
 
     def handle_face_result(self, face_id: str, confidence=None, image_path: str = "",
-                           device_source: str = "web", debounce: bool = True) -> dict:
+                           device_source: str = "web", debounce: bool = True,
+                           score=None, detection_confidence=None) -> dict:
         """识别结果统一入口：记一次识别事件 → 鉴权 → 广播。
 
         调用方是 ``POST /api/face/notify``（边缘设备推送）、``web/face_watcher.py``
         的门口识别哨兵，以及 ``POST /api/face/recognize`` 的下游使用者；网页端不猜身份。
 
         ``face_id`` 为空表示「画面里有人脸但没匹配到任何已录身份」（陌生人）。
+        ``score`` 是 ArcFace 身份相似度；``detection_confidence`` 是 YOLO 人脸检出
+        置信度。旧调用方的 ``confidence`` 仅兼容存档，不再作为页面的识别分数。
         """
         face_id = face_id or ""
         if face_id:
@@ -163,7 +166,8 @@ class AccessGuard:
         event_id = self.db.add_face_event(
             face_id=face_id, person_name=(person or {}).get("name"),
             confidence=confidence, image_path=image_path,
-            device_source=device_source)
+            device_source=device_source, score=score,
+            detection_confidence=detection_confidence)
         if matched:
             self.grant("face", face_id, person)
             self.db.update_face_event_status(event_id, "granted", verified=True)

@@ -232,4 +232,3 @@ DEFAULT_RULES = [{'preset': 'access_open_door',
               {'device': 'delay', 'seconds': 10},
               {'device': 'door', 'status': 'close'}],
   'cooldown': 0}]
-

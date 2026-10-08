@@ -1364,4 +1364,3 @@ class AutomationEngine:
                     "conditions_hold": self._conditions_hold(rule, ctx),
                 })
         return result
-

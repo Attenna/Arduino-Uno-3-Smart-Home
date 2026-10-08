@@ -239,6 +239,19 @@ class FaceEngine:
                 "跨模型比对无效，请用 scripts/enroll_faces.py 重建人脸库")
             logger.error("[人脸] 库与模型不匹配，认人已停用: %s", self.recognition_block)
             return
+        if rec.method == "arcface_onnx":
+            from .recognizer import FACE_PREPROCESSING_VERSION
+
+            library_preprocessing = getattr(
+                rec, "library_preprocessing", FACE_PREPROCESSING_VERSION)
+            if library_preprocessing != FACE_PREPROCESSING_VERSION:
+                self.recognition_block = (
+                    f"人脸库预处理版本是 {library_preprocessing}，当前版本是 "
+                    f"{FACE_PREPROCESSING_VERSION}；启用五点对齐后旧向量不可混用，"
+                    "请用 scripts/enroll_faces.py 重建人脸库")
+                logger.error("[人脸] 人脸库预处理版本过期，认人已停用: %s",
+                             self.recognition_block)
+                return
         if not stored and not self._verify_legacy_library():
             return
         self.recognition_block = None
@@ -343,6 +356,7 @@ class FaceEngine:
     def _throttled_result(self) -> dict:
         wait = self.throttler.time_until_next()
         return {"detected": False, "face_id": None, "confidence": 0,
+                "score": None,
                 "faces": [], "mode": "throttled",
                 "message": f"请求过于频繁，请等待 {wait:.1f} 秒"}
 
@@ -426,7 +440,8 @@ class FaceEngine:
 
     def _yolov8_recognize(self, frame, min_face_px: int = 0) -> dict:
         try:
-            height, width = frame.shape[:2]
+            from .recognizer import prepare_detected_face
+
             t0 = time.perf_counter()
             detections = self.detector.detect(frame)
             detect_ms = (time.perf_counter() - t0) * 1000.0
@@ -447,18 +462,21 @@ class FaceEngine:
                     "person_name": None,
                     "confidence": round(det.confidence, 3),
                     "score": None,
+                    "aligned": False,
                     "margin": None,
                     "bbox": {"x1": x1, "y1": y1, "x2": x2, "y2": y2},
                 }
                 rank = (-1.0, det.confidence)
 
                 if id(det) in targets:
-                    crop = frame[max(y1, 0):min(y2, height), max(x1, 0):min(x2, width)]
-                    if crop.size > 0:
+                    face, aligned = prepare_detected_face(
+                        frame, det, image_size=self.recognizer.image_size)
+                    if face is not None:
                         t1 = time.perf_counter()
-                        rec = self.recognizer.recognize(crop)
+                        rec = self.recognizer.recognize(face)
                         embed_ms += (time.perf_counter() - t1) * 1000.0
                         info["score"] = round(rec.score, 3)
+                        info["aligned"] = aligned
                         info["margin"] = round(getattr(rec, "margin", 1.0), 3)
                         if rec.authorized:
                             info["face_id"] = rec.identity
@@ -482,11 +500,13 @@ class FaceEngine:
                     "face_id": info["face_id"],
                     "person_name": info["person_name"],
                     "confidence": info["confidence"],
+                    "score": info["score"],
                     "faces": faces,
                     "mode": mode,
                 }
 
             return {"detected": False, "face_id": None, "confidence": 0,
+                    "score": None,
                     "faces": [], "mode": "yolov8"}
         except Exception as e:
             logger.error("YOLO 帧识别失败: %s", e)
@@ -504,20 +524,25 @@ class FaceEngine:
                 "face_id": face_id,
                 "person_name": known_faces.get(face_id),
                 "confidence": conf,
+                "score": None,
                 "faces": [{
                     "face_id": face_id,
                     "person_name": known_faces.get(face_id),
                     "confidence": conf,
+                    "score": None,
+                    "aligned": False,
                     "bbox": {"x1": 150, "y1": 80, "x2": 450, "y2": 400},
                 }],
                 "mode": "simulation",
             }
         return {"detected": False, "face_id": None, "confidence": 0,
+                "score": None,
                 "faces": [], "mode": "simulation"}
 
     @staticmethod
     def _empty_result(mode: str, error: str | None = None) -> dict:
         result = {"detected": False, "face_id": None, "confidence": 0,
+                  "score": None,
                   "faces": [], "mode": mode}
         if error:
             result["error"] = error
@@ -551,6 +576,8 @@ class FaceEngine:
                                       if self.recognizer is not None else None),
                 "library_fingerprint": (self.recognizer.library_fingerprint
                                         if self.recognizer is not None else None),
+                "preprocessing": (getattr(self.recognizer, "library_preprocessing", None)
+                                  if self.recognizer is not None else None),
             },
         }
         status.update(self.health.get_status())
@@ -645,12 +672,13 @@ class FaceEngine:
                                            image_size=size), method, size)
 
     def _empty_database(self, method: str, image_size: int) -> dict:
-        from .recognizer import model_fingerprint
+        from .recognizer import FACE_PREPROCESSING_VERSION, model_fingerprint
 
         return {"version": 2, "method": method,
                 "model_path": str(self.recognition_model_path),
                 "model_fingerprint": model_fingerprint(
                     method, self.recognition_model_path),
+                "preprocessing": FACE_PREPROCESSING_VERSION,
                 "image_size": image_size, "identities": []}
 
     def _apply_database(self, database: dict) -> None:
@@ -661,6 +689,8 @@ class FaceEngine:
             # 录完脸库里就带着指纹了（老库借此补写），状态里得显示新的那份
             self.recognizer.library_fingerprint = str(
                 database.get("model_fingerprint") or "")
+            self.recognizer.library_preprocessing = str(
+                database.get("preprocessing") or "")
             return
         self._load_model()
 
@@ -691,7 +721,8 @@ class FaceEngine:
 
         只重算这一个身份：全库重建（scripts/enroll_faces.py）留给离线场景。
         """
-        from .recognizer import build_identity, model_fingerprint, save_embedding_database
+        from .recognizer import (FACE_PREPROCESSING_VERSION, build_identity,
+                                 model_fingerprint, save_embedding_database)
 
         identity_dir = self._identity_dir(name)
         if self.simulation_mode or self.detector is None:
@@ -754,7 +785,8 @@ class FaceEngine:
 
             extractor, method, image_size = self._enroll_extractor()
             identity = build_identity(identity_dir, extractor,
-                                      max_images=MAX_IDENTITY_IMAGES)
+                                      max_images=MAX_IDENTITY_IMAGES,
+                                      detector=self.detector)
             if identity is None:
                 return {"ok": False, "error": "注册照都读不出来，身份未建立"}
 
@@ -765,6 +797,7 @@ class FaceEngine:
             # 顺带给老库补上指纹：录入用的就是当前模型，库里的原型从此有据可查
             database["model_fingerprint"] = model_fingerprint(
                 method, self.recognition_model_path)
+            database["preprocessing"] = FACE_PREPROCESSING_VERSION
             database["identities"] = [
                 i for i in (database.get("identities") or [])
                 if str(i.get("name")) != identity["name"]] + [identity]
