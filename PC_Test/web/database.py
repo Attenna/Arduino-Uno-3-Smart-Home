@@ -622,17 +622,24 @@ class SmartHomeDB:
 
     def add_face_event(self, face_id, person_name=None, confidence=None,
                        image_path=None, device_source='orange_pi', score=None,
-                       detection_confidence=None):
+                       detection_confidence=None, status='pending', verified=False,
+                       deny_reason=None):
         """记录一次人脸事件。
 
         score 是 ArcFace 身份相似度；detection_confidence 是 YOLO 检出置信度。
         confidence 只为兼容旧调用方保留，页面不再把它冒充 ArcFace 分数。
+
+        判定类调用（``granted``/``denied``）应一次把最终 ``status``/``verified``/
+        ``deny_reason`` 写进来：过去先插 ``pending`` 再用第二条事务更新，放行瞬间
+        页面会读到中间态，进程退出时行还会永久停在 ``pending``。观测类轮次
+        （太远/节流/无脸等）用 ``status='observed'``、``deny_reason=<种类>`` 留痕。
         """
         with self.connection() as c:
             return c.execute(
-                'INSERT INTO face_events(timestamp,face_id,person_name,confidence,score,detection_confidence,image_path,device_source) VALUES(?,?,?,?,?,?,?,?)',
+                'INSERT INTO face_events(timestamp,face_id,person_name,confidence,score,detection_confidence,image_path,device_source,status,verified,deny_reason) VALUES(?,?,?,?,?,?,?,?,?,?,?)',
                 (utcnow(), face_id, person_name, confidence, score,
-                 detection_confidence, image_path, device_source)).lastrowid
+                 detection_confidence, image_path, device_source, status,
+                 int(verified), deny_reason)).lastrowid
 
     def get_face_events(self, limit=20):
         return self._rows('SELECT * FROM face_events ORDER BY id DESC LIMIT ?',(max(1,min(int(limit),500)),))
@@ -646,10 +653,3 @@ class SmartHomeDB:
         # 「这条多久前」由后端算，前端只管按新鲜度决定要不要当实时判定用
         event['age_s'] = age_seconds(event.get('timestamp'))
         return event
-
-    def update_face_event_status(self, event_id, status, verified=False,
-                                 deny_reason=None):
-        """把识别事件的最终判定写回去；被拒时连原因一起存，页面才说得清为什么。"""
-        with self.connection() as c:
-            return c.execute('UPDATE face_events SET status=?,verified=?,deny_reason=? WHERE id=?',
-                             (status, int(verified), deny_reason, event_id)).rowcount > 0

@@ -475,10 +475,28 @@ GET 与 POST 等价（便于浏览器地址栏直接点）。
 | `ambiguous` | 同一凭证挂在多个生效人员身上，一律拒绝 |
 | `bad_credential` | 卡号格式非法 / 鉴权方式不支持 |
 
-同一 `(method, credential)` 在 8 秒内重复读数只记一次：读卡器抖一下（实测 51ms 内
-两次读数会开两次门）、人站在门口被连拍，都不会刷出一串日志。被合并的次数在
+同一 `(method, credential)` 在 `face.watcher.repeat_window`（默认 8 秒）内重复读数
+只算一次**通行动作**：读卡器抖一下（实测 51ms 内两次读数会开两次门）、人站在门口
+被连拍，都不会重复开门、也不会在 `access_logs` 里刷出一串日志。被合并的次数在
 `/api/access/diagnostics` 的 `recent_repeats` 里能看到；`POST /api/access/test`
 与 `handle_face_result(debounce=False)` 显式绕过去抖，用于链路自测。
+
+> **去抖不抑制 `face_events` 历史**（#75）：每一轮识别都会各自写一行，包括陌生人在
+> 内（不再因空 `face_id` 被互相顶掉）。所以「同一人站 30 秒」的事件条数 = 识别轮数，
+> 去抖与 `cooldown` 只抑制重复的开门动作与通行日志，不丢弃历史。
+
+### 事件状态（`face_events.status`）
+
+| 值 | 含义 |
+|----|------|
+| `granted` | 认出已登记身份且放行（`verified=1`） |
+| `denied` | 有人脸但被拒；原因见 `deny_reason`（`unmatched_face` / `identity_not_in_list` / `disabled` / `ambiguous`） |
+| `observed` | 这一轮没跑完人匹配（太远/节流/无脸/未唤醒/摄像头失败等），只留痕不算通过或拒绝；`deny_reason` 存轮次种类 |
+
+判定结果**一次落终态**：放行瞬间 `GET /api/face/events/latest` 即为 `granted`，
+不再有先写 `pending` 再更新的中间态（旧库遗留的 `pending` 行前端显示为「判定中」）。
+`observed` 轮次的环境类种类（`idle` / `no_camera` / `no_identity`）只在**状态变化**
+时写一行，避免每 2 秒的取帧轮询把表刷满；太远/节流/无脸/出错等轮次逐轮记录。
 
 ### 体检：名单、人脸库、哨兵三方对齐
 
@@ -514,7 +532,7 @@ GET 与 POST 等价（便于浏览器地址栏直接点）。
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| POST | `/api/face/recognize` | 识别单帧（body：`{"image":"<base64>"}`，≤5MB） |
+| POST | `/api/face/recognize` | 识别单帧并留痕（body：`{"image":"<base64>"}`，≤5MB） |
 | GET | `/api/face/status` | 引擎状态（是否模拟模式、阈值等） |
 | GET | `/api/face/config` | 读取配置 |
 | POST | `/api/face/config` | 保存配置并重载模型 |
@@ -541,6 +559,13 @@ GET 与 POST 等价（便于浏览器地址栏直接点）。
 
 > 识别节流在 `web/face/engine.py`（`face.recognition_interval`，默认 1.5 秒），
 > 门口哨兵的取帧间隔（`face.watcher.interval`）应大于它，否则每轮都会被挡掉一次。
+
+`POST /api/face/recognize` 也会**留痕**（#75）：识别到的这一轮会写一条
+`device_source='web'` 的 `face_events` 行（认出身份 → `granted`/`denied`；无脸 → 
+`observed`/`no_face`；命中节流 → `observed`/`throttled`）。与 `/api/face/notify`
+不同，它一律 `record_only`：**不广播门禁事件、不写通行日志、不开门**，这样无鉴权的
+单帧接口不会变成远程开门通道；它只是「网页自测」的来源，和 `docs/api.md` 对
+`device_source='web'` 的定义一致。
 
 ### 谁在跑识别：内置哨兵
 

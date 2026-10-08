@@ -80,6 +80,8 @@ def start_watchers(cfg: dict) -> bool:
     和「录过但名单里没这个人」；摄像头地址从 cfg 解析，Docker 里指向 camera 容器。
     """
     access_guard.identity_check = face_engine.has_identity
+    # face.watcher.repeat_window：重复识别去抖窗口（只挡重复开门，不挡历史留痕）
+    access_guard.configure(cfg)
     # 首帧预热丢给后台线程：模型加载后第一次推理要 3.8 秒（派上实测），
     # 这笔钱不该由站到门口的第一个人付，也不该拖慢 /api/ready
     face_engine.start_warmup()
