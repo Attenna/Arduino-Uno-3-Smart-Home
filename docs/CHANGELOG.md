@@ -2,7 +2,7 @@
 
 记录对系统行为 / 接口有影响的变更。新条目置于顶部。
 
-## 未发布 · OLED 多页轮播下移 B 板固件（B 主动拉取）
+## 2026-10-09 · OLED 多页轮播下移 B 板固件（B 主动拉取）
 
 分支：`feat/oled-b-pull-carousel`
 
@@ -24,7 +24,7 @@
 ### 验收
 - 单测：新增 `test_oled_pull.py`（9 项）、`test_oled_startup.py` 新增 1 项；全量套件仅剩与基线一致的 6 项环境 ImportError。
 - 固件：`pio run` 编译通过（RAM 80.9% / Flash 86.1%）。
-- 真机：待分支验收（香橙派）。
+- 真机（2026-10-09，分支验收通过后并入 `main`，香橙派）：B 板烧录 V2.12 后启动帧 `READY version=V2.12 role=OUTPUT_NODE`；`oled_req` 每 15s 一次，回帧 `@D2,272,280,1017,0,0,0,1`（27.2℃/28.0%/光 1017/有人）与 A 板快照一致；稳态 180s 内 0 复位（`b_reset_count=1` 仅启动）；逐行 `MCP -> oled` 调用数 0；屏上人工确认「正常轮播，数值合理」。合并 PR [#80](https://github.com/Attenna/Arduino-Uno-3-Smart-Home/pull/80)。
 
 ## 2026-10-09 · 人脸识别历史记录入库修复（#75）
 
