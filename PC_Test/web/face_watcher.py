@@ -201,7 +201,8 @@ class FaceWatcher:
             return self._note("cooldown", face_id=face_id,
                               until=round(until - time.time(), 1))
         outcome = self.guard.handle_face_result(
-            face_id, confidence=result.get("confidence"),
+            face_id, score=target.get("score"),
+            detection_confidence=target.get("confidence"),
             device_source="face_watcher")
         if outcome.get("duplicate"):
             return self._note("duplicate", face_id=face_id)
@@ -210,7 +211,8 @@ class FaceWatcher:
             self._cooldowns[face_id] = time.time() + self.cooldown
             return self._note("granted", face_id=face_id,
                               person=outcome.get("person"),
-                              confidence=result.get("confidence"))
+                              score=target.get("score"),
+                              detection_confidence=target.get("confidence"))
         if not face_id:
             self._bump("strangers")
         self._bump("denied")

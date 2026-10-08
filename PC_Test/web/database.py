@@ -177,7 +177,7 @@ class SmartHomeDB:
                 'light_history': 'id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT DEFAULT CURRENT_TIMESTAMP, light_name TEXT NOT NULL, status TEXT NOT NULL, brightness INTEGER',
                 'access_logs': 'id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT DEFAULT CURRENT_TIMESTAMP, person_name TEXT NOT NULL, access_type TEXT NOT NULL, status TEXT NOT NULL',
                 'authorized_persons': 'id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, rfid_tag TEXT, face_id TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP',
-                'face_events': "id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT DEFAULT CURRENT_TIMESTAMP, face_id TEXT, person_name TEXT, confidence REAL, image_path TEXT, device_source TEXT, status TEXT DEFAULT 'pending', verified INTEGER DEFAULT 0",
+                'face_events': "id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT DEFAULT CURRENT_TIMESTAMP, face_id TEXT, person_name TEXT, confidence REAL, score REAL, detection_confidence REAL, image_path TEXT, device_source TEXT, status TEXT DEFAULT 'pending', verified INTEGER DEFAULT 0",
                 'sensor_history': 'id INTEGER PRIMARY KEY AUTOINCREMENT, received_at TEXT NOT NULL, device_uptime_ms INTEGER, temperature REAL, humidity REAL, light_raw INTEGER, smoke INTEGER, rain INTEGER, distance INTEGER, touch INTEGER, motion INTEGER, soil_moisture INTEGER, soil_dry INTEGER',
                 'hardware_events': 'id INTEGER PRIMARY KEY AUTOINCREMENT, received_at TEXT NOT NULL, module TEXT NOT NULL, event_type TEXT NOT NULL, payload_json TEXT NOT NULL',
                 'automation_logs': 'id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT DEFAULT CURRENT_TIMESTAMP, rule_id TEXT NOT NULL, rule_name TEXT NOT NULL, triggered INTEGER NOT NULL, conditions_hold INTEGER NOT NULL, reason TEXT, success INTEGER NOT NULL DEFAULT 0, detail_json TEXT',
@@ -187,7 +187,8 @@ class SmartHomeDB:
                 c.execute(f'CREATE TABLE IF NOT EXISTS {table} ({definition})')
             additions = {'authorized_persons': {'rfid_uid':'TEXT', 'enabled':'INTEGER NOT NULL DEFAULT 0'},
                          'access_logs': {'credential':'TEXT', 'command_status':'TEXT', 'deny_reason':'TEXT'},
-                         'face_events': {'deny_reason':'TEXT'},
+                         'face_events': {'deny_reason':'TEXT', 'score':'REAL',
+                                         'detection_confidence':'REAL'},
                          'sensor_hourly': {'light_raw':'REAL'}}
             for table, fields in additions.items():
                 names = {r['name'] for r in c.execute(f'PRAGMA table_info({table})')}
@@ -583,10 +584,19 @@ class SmartHomeDB:
         light = self._rows("SELECT COUNT(*) total_changes,COALESCE(SUM(status='on'),0) on_count FROM light_history WHERE timestamp>datetime('now','-24 hours')")[0]
         return {'temperature_24h':temp,'access_24h':access,'light_24h':light}
 
-    def add_face_event(self, face_id, person_name=None, confidence=None, image_path=None, device_source='orange_pi'):
+    def add_face_event(self, face_id, person_name=None, confidence=None,
+                       image_path=None, device_source='orange_pi', score=None,
+                       detection_confidence=None):
+        """记录一次人脸事件。
+
+        score 是 ArcFace 身份相似度；detection_confidence 是 YOLO 检出置信度。
+        confidence 只为兼容旧调用方保留，页面不再把它冒充 ArcFace 分数。
+        """
         with self.connection() as c:
-            return c.execute('INSERT INTO face_events(timestamp,face_id,person_name,confidence,image_path,device_source) VALUES(?,?,?,?,?,?)',
-                (utcnow(),face_id,person_name,confidence,image_path,device_source)).lastrowid
+            return c.execute(
+                'INSERT INTO face_events(timestamp,face_id,person_name,confidence,score,detection_confidence,image_path,device_source) VALUES(?,?,?,?,?,?,?,?)',
+                (utcnow(), face_id, person_name, confidence, score,
+                 detection_confidence, image_path, device_source)).lastrowid
 
     def get_face_events(self, limit=20):
         return self._rows('SELECT * FROM face_events ORDER BY id DESC LIMIT ?',(max(1,min(int(limit),500)),))

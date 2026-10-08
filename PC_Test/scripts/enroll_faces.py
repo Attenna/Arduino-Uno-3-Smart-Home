@@ -44,13 +44,16 @@ def main() -> int:
                         help="embeddings 输出路径")
     parser.add_argument("--model", type=Path, default=None,
                         help="ArcFace/FaceNet ONNX 模型路径")
+    parser.add_argument("--detector-model", type=Path, default=None,
+                        help="带五点关键点输出的 YOLOv8-face 模型路径")
     parser.add_argument("--method", default=None,
                         choices=["arcface_onnx", "simple_grayscale_cosine"])
     parser.add_argument("--image-size", type=int, default=None)
     args = parser.parse_args()
 
     cfg = load_config()
-    recog = cfg.get("face", {}).get("recognition", {})
+    face_cfg = cfg.get("face", {})
+    recog = face_cfg.get("recognition", {})
     authorized_dir = args.authorized_dir or AUTHORIZED_DIR
     output_path = args.output or EMBEDDINGS_PATH
     method = args.method or recog.get("method", "simple_grayscale_cosine")
@@ -62,17 +65,38 @@ def main() -> int:
         # 从仓库根目录跑还是容器里跑（/app）都指向同一个文件
         model_path = PC_TEST_DIR / model_path
     image_size = args.image_size or int(recog.get("image_size", 112))
+    detector_path = args.detector_model or Path(
+        face_cfg.get("model_path", "models/face/yolov8n-face.pt"))
+    if not detector_path.is_absolute():
+        detector_path = PC_TEST_DIR / detector_path
 
-    if method == "arcface_onnx" and not Path(model_path).exists():
-        print(f"[错误] 找不到 ArcFace 模型: {model_path}")
-        print("       放入 ONNX 模型，或改用 --method simple_grayscale_cosine")
-        return 1
+    detector = None
+    if method == "arcface_onnx":
+        if not Path(model_path).exists():
+            print(f"[错误] 找不到 ArcFace 模型: {model_path}")
+            print("       放入 ONNX 模型，或改用 --method simple_grayscale_cosine")
+            return 1
+        if not detector_path.exists():
+            print(f"[错误] 找不到 YOLOv8-face 检测模型: {detector_path}")
+            print("       五点对齐建库必须使用检测模型；可通过 --detector-model 指定")
+            return 1
+
+        from web.face.detector import YOLOFaceDetector
+
+        detector = YOLOFaceDetector(
+            model_path=detector_path,
+            conf_threshold=float(face_cfg.get("confidence_threshold", 0.4)),
+            iou_threshold=float(face_cfg.get("iou_threshold", 0.45)),
+            image_size=int(face_cfg.get("image_size", 640)),
+            device=face_cfg.get("device"),
+        )
 
     database = build_embedding_database(
         authorized_dir=authorized_dir,
         model_path=model_path if method == "arcface_onnx" else None,
         method=method,
         image_size=image_size,
+        detector=detector,
     )
     save_embedding_database(database, output_path)
 
@@ -81,6 +105,8 @@ def main() -> int:
     for identity in database["identities"]:
         print(f"  - {identity['name']}: {identity['image_count']} image(s)")
     print(f"[ok] saved embeddings to {output_path}")
+    detector_label = str(detector_path) if detector is not None else "disabled"
+    print(f"[ok] preprocessing={database['preprocessing']} detector={detector_label}")
     print("[next] 将 web_config.yaml 的 face.simulation_mode 改为 false，重启 run_web.py")
     return 0
 

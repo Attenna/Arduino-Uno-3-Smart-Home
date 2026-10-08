@@ -40,6 +40,13 @@ function esc(value) {
         }[c]));
 }
 
+function formatArcFaceScore(value) {
+    const score = Number(value);
+    return value !== null && value !== undefined && Number.isFinite(score)
+        ? score.toFixed(3)
+        : '--';
+}
+
 // ==================== 摄像头实时画面 ====================
 // 后端 /api/camera/stream 同源代理 camera_stream 的 MJPEG；断流自动重连。
 // 同源是「录入人脸」能截帧的前提：跨域画面会让 canvas 被污染，toDataURL 直接抛错。
@@ -228,8 +235,8 @@ function updateFaceResultDisplay(event, silent) {
 
     // 详细信息
     document.getElementById('faceResultId').textContent = event.face_id || '--';
-    document.getElementById('faceResultConfidence').textContent =
-        event.confidence ? (event.confidence * 100).toFixed(1) + '%' : '--';
+    document.getElementById('faceResultScore').textContent =
+        formatArcFaceScore(event.score);
 
     const dt = serverDate(event.timestamp);
     const locale = lang === 'zh' ? 'zh-CN' : 'en-US';
@@ -671,7 +678,7 @@ async function loadFaceEvents() {
                 <td>${timeStr}</td>
                 <td>${who}</td>
                 <td>${esc(evt.face_id) || t('access.unmatched')}</td>
-                <td>${evt.confidence ? (evt.confidence * 100).toFixed(1) + '%' : '--'}</td>
+                <td>${formatArcFaceScore(evt.score)}</td>
                 <td><span class="status-tag ${statusClass}">${statusText}</span>${
                     evt.deny_reason
                         ? `<div class="evt-reason">${esc(reasonText(evt.deny_reason))}</div>`

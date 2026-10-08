@@ -20,6 +20,86 @@ import numpy as np
 
 # 算模型指纹时读取的文件头长度：够区分不同 ONNX，又不用整读上百 MB
 FINGERPRINT_PREFIX_BYTES = 256 * 1024
+# ArcFace 官方 112x112 五点模板。预处理版本写入 embeddings.pkl，避免对齐前后的
+# 向量混在同一个库里；调整模板或变换算法时必须升级这个字符串并重建人脸库。
+FACE_PREPROCESSING_VERSION = "arcface_5point_v1"
+LEGACY_PREPROCESSING_VERSION = "bbox_resize_v0"
+ARCFACE_TEMPLATE_112 = np.asarray([
+    [38.2946, 51.6963],
+    [73.5318, 51.5014],
+    [56.0252, 71.7366],
+    [41.5493, 92.3655],
+    [70.7299, 92.2041],
+], dtype=np.float32)
+
+
+def estimate_face_alignment(
+    landmarks: Any,
+    image_size: int = 112,
+) -> np.ndarray | None:
+    """估计五点到 ArcFace 标准模板的相似变换矩阵。"""
+    try:
+        source = np.asarray(landmarks, dtype=np.float32).reshape(5, 2).copy()
+    except (TypeError, ValueError):
+        return None
+    if not np.isfinite(source).all() or np.allclose(source, 0.0):
+        return None
+    # 不依赖模型采用“人物左右”还是“画面左右”命名：按 x 坐标规范眼睛/嘴角。
+    if source[0, 0] > source[1, 0]:
+        source[[0, 1]] = source[[1, 0]]
+    if source[3, 0] > source[4, 0]:
+        source[[3, 4]] = source[[4, 3]]
+    target = ARCFACE_TEMPLATE_112 * (float(image_size) / 112.0)
+    matrix, _inliers = cv2.estimateAffinePartial2D(
+        source, target, method=cv2.LMEDS)
+    if matrix is None or not np.isfinite(matrix).all():
+        return None
+    return np.asarray(matrix, dtype=np.float32)
+
+
+def align_face_5point(
+    image: np.ndarray,
+    landmarks: Any,
+    image_size: int = 112,
+) -> np.ndarray | None:
+    """把原图中的人脸按五点仿射到 ArcFace 标准姿态。"""
+    if image is None or image.size == 0:
+        return None
+    matrix = estimate_face_alignment(landmarks, image_size=image_size)
+    if matrix is None:
+        return None
+    return cv2.warpAffine(
+        image,
+        matrix,
+        (image_size, image_size),
+        flags=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=0,
+    )
+
+
+def prepare_detected_face(
+    image: np.ndarray,
+    detection: Any,
+    image_size: int = 112,
+    pad_ratio: float = 0.0,
+) -> tuple[np.ndarray | None, bool]:
+    """优先五点对齐；权重无关键点或关键点无效时兼容普通裁剪。"""
+    landmarks = getattr(detection, "landmarks", None)
+    if landmarks is not None:
+        aligned = align_face_5point(image, landmarks, image_size=image_size)
+        if aligned is not None:
+            return aligned, True
+
+    if image is None or image.size == 0:
+        return None, False
+    height, width = image.shape[:2]
+    x1, y1, x2, y2 = detection.xyxy_int()
+    pad = int(max(x2 - x1, y2 - y1) * max(0.0, float(pad_ratio)))
+    left, top = max(0, x1 - pad), max(0, y1 - pad)
+    right, bottom = min(width, x2 + pad), min(height, y2 + pad)
+    crop = image[top:bottom, left:right]
+    return (crop if crop.size else None), False
 
 
 @dataclass(frozen=True)
@@ -56,6 +136,8 @@ class FaceRecognizer:
         # 当前模型文件的指纹：库里写的不等于它，说明原型是别的模型算的
         self.model_fingerprint = model_fingerprint(self.method, model_path)
         self.library_fingerprint = str(self.database.get("model_fingerprint") or "")
+        self.library_preprocessing = str(
+            self.database.get("preprocessing") or LEGACY_PREPROCESSING_VERSION)
         self.extractor = create_embedding_extractor(
             method=self.method,
             model_path=model_path,
@@ -217,6 +299,7 @@ def build_identity(
     person_dir: str | Path,
     extractor,
     max_images: int | None = None,
+    detector=None,
 ) -> dict[str, Any] | None:
     """算出一个人的均值原型；目录里没有可读图片时返回 None。
 
@@ -233,7 +316,26 @@ def build_identity(
         if image is None:
             print(f"[skip] Cannot read authorized face image: {image_path}")
             continue
-        embeddings.append(extractor.extract(image))
+        prepared = image
+        if detector is not None:
+            detections = detector.detect(image)
+            if not detections:
+                print(f"[skip] No face found in authorized image: {image_path}")
+                continue
+            detection = max(
+                detections,
+                key=lambda item: (
+                    item.xyxy_int()[2] - item.xyxy_int()[0]
+                ) * (
+                    item.xyxy_int()[3] - item.xyxy_int()[1]
+                ),
+            )
+            prepared, _aligned = prepare_detected_face(
+                image, detection, image_size=extractor.image_size, pad_ratio=0.15)
+            if prepared is None:
+                print(f"[skip] Cannot crop authorized face image: {image_path}")
+                continue
+        embeddings.append(extractor.extract(prepared))
         used_images.append(str(image_path))
 
     if not embeddings:
@@ -306,6 +408,7 @@ def build_embedding_database(
     model_path: str | Path | None = None,
     method: str = "arcface_onnx",
     image_size: int = 112,
+    detector=None,
 ) -> dict[str, Any]:
     authorized_path = Path(authorized_dir)
     if not authorized_path.exists():
@@ -319,7 +422,7 @@ def build_embedding_database(
 
     identities: list[dict[str, Any]] = []
     for person_dir in sorted(p for p in authorized_path.iterdir() if p.is_dir()):
-        identity = build_identity(person_dir, extractor)
+        identity = build_identity(person_dir, extractor, detector=detector)
         if identity is not None:
             identities.append(identity)
 
@@ -331,6 +434,8 @@ def build_embedding_database(
         "method": method,
         "model_path": str(model_path) if model_path else None,
         "model_fingerprint": model_fingerprint(method, model_path),
+        "preprocessing": (FACE_PREPROCESSING_VERSION if detector is not None
+                          else LEGACY_PREPROCESSING_VERSION),
         "image_size": image_size,
         "identities": identities,
     }
