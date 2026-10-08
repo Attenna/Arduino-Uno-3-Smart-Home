@@ -215,6 +215,9 @@ class MotionEdgeWakeTests(unittest.TestCase):
         def handle_face_result(self, face_id, confidence=None, device_source="", **kwargs):
             return {"granted": False, "reason": "no_identity"}
 
+        def record_observation(self, kind, face_id="", device_source="", **kwargs):
+            return None
+
     def setUp(self):
         # interval 设得很长：观察到的第二轮只可能来自上升沿，不可能是周期到点
         self.patcher = patch.object(watcher_mod, "MIN_WAKE_SPACING_S", 0.05)

@@ -8,6 +8,50 @@
 分类条目和每条变更的要点；涉及模型、预处理或阈值时，还必须写明是否需要重建人脸库、
 是否需要调整部署配置。尚未发布的改动使用“未发布”，发布或部署时再替换成实际日期。
 
+## v1.0.1（未发布）
+
+对应 Issue #75「人脸识别历史记录入库不及时、有丢失」。本次不改人脸库、不涉及数据库
+结构变更，属向后兼容的缺陷修复。
+
+### 修复
+
+- **每轮识别都留痕**：`AccessGuard.handle_face_result` 不再把去抖判断放在写库之前；
+  去抖与 `cooldown` 只抑制重复的开门动作与通行日志，每一轮识别都各自写一条
+  `face_events`，陌生人（空 `face_id`）也不再互相顶掉。
+- **判定一次落终态**：`handle_face_result` 用单条 `INSERT` 写入最终 `status` / `verified`
+  / `deny_reason`，不再先插 `pending` 再更新。放行瞬间 `/api/face/events/latest` 即为
+  `granted`，进程中途退出也不会留下永久 `pending` 行。
+- **观测轮次落库**：`face_watcher.inspect_once` 的太远 / 节流 / 无脸 / 未唤醒 / 摄像头
+  失败 / 出错等分支统一经新增的 `AccessGuard.record_observation` 写一条
+  `status='observed'` 记录（`deny_reason` 存轮次种类）；环境类
+  （`idle`/`no_camera`/`no_identity`）只在状态变化时写一行，避免每 2 秒刷屏。
+- **冷却期仍记录**：哨兵在 `cooldown` 窗口内认出同一人时改为
+  `handle_face_result(record_only=True)`，补记这轮历史但不再重复开门。
+- **单帧接口留痕**：`POST /api/face/recognize` 现在也写 `device_source='web'` 的
+  `face_events` 行（`record_only`，不广播门禁事件、不开门），与 `docs/api.md` 一致。
+- **前端三态**：门禁页把 `observed`（未判定）与 `pending`（旧库中间态）渲染为灰色
+  「已记录 / 判定中」，不再一律显示「已拒绝」；轮询按 `id + status` 去重，状态被改写
+  时会重新渲染，不再锁死中间态。
+
+### 配置
+
+- 新增 `face.watcher.repeat_window`（默认 `8.0` 秒）：重复识别去抖窗口，`0` 表示不去抖。
+  原硬编码 `REPEAT_WINDOW_S` 保留为默认值，`AccessGuard.configure()` 从 Web 配置读取。
+
+### 数据兼容与部署
+
+- **无需重建人脸库**：不改嵌入模型、预处理或阈值。
+- **无数据库结构变更**：`face_events` 表已具备所需列；旧的 `pending` 行保留，前端按
+  「判定中」显示。
+- 部署只需重建 Web 容器（`face_watcher.py` / `access_guard.py` / `api/face.py` /
+  前端静态资源均在 web 镜像内）。
+
+### 测试
+
+- 新增 `PC_Test/tests/test_face_event_persistence.py`：覆盖逐轮留痕、陌生人各成行、
+  去抖只挡动作、单次终态写入、观测轮次落库与环境类去抖、`/recognize` 留痕不开门。
+- 更新 `test_face_latency.py` 的测试替身以匹配新增的 `record_observation`。
+
 ## v1.0.0（2026-10-08）
 
 ### 新增

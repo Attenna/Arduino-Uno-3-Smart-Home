@@ -160,7 +160,8 @@ camera ──/snapshot 单帧──▶ web 识别哨兵(PIR 门控) ──▶ we
 边缘设备 ──POST /api/face/notify 识别结果────────────────────────────────────────┤
 Module A RC522 ──串口 rfid 事件（录入会话优先取卡）──────────────────────────────┤
                                                                                  ▼
-                                    access_guard 白名单鉴权（8 秒去抖 + 通行日志 + deny_reason）
+                                    access_guard 白名单鉴权（repeat_window 去抖 + 通行日志 + deny_reason
+                                    逐轮写 face_events：granted/denied/observed）
                                                                                  │ access_granted / access_denied{method: face|rfid|keypad}
                                                                                  ▼
                                     积木规则 access_open_door ──▶ web 硬件桥(MCP) ──▶ Module B 开门

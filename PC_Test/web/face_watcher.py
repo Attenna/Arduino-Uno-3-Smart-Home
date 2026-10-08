@@ -158,33 +158,33 @@ class FaceWatcher:
             except Exception as e:                        # noqa: BLE001
                 # 一次失败不能杀死线程：摄像头拔了、模型抛异常都得继续等下一帧
                 logger.warning("[识别哨兵] 本轮异常: %s", e)
-                self._note("error", detail=str(e))
                 self._bump("errors")
+                self._observe("error", detail=str(e))
 
     def inspect_once(self) -> dict:
         """跑一轮判定，返回这一轮的说明（测试与状态面板都吃它）。"""
         gate_open, gate_mode = self.gate_state()
         if not gate_open:
             self._bump("idle")
-            return self._note("idle", gate=gate_mode)
+            return self._observe("idle", gate=gate_mode)
         if not self.snapshot_url:
-            return self._note("no_camera", detail="未配置摄像头流地址")
+            return self._observe("no_camera", detail="未配置摄像头流地址")
         if self.engine.identity_count() == 0:
             # 一个身份都没录就常驻抓帧，只会把日志刷满「陌生人」
-            return self._note("no_identity")
+            return self._observe("no_identity")
         blob = self.grab_frame()
         if blob is None:
-            return self._note("no_camera")
+            return self._observe("no_camera")
         self._bump("attempts")
         # min_face_px 交给引擎做「提特征前」的门控：太远的脸不必再花一张 370ms 的嵌入
         result = self.engine.recognize_jpeg(blob, min_face_px=self.min_face_px)
         if result.get("error"):
             self._bump("errors")
-            return self._note("error", detail=str(result["error"]))
+            return self._observe("error", detail=str(result["error"]))
         if result.get("mode") == "throttled":
-            return self._note("throttled")
+            return self._observe("throttled")
         if not result.get("detected"):
-            return self._note("no_face")
+            return self._observe("no_face")
         self._bump("faces")
         faces = result.get("faces") or []
         face_id = result.get("face_id") or ""
@@ -194,10 +194,15 @@ class FaceWatcher:
         side = min(box.get("x2", 9999) - box.get("x1", 0),
                    box.get("y2", 9999) - box.get("y1", 0))
         if side and side < self.min_face_px:
-            return self._note("too_far", face_px=int(side))
+            return self._observe("too_far", face_px=int(side))
         until = self._cooldowns.get(face_id, 0.0)
         if face_id and time.time() < until:
-            # 开门后人还在门口站着：不重复放行，否则一次停留开好几次门
+            # 开门后人还在门口站着：不重复开门，但这一轮识别照样留痕（record_only），
+            # 否则同一人站 30 秒会被冷却窗口吞掉整段记录。
+            self.guard.handle_face_result(
+                face_id, score=target.get("score"),
+                detection_confidence=target.get("confidence"),
+                device_source="face_watcher", record_only=True)
             return self._note("cooldown", face_id=face_id,
                               until=round(until - time.time(), 1))
         outcome = self.guard.handle_face_result(
@@ -290,3 +295,17 @@ class FaceWatcher:
             logger.info("[识别哨兵] 拒绝（%s）：%s",
                         entry.get("reason"), entry.get("face_id") or "陌生人")
         return entry
+
+    def _observe(self, kind: str, **fields) -> dict:
+        """把一轮「没有可鉴权身份」的观测留痕到 face_events，并返回这一轮的说明。
+
+        太远/节流/无脸/未唤醒/摄像头失败这些轮次过去在写库前就 return，门禁页看不到
+        任何记录；现在统一交给 ``access_guard.record_observation`` 落一行
+        ``status='observed'``（环境类轮次按状态变化去抖，避免每 2 秒刷屏）。
+        """
+        try:
+            self.guard.record_observation(kind, device_source="face_watcher")
+        except Exception as e:                            # noqa: BLE001
+            # 留痕失败不能反过来打断识别循环（例如历史维护偶尔锁库）
+            logger.warning("[识别哨兵] 观测留痕失败（%s）: %s", kind, e)
+        return self._note(kind, **fields)

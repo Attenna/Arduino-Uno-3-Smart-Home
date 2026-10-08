@@ -6,6 +6,7 @@
 
 let facePollTimer = null;
 let lastEventId = null;
+let lastEventStatus = null;
 let persons = [];
 // 识别哨兵的状态与体检结果缓存：语言切换与轮询都拿它重渲染，不重复请求
 let diag = null;
@@ -162,9 +163,11 @@ async function pollLatestFaceEvent(silent) {
         return;
     }
 
-    // 只有新事件才更新UI
-    if (lastEventId === event.id) return;
+    // 新事件、或同一事件的状态被改写（例如旧库的 pending 补成 granted）才更新 UI。
+    // 只按 id 去重会让中间态锁死：id 不变就永远不再纠正，必须手动刷新。
+    if (lastEventId === event.id && lastEventStatus === event.status) return;
     lastEventId = event.id;
+    lastEventStatus = event.status;
 
     if (typeof event.age_s === 'number' && event.age_s > FACE_FRESH_WINDOW_S) {
         // 陈旧事件：留在下面的事件表里，但不占住「刚刚发生了什么」这块面板
@@ -207,9 +210,14 @@ function updateFaceResultDisplay(event, silent) {
     const isGranted = event.status === 'granted';
     const lang = I18N.currentLang;
     const reason = reasonText(event.deny_reason);
+    // 三态：granted 通过 / denied 拒绝 / 其余（observed 本轮未判定、pending 旧库中间态）。
+    // observed/pending 绝不能再渲染成「已拒绝」——过去这会让「捂脸反而显示被拒」，
+    // 且 id 去重后一直不纠正。
+    const state = isGranted ? 'granted'
+        : (event.status === 'denied' ? 'denied' : 'observed');
 
     // 状态样式
-    if (isGranted) {
+    if (state === 'granted') {
         statusEl.className = 'face-result-status granted';
         iconEl.innerHTML = `
             <svg viewBox="0 0 24 24" fill="none" stroke="#00e676" stroke-width="2.5">
@@ -218,7 +226,7 @@ function updateFaceResultDisplay(event, silent) {
         nameEl.textContent = event.person_name || t('access.unknown');
         metaEl.textContent = lang === 'zh' ? '验证通过' : 'Access Granted';
         metaEl.style.color = '#00e676';
-    } else {
+    } else if (state === 'denied') {
         statusEl.className = 'face-result-status denied';
         iconEl.innerHTML = `
             <svg viewBox="0 0 24 24" fill="none" stroke="#ff1744" stroke-width="2.5">
@@ -231,6 +239,17 @@ function updateFaceResultDisplay(event, silent) {
         metaEl.textContent = (lang === 'zh' ? '访问被拒绝' : 'Access Denied')
             + (reason ? '：' + reason : '');
         metaEl.style.color = '#ff1744';
+    } else {
+        statusEl.className = 'face-result-status observed';
+        iconEl.innerHTML = `
+            <svg viewBox="0 0 24 24" fill="none" stroke="#8a94a6" stroke-width="2.5">
+                <circle cx="12" cy="12" r="9"/>
+                <line x1="8" y1="12" x2="16" y2="12"/>
+            </svg>`;
+        nameEl.textContent = event.status === 'pending'
+            ? t('access.status_pending') : t('access.observed');
+        metaEl.textContent = reason || t('access.observed_hint');
+        metaEl.style.color = '#8a94a6';
     }
 
     // 详细信息
@@ -245,9 +264,9 @@ function updateFaceResultDisplay(event, silent) {
     document.getElementById('faceResultSource').textContent =
         sourceText(event.device_source);
 
-    // 通知：把「为什么被拒」直接说出口，过去所有拒绝都只有一句话。
+    // 通知只对终态（通过/拒绝）弹：未判定轮次每 2 秒就有一条，弹窗会刷屏。
     // 语言切换后的重渲染传 silent，否则每切一次语言就再弹一次窗。
-    if (!silent) {
+    if (!silent && state !== 'observed') {
         showNotification(isGranted
             ? t('notify.access_granted', event.person_name || t('access.unknown'))
             : t('notify.access_denied', reason || t('access.unknown')),
@@ -392,6 +411,7 @@ function toggleAccessLang() {
     renderWatcher();          // 状态与体检是 JS 渲染的，用缓存立刻翻一次
     renderDiagnostics();
     lastEventId = null;       // 结果面板同理：重渲染最新事件，silent 免得再弹通知
+    lastEventStatus = null;
     pollLatestFaceEvent(true);
 }
 
@@ -667,13 +687,21 @@ async function loadFaceEvents() {
         const locale = lang === 'zh' ? 'zh-CN' : 'en-US';
         const timeStr = dt ? dt.toLocaleString(locale) : '--';
 
-        const statusClass = evt.status === 'granted' ? 'granted' : 'denied';
-        const statusText = evt.status === 'granted'
+        // 三态：通过 / 拒绝 / 已记录（observed：本轮没跑完人匹配；pending：旧库中间态）
+        const state = evt.status === 'granted' ? 'granted'
+            : (evt.status === 'denied' ? 'denied' : 'observed');
+        const statusText = state === 'granted'
             ? (lang === 'zh' ? '已通过' : 'Granted')
-            : (lang === 'zh' ? '已拒绝' : 'Denied');
-        // 认出身份但名单里没有对应人时，「陌生人」是误导：脸录过，缺的是名单那一行
+            : (state === 'denied'
+                ? (lang === 'zh' ? '已拒绝' : 'Denied')
+                : (evt.status === 'pending'
+                    ? (lang === 'zh' ? '判定中' : 'Judging')
+                    : (lang === 'zh' ? '已记录' : 'Observed')));
+        // 认出身份但名单里没有对应人时，「陌生人」是误导：脸录过，缺的是名单那一行。
+        // observed 轮次没有可鉴权的人，人员列留空而不是硬写「陌生人」。
         const who = esc(evt.person_name)
-            || (evt.face_id ? t('access.unbound') : t('access.unknown_person'));
+            || (state === 'observed' ? '--'
+                : (evt.face_id ? t('access.unbound') : t('access.unknown_person')));
 
         html += `
             <tr>
@@ -681,7 +709,7 @@ async function loadFaceEvents() {
                 <td>${who}</td>
                 <td>${esc(evt.face_id) || t('access.unmatched')}</td>
                 <td>${formatArcFaceScore(evt.score)}</td>
-                <td><span class="status-tag ${statusClass}">${statusText}</span>${
+                <td><span class="status-tag ${state}">${statusText}</span>${
                     evt.deny_reason
                         ? `<div class="evt-reason">${esc(reasonText(evt.deny_reason))}</div>`
                         : ''}</td>

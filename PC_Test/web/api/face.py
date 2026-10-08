@@ -23,7 +23,21 @@ def face_recognize():
         return jsonify({"error": f"图像数据错误: {e}",
                         "error_en": f"Image data error: {e}"}), 400
     image_b64 = base64.b64encode(image_bytes).decode("utf-8")
-    return jsonify(face_engine.recognize_from_base64(image_b64))
+    result = face_engine.recognize_from_base64(image_b64)
+    # 单帧接口也要留痕，兑现 docs/api.md 对 device_source='web'（网页自测/单帧识别）
+    # 的说明。一律 record_only：只把这一轮判定写进 face_events，不广播门禁事件、不开门，
+    # 否则这个无鉴权接口就成了远程开门通道。
+    if not result.get("error"):
+        if result.get("mode") == "throttled":
+            access_guard.record_observation("throttled", device_source="web")
+        elif not result.get("detected"):
+            access_guard.record_observation("no_face", device_source="web")
+        else:
+            access_guard.handle_face_result(
+                result.get("face_id") or "", device_source="web",
+                score=result.get("score"),
+                detection_confidence=result.get("confidence"), record_only=True)
+    return jsonify(result)
 
 
 @bp.route("/api/face/status")

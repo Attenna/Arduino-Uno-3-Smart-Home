@@ -347,6 +347,11 @@ body {
     background: rgba(255, 23, 68, 0.08);
     border-color: rgba(255, 23, 68, 0.3);
 }
+/* 已记录/判定中：这一轮没有通过也没有被拒（太远、节流、无脸、未唤醒等） */
+.face-result-status.observed {
+    background: rgba(138, 148, 166, 0.08);
+    border-color: rgba(138, 148, 166, 0.3);
+}
 .face-result-icon {
     width: 48px;
     height: 48px;
@@ -1166,6 +1171,12 @@ body {
 .status-tag.denied {
     background: rgba(255, 23, 68, 0.15);
     color: var(--accent-red);
+}
+
+/* 已记录/判定中：未完成人匹配的轮次（太远/节流/无脸/未唤醒），中性灰 */
+.status-tag.observed {
+    background: rgba(138, 148, 166, 0.15);
+    color: #8a94a6;
 }
 
 /* 光照历史表里的二态标注：亮=暖黄，暗=夜蓝，与图表数据点配色一致 */

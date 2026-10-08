@@ -29,7 +29,13 @@ CARD_ENROLL_TTL_S = 45.0
 CARD_RESULT_KEEP_S = 300.0
 # 同一凭证在这段窗口内的重复读数只算一次通行。实测一张卡放在 RC522 上会连着
 # 上报两次（间隔 51ms），不去抖就是「一次放卡开两次门」。
+# 去抖只抑制「重复的开门/记账动作」，不抑制 face_events 历史行：每轮识别各自成行
+# （见 handle_face_result），否则同一人站 30 秒会被合并成一条、不同陌生人共用空
+# face_id 也会互相顶掉。可通过 face.watcher.repeat_window 配置，见 docs/configuration.md。
 REPEAT_WINDOW_S = 8.0
+# 环境类观测（没人/没摄像头/没录身份）会按取帧间隔反复出现：只在「种类变化」时留痕，
+# 否则每 2 秒一行会把门禁页刷满。
+AMBIENT_OBSERVATION_KINDS = frozenset({"idle", "no_camera", "no_identity"})
 
 GRANTED_EVENT = {"event": "access", "status": "granted"}
 DENIED_EVENT = {"event": "access", "status": "denied"}
@@ -63,10 +69,26 @@ class AccessGuard:
         # 「人脸库里有没有这个身份」的探针（extensions 接线成 face_engine.has_identity）：
         # 用来把「这张脸没录过」和「录过但名单里查不到人」分开说。
         self.identity_check = None
+        # 重复识别去抖窗口（秒）：只挡重复开门动作，不挡历史事件，见 configure()。
+        self.repeat_window = REPEAT_WINDOW_S
+        # 上一条观测轮次的种类：环境类观测据此做「变化才留痕」的去抖。
+        self._observation_kind: str | None = None
         self._sessions: dict[str, dict] = {}
         # (method, credential) → {"ts":..., "repeats":n}：短窗口内重复读数的合并账
         self._recent: dict[tuple[str, str], dict] = {}
         self._lock = threading.Lock()
+
+    def configure(self, cfg: dict | None) -> None:
+        """读取门禁相关配置：``face.watcher.repeat_window`` 决定重复识别去抖窗口。
+
+        窗口只影响「同一凭证重复读数算一次通行动作」，不影响 face_events 历史留痕。
+        """
+        opts = ((cfg or {}).get("face") or {}).get("watcher") or {}
+        try:
+            self.repeat_window = max(0.0, float(
+                opts.get("repeat_window", REPEAT_WINDOW_S)))
+        except (TypeError, ValueError):
+            self.repeat_window = REPEAT_WINDOW_S
 
     # ==================== 事件出口 ====================
 
@@ -89,7 +111,7 @@ class AccessGuard:
         now = time.time()
         with self._lock:
             for stale in [k for k, v in self._recent.items()
-                          if now - v["ts"] > REPEAT_WINDOW_S]:
+                          if now - v["ts"] > self.repeat_window]:
                 self._recent.pop(stale, None)
             entry = self._recent.get(key)
             if entry is None:
@@ -105,7 +127,7 @@ class AccessGuard:
             return [{"method": m, "credential": c, "repeats": v["repeats"],
                      "age_s": round(now - v["ts"], 1)}
                     for (m, c), v in self._recent.items()
-                    if now - v["ts"] <= REPEAT_WINDOW_S]
+                    if now - v["ts"] <= self.repeat_window]
 
     # ==================== 鉴权 ====================
 
@@ -140,7 +162,8 @@ class AccessGuard:
 
     def handle_face_result(self, face_id: str, confidence=None, image_path: str = "",
                            device_source: str = "web", debounce: bool = True,
-                           score=None, detection_confidence=None) -> dict:
+                           score=None, detection_confidence=None,
+                           record_only: bool = False) -> dict:
         """识别结果统一入口：记一次识别事件 → 鉴权 → 广播。
 
         调用方是 ``POST /api/face/notify``（边缘设备推送）、``web/face_watcher.py``
@@ -149,6 +172,10 @@ class AccessGuard:
         ``face_id`` 为空表示「画面里有人脸但没匹配到任何已录身份」（陌生人）。
         ``score`` 是 ArcFace 身份相似度；``detection_confidence`` 是 YOLO 人脸检出
         置信度。旧调用方的 ``confidence`` 仅兼容存档，不再作为页面的识别分数。
+
+        每一轮识别都无条件落一条终态事件（``granted`` / ``denied``），不再因去抖或
+        冷却被静默丢弃；``debounce`` 与 ``record_only`` 只抑制「重复开门 + 重复通行
+        日志」这个动作，抑制时返回 ``duplicate=True`` 但仍带 ``event_id``。
         """
         face_id = face_id or ""
         if face_id:
@@ -159,25 +186,53 @@ class AccessGuard:
         else:
             reason, person = "unmatched_face", None
         matched = reason == "matched"
-        if debounce and self.merge_repeat("face", face_id):
-            return {"granted": False, "duplicate": True, "reason": reason,
-                    "person": person["name"] if person else None,
-                    "face_id": face_id}
+        # 一次识别收尾后，下一条环境观测（idle/no_camera 等）重新算「种类变化」，
+        # 保证「有人来→又没人」在历史里表现为两段，而不是被上一段 idle 顶掉。
+        with self._lock:
+            self._observation_kind = None
+        # 判定结果一次落终态：过去先插 pending 再用第二条事务更新，放行瞬间前端会把
+        # pending 当成「已拒绝」，且进程中途退出时行会永久停在 pending。
         event_id = self.db.add_face_event(
             face_id=face_id, person_name=(person or {}).get("name"),
             confidence=confidence, image_path=image_path,
             device_source=device_source, score=score,
-            detection_confidence=detection_confidence)
-        if matched:
-            self.grant("face", face_id, person)
-            self.db.update_face_event_status(event_id, "granted", verified=True)
-        else:
-            self.deny("face", face_id, reason=reason, person=person)
-            self.db.update_face_event_status(event_id, "denied", verified=False,
-                                             deny_reason=reason)
-        return {"granted": matched,
+            detection_confidence=detection_confidence,
+            status="granted" if matched else "denied", verified=matched,
+            deny_reason=None if matched else reason)
+        # 去抖/冷却只挡动作（开门广播 + access_logs），不挡上面那条历史事件
+        suppressed = record_only or bool(
+            debounce and self.merge_repeat("face", face_id))
+        if not suppressed:
+            if matched:
+                self.grant("face", face_id, person)
+            else:
+                self.deny("face", face_id, reason=reason, person=person)
+        return {"granted": matched, "duplicate": suppressed,
                 "person": person["name"] if matched else None,
                 "face_id": face_id, "event_id": event_id, "reason": reason}
+
+    def record_observation(self, kind: str, face_id: str = "",
+                           image_path: str = "", device_source: str = "face_watcher",
+                           score=None, detection_confidence=None) -> int | None:
+        """记一轮「没有可鉴权身份」的观测：太远/节流/无脸/未唤醒/摄像头失败等。
+
+        这些轮次没有凭证可鉴定，过去在 ``face_watcher.inspect_once`` 里直接 return、
+        完全不落库，导致门禁页与实际识别对不上。现在写一条 ``status='observed'``、
+        ``deny_reason=kind`` 的事件留痕（不写通行日志、不广播门禁事件），页面据此说明
+        「这一轮为什么没有结果」。命中环境去抖（同一环境状态重复出现）时返回 ``None``。
+
+        环境类观测（``AMBIENT_OBSERVATION_KINDS``）会按取帧间隔反复出现，逐轮落库等于
+        每 2 秒刷一行；只在「本轮种类与上一条观测不同」时记一条，其余轮次跳过。
+        """
+        with self._lock:
+            if kind in AMBIENT_OBSERVATION_KINDS and kind == self._observation_kind:
+                return None
+            self._observation_kind = kind
+        return self.db.add_face_event(
+            face_id=face_id or "", person_name=None, image_path=image_path,
+            device_source=device_source, score=score,
+            detection_confidence=detection_confidence,
+            status="observed", verified=False, deny_reason=kind)
 
     # ==================== A 板事件（刷卡 / 键盘密码） ====================
 

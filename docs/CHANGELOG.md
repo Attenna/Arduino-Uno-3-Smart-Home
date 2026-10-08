@@ -2,6 +2,35 @@
 
 记录对系统行为 / 接口有影响的变更。新条目置于顶部。
 
+## 未发布 · 人脸识别历史记录入库修复（#75）
+
+分支：`fix/75-face-event-persistence`。Issue：#75「人脸识别历史记录入库不及时、有丢失」。
+
+### 变更
+- **去抖与写库解耦**：`AccessGuard.handle_face_result` 每轮识别都各自写一条 `face_events`
+  （含陌生人，不再因空 `face_id` 合并互相顶掉）；`merge_repeat` 只抑制重复的开门动作与
+  通行日志。同一人站 30 秒的事件条数 = 识别轮数。
+- **判定一次落终态**：单条 `INSERT` 写入最终 `status`/`verified`/`deny_reason`，不再先插
+  `pending` 再更新；放行瞬间 `/api/face/events/latest` 即为 `granted`，也不会留下永久
+  `pending` 行。删除已无调用方的 `update_face_event_status`。
+- **观测轮次留痕**：新增 `AccessGuard.record_observation`；哨兵 `inspect_once` 的太远/
+  节流/无脸/未唤醒/摄像头失败/出错分支写一条 `status='observed'` 记录（`deny_reason`
+  存轮次种类）。环境类（`idle`/`no_camera`/`no_identity`）只在状态变化时写一行防刷屏。
+- **冷却期仍记录**：哨兵在 `cooldown` 内认出同一人改用 `record_only=True` 补记历史，
+  不再重复开门。
+- **单帧接口留痕**：`POST /api/face/recognize` 写 `device_source='web'` 的 `face_events`
+  行（`record_only`，不开门、不广播），与 `docs/api.md` 一致。
+- **前端三态**：`observed`/`pending` 渲染为灰色「已记录 / 判定中」，不再一律显示「已拒绝」；
+  轮询按 `id + status` 去重，状态改写会重新渲染。
+- **配置**：新增 `face.watcher.repeat_window`（默认 `8.0` 秒，`0` 不去抖）。
+
+### 验收
+- 单测：新增 `PC_Test/tests/test_face_event_persistence.py`（逐轮留痕、陌生人各成行、去抖只挡
+  动作、终态一次写入、观测留痕与环境去抖、`/recognize` 留痕不开门）；`test_face_latency.py`
+  的测试替身同步新增 `record_observation`。
+- 真机：待分支验收。
+- 影响：不改数据库结构、不改人脸库、无需重建模型；部署只需重建 Web 容器。
+
 ## 未发布 · 积木自动化风险修复（R1–R10）
 
 分支：`fix/automation-risks`。规格：`.trae/documents/issue-blocks-automation-risks.md`（高/中危条目）。
