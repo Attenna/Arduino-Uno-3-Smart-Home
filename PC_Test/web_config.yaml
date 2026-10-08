@@ -61,7 +61,10 @@ face:
     # simple_grayscale_cosine：零依赖回退方案
     method: "arcface_onnx"
     model_path: "models/face/w600k_mbf.onnx"
-    similarity_threshold: 0.5
+    # 现场 A/B 原型之间曾达到约 0.54；提高绝对阈值并要求领先第二名，
+    # 宁可提示重新面对摄像头，也不把相似人员误认成另一人。
+    similarity_threshold: 0.62
+    ambiguity_margin: 0.08
     image_size: 112
   # ── 门口识别哨兵：让「录了脸 → 自动开门」真的成立 ──────────────────────
   # 过去摄像头只出流、识别只装在 web 里，没人取帧，所以录完脸也不会开门。

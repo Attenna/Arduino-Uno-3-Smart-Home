@@ -27,12 +27,16 @@ class RecognitionResult:
     identity: str
     score: float
     authorized: bool
+    second_score: float = -1.0
+    margin: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "identity": self.identity,
             "score": round(self.score, 4),
             "authorized": self.authorized,
+            "second_score": round(self.second_score, 4),
+            "margin": round(self.margin, 4),
         }
 
 
@@ -43,11 +47,13 @@ class FaceRecognizer:
         model_path: str | Path | None = None,
         method: str = "arcface_onnx",
         similarity_threshold: float = 0.5,
+        ambiguity_margin: float = 0.08,
         image_size: int = 112,
     ) -> None:
         self.embeddings_path = Path(embeddings_path)
         self.method = method
         self.similarity_threshold = similarity_threshold
+        self.ambiguity_margin = max(0.0, float(ambiguity_margin))
         self.image_size = image_size
         self.database = load_embedding_database(self.embeddings_path)
         self.method = str(self.database.get("method", self.method))
@@ -69,15 +75,21 @@ class FaceRecognizer:
         query = self.extractor.extract(face_image)
         best_identity = "unknown"
         best_score = -1.0
+        second_score = -1.0
 
         for identity in self.identities:
             prototype = np.asarray(identity["prototype"], dtype=np.float32)
             score = cosine_similarity(query, prototype)
             if score > best_score:
+                second_score = best_score
                 best_score = score
                 best_identity = str(identity["name"])
+            elif score > second_score:
+                second_score = score
 
-        authorized = best_score >= self.similarity_threshold
+        margin = best_score - second_score
+        authorized = (best_score >= self.similarity_threshold
+                      and margin >= self.ambiguity_margin)
         if not authorized:
             best_identity = "unknown"
 
@@ -85,6 +97,8 @@ class FaceRecognizer:
             identity=best_identity,
             score=best_score,
             authorized=authorized,
+            second_score=second_score,
+            margin=margin,
         )
 
 
