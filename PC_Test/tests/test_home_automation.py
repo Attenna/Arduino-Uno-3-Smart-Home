@@ -94,7 +94,7 @@ class HomeRulesTests(unittest.TestCase):
                          ("light_dark", "==", False))
         self.assertEqual(rules["temp_hot"]["name"], "保留的温度规则")
         saved = json.loads(self.engine.rules_path.read_text())
-        self.assertEqual(saved["presets_version"], 8)
+        self.assertEqual(saved["presets_version"], 9)
 
     def test_access_uses_one_unconditional_open_close_sequence(self):
         r = self.rules["access_open_door"]
@@ -124,10 +124,13 @@ class HomeRulesTests(unittest.TestCase):
         self.engine.global_state.set_value("g:有人在家", False)
         self.engine.global_state.set_value("g:手动优先_窗", True)
         for rain, smoke, expected in [(True,False,"closed"),(True,True,"closed"),
-                                      (False,True,"closed"),(False,False,"normal")]:
+                                      (False,True,"closed"),(False,False,"closed")]:
             self.snapshot(rain=rain,smoke=smoke)
             self.apply("rain_window"); self.apply("window_normal")
             self.assertEqual(self.status["window_status"], expected)
+        self.engine.global_state.set_value("g:手动优先_窗", False)
+        self.apply("window_normal")
+        self.assertEqual(self.status["window_status"], "normal")
 
     def test_open_window_rechecks_hazard_at_execution(self):
         self.snapshot(smoke=True)
@@ -308,3 +311,4 @@ class SecurityTests(unittest.TestCase):
         with client.session_transaction() as session: session["user"]="test-admin"
         self.assertEqual(client.get("/security").status_code,200)
         self.assertEqual(client.get("/api/security/images/bad").status_code,404)
+
