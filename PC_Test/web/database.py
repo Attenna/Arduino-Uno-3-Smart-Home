@@ -28,6 +28,12 @@ OUTPUTS = ('door_status', 'window_status', 'fan_speed',
            'ac_status', 'ac_mode', 'ac_temperature', 'ac_fan',
            'ac_swing_ud', 'ac_swing_lr', 'ac_eco', 'ac_fzc', 'ac_timer')
 
+# 光照明暗二态的回差边界：与 automation/engine.py 的
+# SmartHomeEngine.LIGHT_DARK_RAW / LIGHT_BRIGHT_RAW 必须保持一致，
+# 历史接口据此给每个采样点补 light_dark 标注，避免前端另行定义而口径不一。
+LIGHT_DARK_RAW = 730
+LIGHT_BRIGHT_RAW = 670
+
 
 def utcnow():
     return datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S.%f')
@@ -177,7 +183,7 @@ class SmartHomeDB:
                 'light_history': 'id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT DEFAULT CURRENT_TIMESTAMP, light_name TEXT NOT NULL, status TEXT NOT NULL, brightness INTEGER',
                 'access_logs': 'id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT DEFAULT CURRENT_TIMESTAMP, person_name TEXT NOT NULL, access_type TEXT NOT NULL, status TEXT NOT NULL',
                 'authorized_persons': 'id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, rfid_tag TEXT, face_id TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP',
-                'face_events': "id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT DEFAULT CURRENT_TIMESTAMP, face_id TEXT, person_name TEXT, confidence REAL, image_path TEXT, device_source TEXT, status TEXT DEFAULT 'pending', verified INTEGER DEFAULT 0",
+                'face_events': "id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT DEFAULT CURRENT_TIMESTAMP, face_id TEXT, person_name TEXT, confidence REAL, score REAL, detection_confidence REAL, image_path TEXT, device_source TEXT, status TEXT DEFAULT 'pending', verified INTEGER DEFAULT 0",
                 'sensor_history': 'id INTEGER PRIMARY KEY AUTOINCREMENT, received_at TEXT NOT NULL, device_uptime_ms INTEGER, temperature REAL, humidity REAL, light_raw INTEGER, smoke INTEGER, rain INTEGER, distance INTEGER, touch INTEGER, motion INTEGER, soil_moisture INTEGER, soil_dry INTEGER',
                 'hardware_events': 'id INTEGER PRIMARY KEY AUTOINCREMENT, received_at TEXT NOT NULL, module TEXT NOT NULL, event_type TEXT NOT NULL, payload_json TEXT NOT NULL',
                 'automation_logs': 'id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT DEFAULT CURRENT_TIMESTAMP, rule_id TEXT NOT NULL, rule_name TEXT NOT NULL, triggered INTEGER NOT NULL, conditions_hold INTEGER NOT NULL, reason TEXT, success INTEGER NOT NULL DEFAULT 0, detail_json TEXT',
@@ -187,7 +193,8 @@ class SmartHomeDB:
                 c.execute(f'CREATE TABLE IF NOT EXISTS {table} ({definition})')
             additions = {'authorized_persons': {'rfid_uid':'TEXT', 'enabled':'INTEGER NOT NULL DEFAULT 0'},
                          'access_logs': {'credential':'TEXT', 'command_status':'TEXT', 'deny_reason':'TEXT'},
-                         'face_events': {'deny_reason':'TEXT'},
+                         'face_events': {'deny_reason':'TEXT', 'score':'REAL',
+                                         'detection_confidence':'REAL'},
                          'sensor_hourly': {'light_raw':'REAL'}}
             for table, fields in additions.items():
                 names = {r['name'] for r in c.execute(f'PRAGMA table_info({table})')}
@@ -433,12 +440,14 @@ class SmartHomeDB:
         数十万点送进浏览器；超过原始保留期后与 sensor_hourly 小时归档拼接。
 
         返回数组，元素字段：``timestamp``（ISO-8601 UTC，秒级，带 Z）、
-        ``light_raw``（取整后的 ADC 值）、``samples``（该桶样本数）。
+        ``light_raw``（取整后的 ADC 值）、``samples``（该桶样本数）、
+        ``light_dark``（布尔，true=暗；按引擎同款回差逐点标注，口径与
+        ``light_dark`` 能力源一致，供前端做「亮/暗」呈现）。
         """
         hours = max(1, min(int(hours), 720))
         since = (datetime.now(timezone.utc)-timedelta(hours=hours)).strftime('%Y-%m-%d %H:%M:%S')
         if hours > self.HISTORY_RETENTION_DAYS * 24:
-            return self._rows(
+            rows = self._rows(
                 "SELECT strftime('%Y-%m-%dT%H:00:00Z',hour_start) AS timestamp, "
                 "CAST(ROUND(light_raw) AS INTEGER) light_raw, samples "
                 "FROM sensor_hourly WHERE hour_start>? UNION ALL "
@@ -446,13 +455,36 @@ class SmartHomeDB:
                 "CAST(ROUND(AVG(light_raw)) AS INTEGER),COUNT(*) FROM sensor_history "
                 "WHERE received_at>? GROUP BY strftime('%Y-%m-%d %H:00:00',received_at) "
                 "ORDER BY timestamp DESC LIMIT 5000", (since, since))
+            return self._annotate_light_dark(rows)
         bucket_seconds = 1 if hours == 1 else max(5, hours*3600//5000)
-        return self._rows(
+        rows = self._rows(
             "SELECT strftime('%Y-%m-%dT%H:%M:%SZ',MIN(received_at)) timestamp, "
             "CAST(ROUND(AVG(light_raw)) AS INTEGER) light_raw, COUNT(*) samples "
             "FROM sensor_history WHERE received_at>? "
             "GROUP BY CAST(strftime('%s',received_at) AS INTEGER)/? "
             "ORDER BY timestamp DESC LIMIT 5000", (since, bucket_seconds))
+        return self._annotate_light_dark(rows)
+
+    @staticmethod
+    def _annotate_light_dark(rows):
+        """按引擎同款回差，给按时间倒序返回的光照历史逐点补 ``light_dark``。
+
+        从最旧点往后遍历（列表倒序即时间正序）：raw≥730 判暗、raw≤670 判亮，
+        回差区间内沿用上一点状态；窗口首个点就落在回差区间时用中点兜底，
+        保证每个有读数的点都有明确标注。
+        """
+        state = None
+        for row in reversed(rows):
+            raw = row.get('light_raw')
+            if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+                if raw >= LIGHT_DARK_RAW:
+                    state = True
+                elif raw <= LIGHT_BRIGHT_RAW:
+                    state = False
+                elif state is None:
+                    state = raw >= (LIGHT_DARK_RAW + LIGHT_BRIGHT_RAW) / 2
+            row['light_dark'] = state
+        return rows
 
     def get_hardware_events(self, hours=24):
         return self._history('hardware_events',hours)
@@ -588,10 +620,19 @@ class SmartHomeDB:
         light = self._rows("SELECT COUNT(*) total_changes,COALESCE(SUM(status='on'),0) on_count FROM light_history WHERE timestamp>datetime('now','-24 hours')")[0]
         return {'temperature_24h':temp,'access_24h':access,'light_24h':light}
 
-    def add_face_event(self, face_id, person_name=None, confidence=None, image_path=None, device_source='orange_pi'):
+    def add_face_event(self, face_id, person_name=None, confidence=None,
+                       image_path=None, device_source='orange_pi', score=None,
+                       detection_confidence=None):
+        """记录一次人脸事件。
+
+        score 是 ArcFace 身份相似度；detection_confidence 是 YOLO 检出置信度。
+        confidence 只为兼容旧调用方保留，页面不再把它冒充 ArcFace 分数。
+        """
         with self.connection() as c:
-            return c.execute('INSERT INTO face_events(timestamp,face_id,person_name,confidence,image_path,device_source) VALUES(?,?,?,?,?,?)',
-                (utcnow(),face_id,person_name,confidence,image_path,device_source)).lastrowid
+            return c.execute(
+                'INSERT INTO face_events(timestamp,face_id,person_name,confidence,score,detection_confidence,image_path,device_source) VALUES(?,?,?,?,?,?,?,?)',
+                (utcnow(), face_id, person_name, confidence, score,
+                 detection_confidence, image_path, device_source)).lastrowid
 
     def get_face_events(self, limit=20):
         return self._rows('SELECT * FROM face_events ORDER BY id DESC LIMIT ?',(max(1,min(int(limit),500)),))

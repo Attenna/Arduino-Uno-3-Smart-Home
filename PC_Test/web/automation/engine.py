@@ -191,7 +191,7 @@ class AutomationEngine:
     # 拆除后不再有对应物的源：带这些引用的规则整条丢弃（宁缺勿猜）
     _LEGACY_UNMAPPABLE = ("home_enabled", "home_fan", "home_light")
     # v4 起删除的预设：touch_toggle 拆成两条条件规则，档位 cycle 类不再重建
-    _REMOVED_PRESETS = ("ir_fan_cycle", "ir_light_cycle_2", "ir_light_cycle_3",
+    _REMOVED_PRESETS = ("ir_fan_toggle", "ir_fan_cycle", "ir_light_cycle_2", "ir_light_cycle_3",
                         "touch_toggle", "touch_to_manual", "touch_to_auto",
                         "door_in", "door_out", "dwell_alarm", "light_mid",
                         "access_auto_close")
@@ -384,6 +384,29 @@ class AutomationEngine:
             pid = self._PRESET_RENAMES.get(pid, pid)
             if pid in self._REMOVED_PRESETS:
                 dropped.append(name)
+                continue
+            if (presets_version >= 6 and pid in v4_by_pid
+                    and pid in {"away_close_all", "window_normal"}):
+                # v9 给两条未改动的内置预设补「手动优先」让位条件：仍与旧内置版一致才换新，
+                # 用户改过的一律保留（与下方 R4 同一策略）。
+                old = copy.deepcopy(v4_by_pid[pid])
+                old["conditions"] = [
+                    c for c in old.get("conditions", [])
+                    if not str(c.get("sensor", "")).startswith("g:手动优先_")]
+                keys = ("trigger", "conditions", "actions", "else_actions", "match", "cooldown")
+                default_for = {"conditions": [], "else_actions": [], "match": "all", "cooldown": 3}
+                if all(rule.get(k, default_for.get(k)) == old.get(k, default_for.get(k))
+                       for k in keys):
+                    new = copy.deepcopy(v4_by_pid[pid])
+                    new["id"] = rule.get("id") or None
+                    new["enabled"] = bool(rule.get("enabled", True))
+                    out.append(new)
+                    migrated += 1
+                    continue
+                out.append(rule)
+                continue
+            if presets_version >= 8 and pid in v4_by_pid:
+                out.append(rule)
                 continue
             if (presets_version >= 6 and pid in v4_by_pid
                     and pid not in PRESET_LEGACY_CONTENT):
