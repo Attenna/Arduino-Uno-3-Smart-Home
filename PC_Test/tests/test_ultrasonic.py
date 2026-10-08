@@ -2,6 +2,8 @@
 import asyncio
 import json
 import os
+import threading
+import time
 import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -89,6 +91,121 @@ class DistanceTests(unittest.TestCase):
                 with patch.object(self.home, "handle_get_distance", return_value='{"valid":false}'):
                     self.assertEqual(await server.get_distance(), '{"valid":false}')
         asyncio.run(check())
+
+
+class BFrameReassemblyTests(unittest.TestCase):
+    """B 板收发：断流拆帧的重组，以及"补发只读命令顶开断流"（nudge）。
+
+    真机实测：B 板一帧只吐约 146 字节就停住，余下字节要等固件再解析到一整行命令
+    才发完（空行不算）。距离帧/state 帧/带 state 快照的 response 帧都超过该长度，
+    所以这里两条都要覆盖：跨 read() 的重组，以及等不到响应时的补发。
+    """
+
+    def setUp(self):
+        self.home = server.HomeController()   # 无串口句柄、不启线程
+
+    def test_split_frame_is_reassembled_across_reads(self):
+        head = b'\r\n{"module":"output","type":"distance","id":7,'
+        self.assertEqual(self.home._take_b_frames(head), [])
+        tail = b'"valid":true,"distance_cm":25.0,"echo_us":1450}\r\n'
+        self.assertEqual(
+            self.home._take_b_frames(tail),
+            ['{"module":"output","type":"distance","id":7,'
+             '"valid":true,"distance_cm":25.0,"echo_us":1450}'])
+
+    def test_multiple_frames_and_noise_share_one_chunk(self):
+        self.assertEqual(
+            self.home._take_b_frames(b'noise\r\n{"a":1}\r\n{"b":{"c":2}}'),
+            ['{"a":1}', '{"b":{"c":2}}'])
+
+    def test_brace_inside_string_is_not_a_delimiter(self):
+        self.assertEqual(self.home._take_b_frames(b'{"a":"}{","b":"\\\\"}'),
+                         ['{"a":"}{","b":"\\\\"}'])
+
+    def test_unparseable_garbage_is_dropped_and_resynced(self):
+        self.home._take_b_frames(b'{"a":' + b'x' * (server._B_RX_MAX_BYTES + 16))
+        self.assertEqual(len(self.home._b_rxbuf), 0)
+        self.assertEqual(self.home._take_b_frames(b'{"ok":1}'), ['{"ok":1}'])
+
+
+class _StallingSerial:
+    """B 板串口替身：复现"一帧吐不满就停，收到下一整行命令才续发"。
+
+    ``write`` 先把上一帧没吐完的尾巴送到"线路"上，再按本次命令生成紧凑 JSON 帧
+    并吐出它的前 ``STALL_BYTES`` 字节，余下留作待发尾巴。真机捕获的断流点在一个
+    区间内浮动（约 96~146 字节），不变的是：帧尾只有等固件再解析到一整行命令才发。
+    """
+
+    STALL_BYTES = 96
+
+    def __init__(self, frame_for):
+        self._frame_for = frame_for
+        self._lock = threading.Lock()
+        self._pending = b""
+        self._line = b""
+        self.requests = []
+
+    def write(self, raw):
+        request = json.loads(raw.decode("utf-8"))
+        frame = (json.dumps(self._frame_for(request), separators=(",", ":"))
+                 + "\r\n").encode("utf-8")
+        with self._lock:
+            self.requests.append(request)
+            self._line += self._pending + frame[:self.STALL_BYTES]
+            self._pending = frame[self.STALL_BYTES:]
+
+    @property
+    def in_waiting(self):
+        with self._lock:
+            return len(self._line)
+
+    def read(self, size=1):
+        with self._lock:
+            if not self._line:
+                chunk = b""
+            else:
+                chunk, self._line = self._line[:size], self._line[size:]
+        if not chunk:
+            time.sleep(0.01)          # 模拟带超时的阻塞读
+        return chunk
+
+    def close(self):
+        pass
+
+
+class BStallNudgeTests(unittest.TestCase):
+    """断流场景下端到端：读线程重组 + 等不到就补发只读命令。"""
+
+    def setUp(self):
+        self.ser = _StallingSerial(self._frame_for)
+        self.home = server.HomeController(ser_b=self.ser, port_b="fake-b")
+        time.sleep(0.05)              # 让读线程进入 read 循环
+
+    def tearDown(self):
+        self.home._b_stop.set()
+
+    @staticmethod
+    def _frame_for(request):
+        if request["cmd"] == "ultrasonic":
+            return {"module": "output", "type": "distance", "id": request["id"],
+                    "valid": True, "status": "ok", "distance_cm": 12.2, "echo_us": 708}
+        return {"module": "output", "type": "state", "door": "closed",
+                "window": "normal", "fan": 0, "light": 0, "buzzer": "off"}
+
+    def test_distance_survives_stall_and_nudge_is_read_only(self):
+        result = json.loads(self.home.handle_get_distance())
+        self.assertTrue(result["valid"])
+        self.assertEqual(result["distance_cm"], 12.2)
+        self.assertEqual(self.ser.requests[0],
+                         {"cmd": "ultrasonic", "action": "read", "id": 0})
+        # 补发必须是不动执行器的只读命令，且带自己的 id
+        self.assertEqual(self.ser.requests[1],
+                         {"cmd": "system", "action": "status", "id": 1})
+
+    def test_state_frame_over_stall_threshold_is_parsed(self):
+        self.home._send_b({"cmd": "system", "action": "status"},
+                          allow_reopen=False, expect=("state",))
+        self.assertEqual(self.home._b_last_state.get("door"), "closed")
 
 
 class DistanceGatewayTests(unittest.TestCase):
