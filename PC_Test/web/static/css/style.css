@@ -1168,6 +1168,17 @@ body {
     color: var(--accent-red);
 }
 
+/* 光照历史表里的二态标注：亮=暖黄，暗=夜蓝，与图表数据点配色一致 */
+.status-tag.bright {
+    background: rgba(255, 202, 40, 0.15);
+    color: #ffca28;
+}
+
+.status-tag.dark {
+    background: rgba(79, 163, 255, 0.15);
+    color: #4fa3ff;
+}
+
 /* ==================== 门禁页面 ==================== */
 .access-scan {
     display: flex;

@@ -45,6 +45,26 @@
   - `get_serial_health`（uptime 65.5s）：`reopen_count=0, reset_count=0,
     heartbeat_fails=0, cmd_timeouts=0, read_err_streak=0`。
 
+## 未发布 · 光照历史前端呈现（反转轴 + 亮/暗标注）
+
+分支：`fix/light-history-viz`
+
+### 背景
+- 历史页把光敏 ADC 原值直接画成高度：值越大画得越高，但实际越暗，视觉上与直觉相反；
+  且数据点没有任何「亮/暗」说明。
+
+### 变更
+- **接口**：`GET /api/light-level/history` 每个采样点新增布尔字段 `light_dark`
+  （`true`=暗），由后端按与引擎同款回差逐点标注（raw≥730 判暗、raw≤670 判亮、
+  区间内沿用上一点；窗口首个点落在区间时用中点兜底），口径与积木 `light_dark` 能力源一致。
+- **前端（历史页光照视图）**：Y 轴反转（刻度仍是原始 ADC，值越大越靠下=越暗）；
+  数据点按亮/暗着色（亮=暖黄、暗=夜蓝）；tooltip 与数据表补「亮/暗」标注；
+  统计块标签改为「最暗读数 / 最亮读数 / 平均 ADC」，避免「最高=最亮」的误读。
+- **文档**：`api.md` 补录 `light_dark` 字段语义。
+
+### 未改动
+- raw 入库 / 归档链路不变；`light`（数值源）与既有自定义规则不受影响。
+
 ## 未发布 · 光照传感器二分逻辑修正
 
 分支：`fix/light-sensor-binary`
