@@ -3,7 +3,7 @@
 > 面向：在 **Linux 主机** 上编译烧录 Module B 固件、安装接线、调试、扩展新执行器。
 > 基础信息（用途/引脚/命令表）见 [README.md](README.md) 与 [docs/serial-protocol.md](../docs/serial-protocol.md)。
 
-**功能一句话**：Module B 是一块 Arduino Uno，当前固件 `V2.11` 带 6 类现役执行器/显示设备（门/窗舵机、风扇、蜂鸣器、OLED、红外）并支持 HC-SR04 测距输入，接收命令并执行硬件动作，不做业务判断。灯带数据线现接 **A 板 A0**，`light` 命令由 A 板执行。TM1637 数码管已于 2026-09 正式版裁剪；红外支持 NEC 与美的空调长码；V2.11 使用 4 秒看门狗并限制灯带 USB 电流，避免短时 OLED/SPI 拥塞或满白灯带负载触发复位（见 [docs/serial-protocol.md](../docs/serial-protocol.md) §4.4）。
+**功能一句话**：Module B 是一块 Arduino Uno，当前固件 `V2.12` 带 6 类现役执行器/显示设备（门/窗舵机、风扇、蜂鸣器、OLED、红外）并支持 HC-SR04 测距输入，接收命令并执行硬件动作，不做业务判断。灯带数据线现接 **A 板 A0**，`light` 命令由 A 板执行。TM1637 数码管已于 2026-09 正式版裁剪；红外支持 NEC 与美的空调长码；V2.11 使用 4 秒看门狗并限制灯带 USB 电流，避免短时 OLED/SPI 拥塞或满白灯带负载触发复位（见 [docs/serial-protocol.md](../docs/serial-protocol.md) §4.4）。**V2.12 起 OLED 多页轮播下移固件**：屏上 3 页（Environment/Devices/Safety）由 B 每 15s 主动向上位机索取数据并本地渲染，香橙派不再逐行推送，串口流量大幅降低（见 [docs/serial-protocol.md](../docs/serial-protocol.md) 的「B 板新增 OLED 数据拉取（V2.12）」）。
 
 ---
 

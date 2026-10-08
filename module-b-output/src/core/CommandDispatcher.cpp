@@ -42,6 +42,9 @@ uint8_t pinInBit(uint8_t pin) {
 void CommandDispatcher::begin() {
     _okCount = 0;
     _errCount = 0;
+    _oledReqPending = false;
+    _oledReqId = 0;
+    _oledFrameSeen = false;
     _door.begin();
     _window.begin();
     _fan.begin();
@@ -52,6 +55,7 @@ void CommandDispatcher::begin() {
     _display.begin();
 #endif
     _oled.begin();
+    _oledCarousel.begin();
 #if ENABLE_IR_TX
     _ir.begin();
 #endif
@@ -164,6 +168,31 @@ void CommandDispatcher::update() {
 #if ENABLE_TM1637
     _display.update();
 #endif
+
+    // OLED 轮播：到期渲染当前页并索要下一拍数据。渲染仅每 15s 一次、毫秒级，
+    // 远小于看门狗窗口；update() 内部只做一次 millis() 比较，不阻塞。
+    LocalState local;
+    local.doorOpen = _door.isOpen();
+    local.windowState = (uint8_t)_window.getState();
+    local.fanSpeed = _fan.getSpeed();
+    if (_oledCarousel.update(millis(), local, _oled)) {
+        _oledReqPending = true;
+        _oledReqId = _oledCarousel.lastReqId();
+        _oledFrameSeen = false;   // 新一轮请求：允许收下一帧
+    }
+}
+
+uint16_t CommandDispatcher::takeOledRequest() {
+    _oledReqPending = false;
+    return _oledReqId;
+}
+
+bool CommandDispatcher::applyOledData(uint16_t id, const OledData& data) {
+    // 只接受当前请求的第一帧回包，其余（陈旧/重复/畸形）静默丢弃
+    if (_oledFrameSeen || id != _oledReqId) return false;
+    _oledFrameSeen = true;
+    _oledCarousel.applyData(data);
+    return true;
 }
 
 void CommandDispatcher::buildStatus(char* buf, size_t len) {

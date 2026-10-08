@@ -10,7 +10,7 @@
 > | 板 | 固件版本 | 说明 |
 > |----|---------|------|
 > | Module A | `V2.2` | 移除超声波 / 土壤湿度，新增矩阵键盘；**A0 接管 8 颗 NeoPixel 灯带，`light` 命令由 A 板执行** |
-> | Module B | `V2.11` | HC-SR04 按需测距（Trig D6 / Echo D5）； 移除 TM1637 数码管；红外支持 NEC + 美的空调长码；风扇引脚每 loop 自愈；响应回显请求 `id`（V2.6）；看门狗 `WDTO_4S`（V2.11，V2.7 曾为 `WDTO_2S`，固件挂死 4s 自动复位）；命令响应/就绪帧回附固件状态快照 `state`，新增 `system/selftest` 自检（V2.9）；灯带电流限流与看门狗容差（V2.11）。**灯带数据线已移至 A 板 A0**，`light` 命令不再由网关下发到 B 板 |
+> | Module B | `V2.12` | **OLED 多页轮播下移固件**：屏上 3 页（Environment/Devices/Safety）由 B 每 15s **主动拉取**（上行 `oled_req`，下行紧凑 `@D...` 数据帧）；HC-SR04 按需测距（Trig D6 / Echo D5）； 移除 TM1637 数码管；红外支持 NEC + 美的空调长码；风扇引脚每 loop 自愈；响应回显请求 `id`（V2.6）；看门狗 `WDTO_4S`（V2.11，V2.7 曾为 `WDTO_2S`，固件挂死 4s 自动复位）；命令响应/就绪帧回附固件状态快照 `state`，新增 `system/selftest` 自检（V2.9）；灯带电流限流与看门狗容差（V2.11）。**灯带数据线已移至 A 板 A0**，`light` 命令不再由网关下发到 B 板 |
 >
 > 下文中，被裁剪的字段/命令均以 **「（已裁剪）」** 标注。
 
@@ -224,7 +224,7 @@ L,<code>,<value>,<r>,<g>,<b>,<count>,<id>
 ### 4.1 就绪
 
 ```json
-{"module":"output","type":"ready","board":"MODULE_B","role":"OUTPUT_NODE","version":"V2.11","state":{"door":"closed","window":"normal","fan":0,"light":0,"buzzer":"off"}}
+{"module":"output","type":"ready","board":"MODULE_B","role":"OUTPUT_NODE","version":"V2.12","state":{"door":"closed","window":"normal","fan":0,"light":0,"buzzer":"off"}}
 ```
 
 ### 4.2 命令响应
@@ -252,7 +252,7 @@ L,<code>,<value>,<r>,<g>,<b>,<count>,<id>
 下发 `{"cmd":"system","action":"selftest"}`，固件回一帧：
 
 ```json
-{"module":"output","type":"selftest","version":"V2.11","uptime_ms":9904,"ok":2,"err":0,
+{"module":"output","type":"selftest","version":"V2.12","uptime_ms":9904,"ok":2,"err":0,
  "fan":{"speed":0,"reclaim":0,"pin":[1,0,1,0]},
  "light":{"level":255,"bright":255,"shows":1,"lit":0,"d4":[1,1,0]},"buzzer":"off"}
 ```
@@ -304,3 +304,41 @@ Trig=D6、Echo=D5；仅 `valid=true` 时 `distance_cm` 可用。
 `pixels` 由 **Module A（固件 V2.2）** 执行（紧凑帧的 `P` 分支），B 板无需改动。
 A 板不识别 `pixels` 时返回失败，服务端不能更新灯的状态，也不得降级为全亮。
 `white/night/rgb/off` 协议保留；`temp` 因 A 板无对应分支已停用，面板已移除色温入口。
+
+## B 板新增 OLED 数据拉取（V2.12）
+
+屏上 3 页（`Environment` / `Devices` / `Safety`）的排版与轮播逻辑**硬编码在 B 板固件**：
+每 15s B 板切页并**主动**向上位机索要一次传感器数据，上位机回一帧紧凑数据，B 在本地渲染。
+串口流量从旧的「每页 4~8 条逐行命令」降到「每 15s 2 帧」，从根本上规避「逐行 SPI 刷新
+触发 B 板复位」的风险。
+
+**上行 B→上位机（JSON；MCP 读线程只认 `{...}`）**
+
+```json
+{"module":"output","type":"oled_req","id":12}
+```
+
+`id` 为 B 生成的 uint16，每次请求自增回绕；上位机须原样回显。
+
+**下行 上位机→B（非 JSON 紧凑文本，压进 Uno 64B RX 缓冲）**
+
+```text
+@D<id>,<t10>,<h10>,<light>,<smoke>,<rain>,<touch>,<motion>\n
+```
+
+| 字段 | 含义 | 取值 / 哨兵 |
+|------|------|-------------|
+| `id` | 回显请求 id（拒绝陈旧帧） | 0~65535 |
+| `t10` / `h10` | 温度 / 湿度 ×10 | `-32768` = 无值（DHT 读数失败） |
+| `light` | 光照原始值 | 0~1023 |
+| `smoke` / `rain` / `touch` / `motion` | 布尔 | 0/1 |
+
+示例：`@D12,253,612,479,0,1,0,1`（25.3℃ / 61.2% / 光 479 / 无烟 / 有雨 / 无触 / 有人）；
+A 板离线：`@D12,-32768,-32768,0,0,0,0,0`。帧长恒 <64B。
+
+> * 固件在 `Protocol::handleLine()` 顶部按首字符 `@` 分流到专用处理函数，**早于** JSON 解析，
+>   因此不会触发 `parse_error` / 旧文本回退 / 任何上行响应。
+> * id 校验 + 「一次请求只收一帧」：迟到、重复或畸形的回帧被静默丢弃。
+> * `oled/show_text` 与 `oled/clear` 命令**保留**（调试用），但会被下一拍（≤15s）切页覆盖；
+>   手动写行不再是持久显示手段。
+> * 屏上内容不再由香橙派逐行推送；`PC_Test` 侧的 OLED 轮播线程与其配置仅作存档。

@@ -8,7 +8,7 @@
 
 ## 1. 模块用途
 
-Module B 是一块 Arduino Uno，负责执行硬件动作并驱动显示设备。**固件版本 `V2.11`**，经 2026-09 正式版硬件裁剪：
+Module B 是一块 Arduino Uno，负责执行硬件动作并驱动显示设备。**固件版本 `V2.12`**，经 2026-09 正式版硬件裁剪：
 
 **现役执行器/显示设备（6 类）**
 
@@ -129,6 +129,12 @@ PlatformIO 已在 [platformio.ini](platformio.ini) 中声明。
 > 的灯光动作都路由到 A 板（支持的 `action` 见 [module-a-sensor/README.md](../module-a-sensor/README.md) §5：
 > `off`/`white`/`night`/预设色/`rgb`/`pixels`）。B 板上表里的 `light` 分支为保留驱动，不由网关使用。
 
+> **OLED 轮播（V2.12 起）**：屏上 3 页（`Environment`/`Devices`/`Safety`）的排版与轮播逻辑
+> **硬编码在 B 板固件**，每 15s 切页并**主动**向上位机发送 `{"type":"oled_req","id":N}` 索要
+> 传感器数据；上位机回一帧非 JSON 紧凑帧 `@D<id>,<t10>,<h10>,<light>,<smoke>,<rain>,<touch>,<motion>`，
+> B 在本地渲染。`oled/show_text`、`oled/clear` 命令仍保留（调试用），但会被下一拍切换覆盖。
+> 详见 [docs/serial-protocol.md](../docs/serial-protocol.md) 的「B 板新增 OLED 数据拉取（V2.12）」。
+
 ### 5.2 命令示例
 
 ```json
@@ -167,7 +173,7 @@ PlatformIO 已在 [platformio.ini](platformio.ini) 中声明。
 
 **上电输出：**
 ```json
-{"module":"output","type":"ready","board":"MODULE_B","role":"OUTPUT_NODE","version":"V2.11","state":{"door":"closed","window":"normal","fan":0,"light":0,"buzzer":"off"}}
+{"module":"output","type":"ready","board":"MODULE_B","role":"OUTPUT_NODE","version":"V2.12","state":{"door":"closed","window":"normal","fan":0,"light":0,"buzzer":"off"}}
 ```
 
 **输入 `{"cmd":"light","action":"red"}`，输出：**

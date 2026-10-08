@@ -24,6 +24,15 @@ void Protocol::sendReady() {
 }
 
 void Protocol::handleSerial() {
+    // 轮播到期时，先向香橙派拉取一次数据（发一帧 oled_req，Pi 回一帧 @D...）。
+    // 每 15s 仅此 1 帧上行，避免旧「Pi 逐行推送」的持续串口流量。
+    if (_dispatcher->oledRequestPending()) {
+        uint16_t reqId = _dispatcher->takeOledRequest();
+        Serial.print(F("{\"module\":\"output\",\"type\":\"oled_req\",\"id\":"));
+        Serial.print(reqId);
+        Serial.println(F("}"));
+    }
+
     while (Serial.available()) {
         char c = Serial.read();
         if (c == '\n' || c == '\r') {
@@ -63,6 +72,13 @@ void Protocol::normalizeFullWidth() {
 }
 
 void Protocol::handleLine(const char* line) {
+    // 下行 OLED 紧凑数据帧（非 JSON，首字符 '@'）单独分流：早于 JSON 解析，
+    // 因此不触发 parse_error / handleLegacy / 任何上行响应。
+    if (line[0] == '@') {
+        handleOledFrame(line);
+        return;
+    }
+
     Command cmd;
     if (!_parser.parse(line, cmd)) {
         // JSON 解析失败 → 尝试旧文本命令（向后兼容）
@@ -111,6 +127,51 @@ void Protocol::handleLine(const char* line) {
     } else {
         respondError("unknown_command", cmd.id);
     }
+}
+
+// 解析带可选负号的十进制整数；成功返回推进后的指针，失败返回 nullptr。
+static const char* parseDecimal(const char* p, long* out) {
+    bool neg = false;
+    if (*p == '-') { neg = true; p++; }
+    if (*p < '0' || *p > '9') return nullptr;
+    long v = 0;
+    while (*p >= '0' && *p <= '9') {
+        v = v * 10 + (*p - '0');
+        p++;
+    }
+    *out = neg ? -v : v;
+    return p;
+}
+
+// 下行 OLED 数据帧：@D<id>,<t10>,<h10>,<light>,<smoke>,<rain>,<touch>,<motion>
+// 8 个字段恒 <64B（压进 Uno RX 缓冲）。非法即静默丢弃，绝不回响应。
+void Protocol::handleOledFrame(const char* line) {
+    if (line[0] != '@' || line[1] != 'D') return;
+    const char* p = line + 2;
+
+    long vals[8];
+    for (byte i = 0; i < 8; i++) {
+        p = parseDecimal(p, &vals[i]);
+        if (!p) return;
+        if (i < 7) {
+            if (*p != ',') return;
+            p++;
+        }
+    }
+    if (*p != '\0') return;   // 尾部有多余字符
+
+    OledData d;
+    d.temp10 = (int16_t)vals[1];
+    d.hum10  = (int16_t)vals[2];
+    long lt = vals[3];
+    d.light = (uint16_t)constrain(lt, 0L, 1023L);
+    d.flags = (uint8_t)((vals[4] ? OLED_FLAG_SMOKE  : 0) |
+                        (vals[5] ? OLED_FLAG_RAIN   : 0) |
+                        (vals[6] ? OLED_FLAG_TOUCH  : 0) |
+                        (vals[7] ? OLED_FLAG_MOTION : 0));
+    d.valid = true;
+
+    _dispatcher->applyOledData((uint16_t)vals[0], d);
 }
 
 void Protocol::sendDistance(long id) {

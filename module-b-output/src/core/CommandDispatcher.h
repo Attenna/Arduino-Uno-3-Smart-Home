@@ -14,6 +14,7 @@
 #include "../drivers/Display.h"
 #endif
 #include "../drivers/OLEDDisplay.h"
+#include "OledCarousel.h"
 #if ENABLE_IR_TX
 #include "../drivers/IR.h"
 #endif
@@ -34,6 +35,11 @@ public:
     void printSelfTest();
     unsigned long measureDistance();  // Echo pulse duration, zero on timeout.
 
+    // ── OLED 轮播数据拉取（V2.12：显示下移到 B 板，数据按需向香橙派索取）──
+    bool oledRequestPending() const { return _oledReqPending; }
+    uint16_t takeOledRequest();                 // 取走待发请求 id 并清 pending
+    bool applyOledData(uint16_t id, const OledData& data);  // 落地回帧（校验 id）
+
 private:
     bool _route(const Command& cmd);     // 真正的路由，dispatch 外包一层计数
     uint32_t _okCount;
@@ -48,6 +54,10 @@ private:
     Display _display;
 #endif
     OLEDDisplay _oled;
+    OledCarousel _oledCarousel;
+    bool _oledReqPending;    // 本拍需向香橙派发送 oled_req
+    uint16_t _oledReqId;     // 待发请求 id
+    bool _oledFrameSeen;     // 当前请求是否已收到回帧（防止一请求多帧重复渲染）
 #if ENABLE_IR_TX
     IR _ir;
 #endif
