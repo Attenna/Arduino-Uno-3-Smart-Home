@@ -42,9 +42,15 @@ backup="$RUNTIME_DIR/../smart-home-backups/pre-deploy-${commit:0:12}"
 mkdir -p "$backup"
 cp "$RUNTIME_DIR/docker-compose.yml" "$backup/docker-compose.yml"
 
-# The repository excludes runtime state and credentials, so overlaying PC_Test
-# updates source files while preserving data, models, .env and .auth files.
-cp -a "$REPO_DIR/PC_Test/." "$RUNTIME_DIR/"
+# Snapshot SQLite and face/config state before changing application files.  The
+# backup helper reads the live runtime tree, never the source checkout.
+python3 "$RUNTIME_DIR/scripts/backup_state.py"
+
+# Export exactly the files tracked by this commit.  A long-lived checkout can
+# contain ignored runtime files (for example PC_Test/data/smart_home.db); cp -a
+# would silently copy those stale files over the persistent runtime volume.
+git -C "$REPO_DIR" archive --format=tar "$commit:PC_Test" \
+  | tar -xf - -C "$RUNTIME_DIR"
 printf '%s\n' "$commit" > "$RUNTIME_DIR/.deployed-git-commit"
 
 cd "$RUNTIME_DIR"
