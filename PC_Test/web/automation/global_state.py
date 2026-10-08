@@ -168,10 +168,17 @@ class GlobalStateStore:
         with self._lock:
             return {v["id"]: v["value"] for v in self.vars}
 
-    def var_types(self) -> dict:
-        """``{"g:名字": 类型}``，供 API 侧严格校验规则里引用的变量是否存在。"""
+    def var_specs(self) -> dict:
+        """``{"g:名字": {"type", "label", "choices"}}``，供 API 侧严格校验规则。
+
+        校验层要按变量类型约束比较符与取值（enum 必须落在 choices 内），
+        所以这里一次给全，避免校验层再读第二份变量定义。
+        """
         with self._lock:
-            return {v["id"]: v["type"] for v in self.vars}
+            return {v["id"]: {"type": v["type"],
+                              "label": v.get("label") or v["id"],
+                              "choices": list(v.get("choices") or [])}
+                    for v in self.vars}
 
     def get(self, var_id: str) -> Optional[dict]:
         with self._lock:

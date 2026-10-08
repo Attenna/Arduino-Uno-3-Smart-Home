@@ -4,7 +4,9 @@
 温度和光照使用回差，周期复查确保人员进入时立即响应当前环境。
 """
 
-PRESETS_VERSION = 8
+import copy
+
+PRESETS_VERSION = 9
 
 DEFAULT_RULES = [{'preset': 'access_open_door',
   'name': '门禁通过：开门并在10秒后关门',
@@ -179,7 +181,11 @@ DEFAULT_RULES = [{'preset': 'access_open_door',
   'trigger': {'kind': 'interval', 'seconds': 2},
   'conditions': [{'sensor': 'sensor_fresh', 'op': '==', 'value': True},
                  {'sensor': 'rain', 'op': '==', 'value': False},
-                 {'sensor': 'smoke', 'op': '==', 'value': False}],
+                 {'sensor': 'smoke', 'op': '==', 'value': False},
+                 # 与风扇/灯同一口径：手动优先期内不让位，避免用户刚把窗户调到
+                 # 想要的角度、下一拍就被自动规则拨回 45°（见 R2）。
+                 # rain_window（安全关窗）**故意不带**这条 —— 手动优先不能压过安全。
+                 {'sensor': 'g:手动优先_窗', 'op': '==', 'value': False}],
   'actions': [{'device': 'window', 'status': 'normal'}],
   'match': 'all',
   'cooldown': 0},
@@ -191,3 +197,33 @@ DEFAULT_RULES = [{'preset': 'access_open_door',
               {'device': 'delay', 'seconds': 10},
               {'device': 'door', 'status': 'close'}],
   'cooldown': 0}]
+
+
+# ── R4：内容修过、但只允许「用户没改过」才覆盖的内置预设 ──
+# 迁移（engine._migrate_legacy_rules）会拿磁盘上的规则与本表的历史内置内容逐字段
+# 比较（忽略 id/name/enabled）：一致的才换成新版；用户改动过的一律原样保留并告警。
+# 这样既能让修复生效，又不会像以前那样无条件覆盖用户对预设的定制。
+_BY_PRESET = {p["preset"]: p for p in DEFAULT_RULES if p.get("preset")}
+
+
+def _legacy_light_variant(preset: str, op: str, value: int) -> dict:
+    """v7 及更早的 light_dark/light_off：末条条件是比较原始 ADC 的 light 阈值。"""
+    rule = copy.deepcopy(_BY_PRESET[preset])
+    rule["conditions"] = [dict(c) for c in rule["conditions"][:-1]]
+    rule["conditions"].append({"sensor": "light", "op": op, "value": value})
+    return rule
+
+
+def _legacy_window_variant() -> dict:
+    """v8 的 window_normal：还没有「g:手动优先_窗 让位」这条条件。"""
+    rule = copy.deepcopy(_BY_PRESET["window_normal"])
+    rule["conditions"] = [dict(c) for c in rule["conditions"]
+                          if c.get("sensor") != "g:手动优先_窗"]
+    return rule
+
+
+PRESET_LEGACY_CONTENT = {
+    "light_dark": [_legacy_light_variant("light_dark", "<", 400)],
+    "light_off": [_legacy_light_variant("light_off", ">", 700)],
+    "window_normal": [_legacy_window_variant()],
+}

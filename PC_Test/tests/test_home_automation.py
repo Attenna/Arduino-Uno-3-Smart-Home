@@ -1,13 +1,18 @@
+import contextlib
 import json
 import tempfile
 import threading
 import time
 import unittest
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import Mock, patch
 
 from keypad_code import KeypadCode
-from web.automation.engine import AutomationEngine
+from web.automation.default_rules import PRESETS_VERSION
+from web.automation.engine import SAFETY_RETRY, AutomationEngine
+from web.automation.schema import (ValidationError, validate_action,
+                                   validate_condition, validate_rule)
 from web.security_monitor import DoorwayDwell, SecurityMonitor
 
 
@@ -94,7 +99,42 @@ class HomeRulesTests(unittest.TestCase):
                          ("light_dark", "==", False))
         self.assertEqual(rules["temp_hot"]["name"], "保留的温度规则")
         saved = json.loads(self.engine.rules_path.read_text())
-        self.assertEqual(saved["presets_version"], 8)
+        self.assertEqual(saved["presets_version"], PRESETS_VERSION)
+
+    def test_upgrade_keeps_preset_content_customised_by_user(self):
+        # R4：与旧内置版不一致（用户改过）就不覆盖，只记一条告警
+        mine = dict(self.rules["light_dark"])
+        mine["conditions"] = [dict(c) for c in mine["conditions"]]
+        mine["conditions"][-1] = {"sensor": "light", "op": "<", "value": 500}
+        self.engine.rules_path.write_text(json.dumps({
+            "presets_version": 7,
+            "rules": [mine],
+        }))
+        self.engine.load()
+        rules = {r["preset"]: r for r in self.engine.rules}
+        dark = rules["light_dark"]["conditions"][-1]
+        self.assertEqual((dark["sensor"], dark["op"], dark["value"]),
+                         ("light", "<", 500))
+        info = self.engine.consume_migration_info()
+        self.assertTrue(any("已保留你的版本" in w for w in info["warnings"]))
+
+    def test_upgrade_adds_manual_priority_gate_to_unmodified_window_normal(self):
+        # R2/R4：v8 的 window_normal 与旧内置版一致 → 换成带「手动优先让位」的 v9
+        self.engine.rules_path.write_text(json.dumps({
+            "presets_version": 8,
+            "rules": [{"preset": "window_normal", "name": "无雨无烟：恢复45°",
+                       "enabled": True,
+                       "trigger": {"kind": "interval", "seconds": 2},
+                       "conditions": [{"sensor": "sensor_fresh", "op": "==", "value": True},
+                                      {"sensor": "rain", "op": "==", "value": False},
+                                      {"sensor": "smoke", "op": "==", "value": False}],
+                       "actions": [{"device": "window", "status": "normal"}],
+                       "match": "all", "cooldown": 0}],
+        }))
+        self.engine.load()
+        rules = {r["preset"]: r for r in self.engine.rules}
+        self.assertIn("g:手动优先_窗",
+                      [c["sensor"] for c in rules["window_normal"]["conditions"]])
 
     def test_access_uses_one_unconditional_open_close_sequence(self):
         r = self.rules["access_open_door"]
@@ -121,13 +161,21 @@ class HomeRulesTests(unittest.TestCase):
         self.bridge.control_window.assert_not_called()
 
     def test_rain_and_smoke_window_priority_independent_of_presence(self):
+        # 雨水/烟雾关窗是安全动作：不看有人无人在家，也不让位给「手动优先」
         self.engine.global_state.set_value("g:有人在家", False)
         self.engine.global_state.set_value("g:手动优先_窗", True)
         for rain, smoke, expected in [(True,False,"closed"),(True,True,"closed"),
-                                      (False,True,"closed"),(False,False,"normal")]:
+                                      (False,True,"closed"),(False,False,"closed")]:
             self.snapshot(rain=rain,smoke=smoke)
             self.apply("rain_window"); self.apply("window_normal")
             self.assertEqual(self.status["window_status"], expected)
+        # 手动优先释放后，无雨无烟才恢复 45°（R2：window_normal 让位给手动操作）
+        self.snapshot(rain=False,smoke=False)
+        self.engine.global_state.set_value("g:手动优先_窗", False)
+        self.apply("window_normal")
+        self.assertEqual(self.status["window_status"], "normal")
+        self.assertNotIn("g:手动优先_窗",
+                         [c["sensor"] for c in self.rules["rain_window"]["conditions"]])
 
     def test_open_window_rechecks_hazard_at_execution(self):
         self.snapshot(smoke=True)
@@ -140,21 +188,28 @@ class HomeRulesTests(unittest.TestCase):
         self.bridge.control_window.assert_not_called()
         self.bridge.control_fan.assert_not_called()
 
+    @contextlib.contextmanager
+    def clock(self, at):
+        """同刻固定墙钟与单调时钟：hold/冷却用单调钟、快照陈旧判定用墙钟。"""
+        with patch("web.automation.engine.time.time", return_value=at), \
+                patch("web.automation.engine.time.monotonic", return_value=at):
+            yield
+
     def test_absence_hold_and_disconnection_reset(self):
         r = self.rules["presence_timeout"]
-        with patch.object(self.engine, "_fire") as fire, patch("web.automation.engine.time.time", return_value=1000):
+        with patch.object(self.engine, "_fire") as fire, self.clock(1000):
             self.engine.on_snapshot(dict(motion=False))
             self.engine.on_snapshot(dict(motion=False))
             fire.assert_not_called()
             self.assertEqual(self.engine._hold_since[r["id"]],1000)
-        with patch.object(self.engine, "_fire") as fire, patch("web.automation.engine.time.time", return_value=1121):
+        with patch.object(self.engine, "_fire") as fire, self.clock(1121):
             # Gap means no continuous evidence of absence.
             self.engine.on_snapshot(dict(motion=False))
             fire.assert_not_called()
             self.assertEqual(self.engine._hold_since[r["id"]],1121)
         with patch.object(self.engine, "_fire") as fire:
             for now in range(1123,1243,2):
-                with patch("web.automation.engine.time.time", return_value=now):
+                with self.clock(now):
                     self.engine.on_snapshot(dict(motion=False))
             fire.assert_called_once()
 
@@ -213,6 +268,159 @@ class HomeRulesTests(unittest.TestCase):
         self.assertNotIn("touch_to_auto",[r.get("preset") for r in self.engine.rules])
         self.assertIn("custom",[r["id"] for r in self.engine.rules])
         self.assertTrue(self.engine.global_state.values()["g:允许自动开风扇"])
+
+
+class AutomationRiskTests(unittest.TestCase):
+    """issue-blocks-automation-risks（R1–R10）的定向回归。"""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.bridge = Mock(online=True)
+        for name in ("control_door", "control_window", "control_fan", "control_light"):
+            getattr(self.bridge, name).return_value = (True, "ok")
+        self.status = dict(fan_speed=0, light_status="off",
+                           light_brightness=0, window_status="normal")
+        self.db = Mock()
+        self.db.get_current_status.side_effect = lambda: dict(self.status)
+        self.db.update_status.side_effect = lambda **kw: self.status.update(kw)
+        self.engine = AutomationEngine(self.bridge, self.db,
+                                       Path(self.temp.name) / "rules.json")
+        self.engine.load()
+        self.addCleanup(self.engine.stop)
+
+    def snapshot(self, **data):
+        self.engine._snapshot.update(data)
+        self.engine._snapshot_ts = time.time()
+
+    def test_R1_ac_fan_enum_accepts_legacy_levels(self):
+        def fan_level(raw):
+            rule = validate_rule(dict(
+                name="空调", trigger=dict(kind="time", hhmm="08:00"), conditions=[],
+                actions=[dict(device="ac", temperature=26, fan=raw)]))
+            return rule["actions"][0]["fan"]
+        for raw, want in [("low", "low"), ("MID", "mid"), ("60", "mid"),
+                          ("100", "high"), (20, "low"), ("auto", "auto")]:
+            self.assertEqual(fan_level(raw), want)
+        with self.assertRaises(ValidationError):
+            fan_level("turbo")
+
+    def test_R7_comparison_checked_by_source_kind_on_save(self):
+        for bad in [dict(sensor="temperature", op=">", value="26"),
+                    dict(sensor="temperature", op=">", value=999),
+                    dict(sensor="light_dark", op=">", value=True),
+                    dict(sensor="ac_mode", op="==", value="turbo")]:
+            with self.assertRaises(ValidationError):
+                validate_condition(dict(bad))
+        # 宽松模式（引擎读盘）不拒绝历史脏值，只把数字字符串归一
+        clean = validate_condition(dict(sensor="temperature", op=">", value="26"),
+                                   strict=False)
+        self.assertEqual(clean["value"], 26)
+
+    def test_R8_state_action_checked_against_variable_definition(self):
+        info = {"g:全屋模式": {"type": "enum", "label": "全屋模式",
+                               "choices": ["auto", "manual", "away"]}}
+        ok = validate_action(dict(device="state", name="g:全屋模式",
+                                  op="set", value="away"), vars_info=info)
+        self.assertEqual(ok["value"], "away")
+        for bad in [dict(device="state", name="g:全屋模式", op="set", value="party"),
+                    dict(device="state", name="g:全屋模式", op="add", value=1),
+                    dict(device="state", name="g:全屋模式", op="toggle")]:
+            with self.assertRaises(ValidationError):
+                validate_action(dict(bad), vars_info=info)
+        # 宽松模式：变量被删掉也不该让整条规则失效
+        validate_action(dict(device="state", name="g:已删除", op="set", value="x"),
+                        strict=False)
+
+    def test_R9_event_rule_requires_matching_payload(self):
+        self.engine.rules = [validate_rule(dict(
+            id="touch", name="触摸开门", enabled=True,
+            trigger=dict(kind="event", event="touch_on"), conditions=[],
+            actions=[dict(device="door", status="open")], cooldown=0))]
+        with patch.object(self.engine, "_fire") as fire:
+            self.engine.on_event(dict(event="motion", state=True))
+            self.engine.on_event(dict(event="touch", state=False))
+            fire.assert_not_called()
+            self.engine.on_event(dict(event="touch", state=True))
+            fire.assert_called_once()
+
+    def test_R10_time_trigger_catches_up_inside_window(self):
+        rule = validate_rule(dict(
+            id="t", name="定时", enabled=True,
+            trigger=dict(kind="time", hhmm="07:30"), conditions=[],
+            actions=[dict(device="fan", op="off", speed=0)], cooldown=0))
+        with patch.object(self.engine, "_fire") as fire:
+            self.engine._maybe_fire_time(rule, datetime(2026, 10, 8, 7, 31))
+            self.engine._maybe_fire_time(rule, datetime(2026, 10, 8, 7, 32))
+            fire.assert_called_once()
+            # 超出补触发窗口（300 秒）后当天不再补
+            self.engine._maybe_fire_time(rule, datetime(2026, 10, 8, 7, 40))
+            fire.assert_called_once()
+
+    def test_R6_hold_marks_fired_only_when_enqueued(self):
+        rule = validate_rule(dict(
+            id="h", name="烟雾持续", enabled=True,
+            trigger=dict(kind="sensor", sensor="smoke", op="==", value=True,
+                         hold_sec=2), conditions=[],
+            actions=[dict(device="buzzer", mode="beep", count=1)], cooldown=0))
+        self.engine.rules = [rule]
+        self.snapshot(smoke=True)
+        self.engine._armed.add("h")
+        self.engine._prev_trigger["h"] = True
+        self.engine._hold_since["h"] = time.monotonic() - 10
+        with patch.object(self.engine, "_fire", return_value=False):
+            self.engine._evaluate_sensor_rule(rule)
+            self.assertFalse(self.engine._hold_fired.get("h"))
+        with patch.object(self.engine, "_fire", return_value=True):
+            self.engine._evaluate_sensor_rule(rule)
+            self.assertTrue(self.engine._hold_fired["h"])
+
+    def test_R3_tick_evaluates_state_source_rules(self):
+        # A 板离线（从未 on_snapshot）时，g: 触发也要能到期释放
+        rule = validate_rule(dict(
+            id="g1", name="状态触发", enabled=True,
+            trigger=dict(kind="sensor", sensor="g:有人在家", op="==", value=True,
+                         hold_sec=1), conditions=[],
+            actions=[dict(device="state", name="g:全屋模式", op="set", value="away")],
+            cooldown=0))
+        self.engine.rules = [rule]
+        self.engine.global_state.set_value("g:有人在家", True)
+        self.engine._armed.add("g1")
+        self.engine._prev_trigger["g1"] = True
+        self.engine._hold_since["g1"] = time.monotonic() - 10
+        thread = threading.Thread(target=self.engine._tick_loop, daemon=True)
+        thread.start()
+        deadline = time.time() + 3
+        while time.time() < deadline and not self.engine._hold_fired.get("g1"):
+            time.sleep(0.05)
+        self.engine._stopping = True
+        thread.join(timeout=3)
+        self.assertTrue(self.engine._hold_fired.get("g1"))
+
+    def test_R5_safety_action_retries_then_flags_partial(self):
+        rule = dict(id="s", name="关窗", actions=[{"device": "window", "status": "close"}])
+        self.engine.rules = [rule]
+        self.bridge.control_window.return_value = (False, "串口忙")
+        lock = threading.Lock()
+        lock.acquire()
+        with patch("web.automation.engine.SAFETY_RETRY_DELAY", 0), \
+                patch.object(self.engine, "_log") as log:
+            self.engine._run_actions(rule, rule["actions"], True, "测试", lock)
+        self.assertEqual(self.bridge.control_window.call_count, 1 + SAFETY_RETRY)
+        detail = log.call_args.kwargs["detail"]
+        self.assertFalse(detail[-1]["ok"])
+        self.assertTrue(detail[-1]["partial"])
+
+    def test_R5_non_safety_action_fails_fast(self):
+        rule = dict(id="o", name="开门", actions=[{"device": "door", "status": "open"}])
+        self.engine.rules = [rule]
+        self.bridge.control_door.return_value = (False, "串口忙")
+        lock = threading.Lock()
+        lock.acquire()
+        with patch("web.automation.engine.SAFETY_RETRY_DELAY", 0), \
+                patch.object(self.engine, "_log"):
+            self.engine._run_actions(rule, rule["actions"], True, "测试", lock)
+        self.assertEqual(self.bridge.control_door.call_count, 1)
 
 
 class KeypadTests(unittest.TestCase):

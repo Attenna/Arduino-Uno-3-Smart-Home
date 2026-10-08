@@ -35,9 +35,9 @@ from datetime import datetime
 from pathlib import Path
 
 from .capabilities import CONDITION_SOURCES, EVENT_TRIGGERS
-from .default_rules import DEFAULT_RULES, PRESETS_VERSION
+from .default_rules import DEFAULT_RULES, PRESET_LEGACY_CONTENT, PRESETS_VERSION
 from ..doorway import DoorwayDistance
-from .global_state import GlobalStateStore
+from .global_state import GlobalStateStore, ID_PREFIX
 from .oled_carousel import (DEFAULT_PAGES, PAGES_VERSION, OledCarousel,
                             OLED_MIN_INTERVAL, is_legacy_default_pages)
 from .schema import validate_rule, validate_rules
@@ -53,6 +53,32 @@ logger = logging.getLogger(__name__)
 
 # OLED 用英文标签（B 板 u8x8 字库只有 ASCII，汉字上屏是乱码）；页面/接口仍用中文
 _MODE_LABELS_OLED = {"auto": "Auto", "manual": "Manual", "away": "Away"}
+
+
+def _is_state_source(sensor) -> bool:
+    """触发源是否为全局状态（``g:`` 变量）。
+
+    这类源由 global_state 维护、与 A 板快照无关，因此「快照陈旧清理」与「滴答
+    求值」都要把它与传感器源区别对待（见 on_snapshot / _tick_loop）。
+    """
+    return str(sensor or "").startswith(ID_PREFIX)
+
+
+# 关键安全动作（关门/关窗/蜂鸣报警）失败后的有界重试：串口偶发忙/超时不应该让
+# 「挡窗」「关门」这类安全动作直接放弃。非安全动作保持 fail-fast，避免把一次
+# 明确的失败拖成多次副作用（见 R5）。
+SAFETY_RETRY = 2
+SAFETY_RETRY_DELAY = 1.0
+
+
+def _is_safety_action(action: dict) -> bool:
+    """关门 / 关窗 / 蜂鸣（非 off）——失败值得重试的动作。"""
+    device = action.get("device")
+    if device in ("door", "window"):
+        return action.get("status") == "close"
+    if device == "buzzer":
+        return action.get("mode", "beep") != "off"
+    return False
 
 
 class AutomationEngine:
@@ -203,7 +229,7 @@ class AutomationEngine:
         clean, bad_names = [], []
         for item in rules_list:
             try:
-                clean.append(validate_rule(item))
+                clean.append(validate_rule(item, strict=False))
             except Exception as e:                       # noqa: BLE001
                 label = (item.get("name") if isinstance(item, dict) else item)
                 bad_names.append(f"{label}: {e}")
@@ -213,9 +239,28 @@ class AutomationEngine:
             self._migration_info["invalid"] = bad_names
         if self.seed_presets():
             self._write_rules()
-        elif self._migration_info and self._migration_info.get("migrated"):
-            # 迁移结果落盘，下次启动不再重复迁移（写盘会带上当前 PRESETS_VERSION）
+        elif self._migration_info and any(
+                self._migration_info.get(k)
+                for k in ("migrated", "dropped", "warnings", "invalid")):
+            # 迁移结果落盘，下次启动不再重复迁移（写盘会带上当前 PRESETS_VERSION）。
+            # 只在有内容改动时写会漏掉「预设全被用户改过、只产出告警」这一支——版本号
+            # 不前进，每次重启都会重复弹同一批提示（见 R4）。
             self._write_rules()
+
+    # R4：比对预设是否等于某个历史内置版本。id/name/enabled 属于用户（改名、
+    # 开关都不算定制），所以「内容」只比触发/条件/动作/匹配/冷却。
+    _PRESET_CONTENT_KEYS = ("trigger", "conditions", "actions", "else_actions",
+                            "match", "cooldown")
+    _PRESET_LIST_KEYS = ("conditions", "actions", "else_actions")
+
+    @classmethod
+    def _preset_content_matches(cls, rule: dict, variants: list) -> bool:
+        def content(r: dict) -> dict:
+            # 缺 key 与空列表是同一个意思（校验层会把缺失的 conditions 归一成 []）
+            return {k: (r.get(k) or [] if k in cls._PRESET_LIST_KEYS else r.get(k))
+                    for k in cls._PRESET_CONTENT_KEYS}
+        mine = content(rule)
+        return any(mine == content(v) for v in variants)
 
     def _rule_is_legacy(self, rule: dict) -> bool:
         """规则里是否还有引擎硬编码时代的源/动作/事件引用（home_mode、face_granted 等）。"""
@@ -341,11 +386,24 @@ class AutomationEngine:
                 dropped.append(name)
                 continue
             if (presets_version >= 6 and pid in v4_by_pid
-                    and pid not in {"light_dark", "light_off"}):
-                # v7/v8 只调整光敏二分阈值；保留其他现有预设的全部用户配置。
+                    and pid not in PRESET_LEGACY_CONTENT):
+                # v6 起内置预设已带完整全局状态条件；保留用户对这些预设的配置。
                 out.append(rule)
                 continue
             if pid in v4_by_pid and presets_version < PRESETS_VERSION:
+                legacy = PRESET_LEGACY_CONTENT.get(pid)
+                if presets_version >= 6 and legacy \
+                        and not self._preset_content_matches(rule, legacy):
+                    # 用户改过这条预设 → 不覆盖（R4）。以前是无条件替换，会把用户
+                    # 调过的阈值/动作悄悄改回内置值。
+                    warns.append(f"「{name}」：内置版本已更新，但你改过这条规则，"
+                                 "已保留你的版本")
+                    out.append(rule)
+                    continue
+                if presets_version < 6:
+                    # 太老的文件（v6 之前）无法可靠判定是否被改过：只能整体换新，
+                    # 但必须告警，避免用户以为自己的定制还在。
+                    warns.append(f"「{name}」：内置规则结构已升级，已换成新版")
                 new = copy.deepcopy(v4_by_pid[pid])
                 new["id"] = rule.get("id") or None
                 new["enabled"] = bool(rule.get("enabled", True))  # 保留用户开关
@@ -398,7 +456,7 @@ class AutomationEngine:
                 self._presets_seen.add(pid)
                 added += 1
             if added:
-                self.rules = validate_rules(self.rules)
+                self.rules = validate_rules(self.rules, strict=False)
                 for rule in self.rules:
                     if not rule["id"]:
                         rule["id"] = uuid.uuid4().hex[:8]
@@ -430,8 +488,8 @@ class AutomationEngine:
         永远不成立的错字规则（引擎读盘才是宽松模式，见 load）；
         HTTP 动作的主机也一并按 automation: 策略查，让用户当场看到而不是等执行失败。
         """
-        clean = validate_rules(rules, var_types=self.global_state.var_types(),
-                               http_policy=self.http_policy)
+        clean = validate_rules(rules, vars_info=self.global_state.var_specs(),
+                               http_policy=self.http_policy, strict=True)
         with self._lock:
             old_ids = {r["id"] for r in self.rules}
             old_rules = {r["id"]: r for r in self.rules}
@@ -486,7 +544,7 @@ class AutomationEngine:
                             act["name"] = new_id
                             n += 1
             if n:
-                self.rules = validate_rules(self.rules)   # 宽松：变量已存在
+                self.rules = validate_rules(self.rules, strict=False)   # 宽松：变量已存在
                 self._write_rules()
         if n:
             logger.info("[自动化] 全局状态改名 %s→%s，更新规则引用 %d 处",
@@ -516,7 +574,10 @@ class AutomationEngine:
         try:
             if self._snapshot_ts and time.time() - self._snapshot_ts > 10:
                 for rule in self.rules:
-                    if rule["trigger"].get("sensor") != "distance_cm":
+                    sensor = rule["trigger"].get("sensor")
+                    # 距离规则的中断由 doorway 自己判定；g: 变量与快照新鲜度无关，
+                    # 否则传感器板离线会连带把「手动优先到期」的计时清掉
+                    if sensor != "distance_cm" and not _is_state_source(sensor):
                         self._hold_since.pop(rule["id"], None)
                         self._hold_fired.pop(rule["id"], None)
             self._snapshot = dict(snap or {})
@@ -609,28 +670,51 @@ class AutomationEngine:
 
     # ==================== 周期/定时触发 ====================
 
+    # 定时触发错过后的补触发窗口（秒）。tick 被动作线程抢锁、系统挂起或 NTP 跳变
+    # 都可能让某一拍错过整分钟；窗口内补一次，避免当天彻底漏触发。
+    TIME_CATCHUP_SEC = 300
+
     def _tick_loop(self) -> None:
         while not self._stopping:
             time.sleep(1.0)
             try:
-                now = time.time()
-                minute = datetime.now().strftime("%H:%M")
+                # 计时一律用单调时钟：墙钟被 NTP 回拨/校时会让「持续 N 秒」「每 N 秒」
+                # 出现负间隔或凭空超时（定时触发仍按墙钟的绝对时刻判定）
+                now_mono = time.monotonic()
                 for rule in list(self._iter_enabled()):
                     trig = rule["trigger"]
                     if trig["kind"] == "interval":
                         last = self._last_interval.get(rule["id"], 0.0)
                         if last == 0.0:
-                            self._last_interval[rule["id"]] = now
-                        elif now - last >= float(trig["seconds"]):
-                            self._last_interval[rule["id"]] = now
+                            self._last_interval[rule["id"]] = now_mono
+                        elif now_mono - last >= float(trig["seconds"]):
+                            self._last_interval[rule["id"]] = now_mono
                             self._fire(rule, reason=f"每 {trig['seconds']:g} 秒")
                     elif trig["kind"] == "time":
-                        key = datetime.now().strftime("%Y-%m-%d ") + trig["hhmm"]
-                        if minute == trig["hhmm"] and self._last_time_key.get(rule["id"]) != key:
-                            self._last_time_key[rule["id"]] = key
-                            self._fire(rule, reason=f"定时 {trig['hhmm']}")
+                        self._maybe_fire_time(rule, datetime.now())
+                    elif trig["kind"] == "sensor" and _is_state_source(trig.get("sensor")):
+                        # g: 变量的 sensor 触发只在 on_snapshot 求值，传感器板离线时
+                        # 永不触发（「手动优先到期释放」被永久卡住）；随 tick 补一条。
+                        self._evaluate_sensor_rule(rule)
             except Exception as e:                   # noqa: BLE001
                 logger.debug("[自动化] 滴答求值异常: %s", e)
+
+    def _maybe_fire_time(self, rule: dict, now_wall: datetime) -> None:
+        """定时触发：到达时刻后在补触发窗口内触发一次（按当日 key 去重）。
+
+        原先要求 tick 恰好落在 ``minute == hhmm`` 那一刻，若该分钟 tick 被阻塞，
+        当天就彻底漏触发；改为「已到点且当日未触发过」后，窗口内的下一拍会补上。
+        """
+        hhmm = rule["trigger"]["hhmm"]
+        hour, minute = (int(x) for x in hhmm.split(":"))
+        target = now_wall.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if now_wall < target or (now_wall - target).total_seconds() > self.TIME_CATCHUP_SEC:
+            return
+        key = f"{target:%Y-%m-%d} {hhmm}"
+        if self._last_time_key.get(rule["id"]) == key:
+            return
+        self._last_time_key[rule["id"]] = key
+        self._fire(rule, reason=f"定时 {hhmm}")
 
     # ==================== OLED 轮播（默认关闭） ====================
 
@@ -903,15 +987,17 @@ class AutomationEngine:
                 if not was_true:
                     self._fire(rule, reason=reason)
                 return
-            # 「持续 N 秒」：连续保持满 N 秒触发一次，中断（条件转假）则重新计时
-            clock = time.monotonic if trig["sensor"] == "distance_cm" else time.time
+            # 「持续 N 秒」：连续保持满 N 秒触发一次，中断（条件转假）则重新计时。
+            # 计时用单调时钟，墙钟回拨/校时不会造成假超时。
             start = self._hold_since.get(rid)
             if start is None:
-                self._hold_since[rid] = clock()
+                self._hold_since[rid] = time.monotonic()
                 return
-            if clock() - start >= hold_sec and not self._hold_fired.get(rid):
-                self._hold_fired[rid] = True
-                self._fire(rule, reason=f"{reason} 持续 {hold_sec:g} 秒")
+            if time.monotonic() - start >= hold_sec and not self._hold_fired.get(rid):
+                # 只有真正入队执行了才记「本轮已触发」：_fire 因冷却未到或动作锁
+                # 被占而直接返回时必须保留触发权，否则本轮持续会被静默吞掉。
+                if self._fire(rule, reason=f"{reason} 持续 {hold_sec:g} 秒"):
+                    self._hold_fired[rid] = True
 
     def _evaluate_event_rule(self, rule: dict, seq: int, event: dict) -> None:
         with self._lock:
@@ -920,8 +1006,10 @@ class AutomationEngine:
                 return
             self._last_event_id[rule["id"]] = seq
             trig = rule["trigger"]
-            want = EVENT_TRIGGERS[trig["event"]].get("payload", {})
-            if not all(event.get(k) == v for k, v in want.items()):
+            want = EVENT_TRIGGERS[trig["event"]].get("payload") or {}
+            # 空 payload 会让下面的 all(...) 恒真 = 这条规则匹配**任意**事件。
+            # 契约由 capabilities 的导入断言保证，这里是运行期兜底（见 R9）。
+            if not want or not all(event.get(k) == v for k, v in want.items()):
                 return
             if trig.get("key") and str(event.get("key", "")) != trig["key"]:
                 return
@@ -949,25 +1037,34 @@ class AutomationEngine:
             label = EVENT_TRIGGERS[trig["event"]]["label"]
             self._fire(rule, reason=label)
 
-    def _fire(self, rule: dict, reason: str, force_hold: bool | None = None) -> None:
+    def _fire(self, rule: dict, reason: str, force_hold: bool | None = None) -> bool:
+        """触发一轮执行，返回是否**真的入队**。
+
+        冷却未到、条件不成立且无「否则」动作、上一轮动作锁未释放都不算入队；
+        调用方（「持续 N 秒」）必须据此决定是否记「本轮已触发」，否则会把一次
+        被跳过的触发错当成已完成、整轮持续被静默吞掉。
+        """
         with self._lock:
-            now = time.time()
+            # 冷却与「每 N 秒」同口径使用单调时钟：墙钟被 NTP 校时会凭空产生
+            # 超长/负间隔（见 R10）。
+            now = time.monotonic()
             if now - self._last_fire.get(rule["id"], 0.0) < float(rule.get("cooldown", 3)):
-                return
+                return False
             ctx = self._context()
             hold = self._conditions_hold(rule, ctx) if force_hold is None else force_hold
             branch = rule["actions"] if hold else rule.get("else_actions", [])
             if not branch:
                 # 条件不成立且没写「否则」动作：这条规则这次什么都不做（不记冷却、不记日志）
-                return
-            self._last_fire[rule["id"]] = now
+                return False
             lock = self._action_locks.setdefault(rule["id"], threading.Lock())
             if not lock.acquire(blocking=False):
                 logger.info("[自动化] 规则「%s」上一轮动作未完成，跳过", rule["name"])
-                return
+                return False
+            self._last_fire[rule["id"]] = now
             threading.Thread(
                 target=self._run_actions, args=(rule, branch, hold, reason, lock),
                 name=f"auto-{rule['id']}", daemon=True).start()
+            return True
 
     # ==================== 动作执行 ====================
 
@@ -988,13 +1085,19 @@ class AutomationEngine:
                     ok_all = False
                     detail.append({"cancelled": True, "reason": "规则已更新或服务停止"})
                     break
-                ok, msg = self._perform(action, rule)
-                detail.append({"action": action, "ok": ok, "result": msg})
+                ok, msg = self._perform_with_retry(action, rule)
+                entry = {"action": action, "ok": ok, "result": msg}
                 if not ok:
                     ok_all = False
+                    if _is_safety_action(action):
+                        # 安全动作重试耗尽：整条规则记为「部分成功」，前端/日志
+                        # 能一眼看出是「前半段动作成功、关键安全动作没做到」。
+                        entry["partial"] = True
+                    detail.append(entry)
                     logger.warning("[自动化] 规则「%s」动作失败 %s: %s",
                                    rule["name"], action.get("device"), msg)
                     break
+                detail.append(entry)
             if detail and all(d.get("ok") and "重复指令跳过" in d.get("result", "") for d in detail):
                 return
             self._log(rule, fired=True, conditions_hold=hold, reason=reason,
@@ -1004,6 +1107,26 @@ class AutomationEngine:
                 self._running.pop(rule["id"], None)
             self._execution.cancelled = None
             lock.release()
+
+    def _perform_with_retry(self, action: dict, rule: dict | None) -> tuple[bool, str]:
+        """关键安全动作失败后有界重试；其余动作 fail-fast（见 R5）。
+
+        ``SAFETY_RETRY`` 是**额外**尝试次数（默认共 3 次），间隔 ``SAFETY_RETRY_DELAY``。
+        重试会二次触发副作用，所以只用于关门/关窗/蜂鸣这类「没做到就有安全后果」的
+        动作；关灯/开窗这类失败重试反而可能造成意外动作的动作不在此列。
+        """
+        ok, msg = self._perform(action, rule)
+        if ok or not _is_safety_action(action):
+            return ok, msg
+        name = rule["name"] if rule else "?"
+        for attempt in range(1, SAFETY_RETRY + 1):
+            logger.warning("[自动化] 规则「%s」安全动作 %s 失败（%s），第 %d 次重试",
+                           name, action.get("device"), msg, attempt)
+            time.sleep(SAFETY_RETRY_DELAY)
+            ok, msg = self._perform(action, rule)
+            if ok:
+                return True, f"{msg}（重试第 {attempt} 次成功）"
+        return False, f"{msg}（已重试 {SAFETY_RETRY} 次仍失败）"
 
     def _perform(self, action: dict, rule: dict | None = None) -> tuple[bool, str]:
         device = action["device"]
@@ -1294,7 +1417,7 @@ class AutomationEngine:
             rule = next((r for r in self.rules if r["id"] == rule_id), None)
         if rule is None:
             return {"ok": False, "error": "规则不存在"}
-        self._last_fire[rule["id"]] = time.time()
+        self._last_fire[rule["id"]] = time.monotonic()
         ctx = self._context()
         hold = self._conditions_hold(rule, ctx)
         branch = rule["actions"] if hold else rule.get("else_actions", [])

@@ -33,13 +33,19 @@ COMPARATORS = [
 
 # 可作为「触发/条件」的数据源：id 即规则 JSON 里的 sensor 字段
 # kind: number=数值比较；bool=与 true/false 比较；enum=与给定字符串比较
+# 数值源的 min/max 是保存期的量程校验（schema._clean_comparison）：超出物理量程
+# 的阈值一定恒假，属「能选但永远不成立」的假规则，必须在保存时拦掉。
 CONDITION_SOURCES = {
-    "distance_cm": {"label": "门口超声波距离", "kind": "number", "unit": "cm"},
+    "distance_cm": {"label": "门口超声波距离", "kind": "number", "unit": "cm",
+                    "min": 2, "max": 400},
     "sensor_fresh": {"label": "传感器数据新鲜（10秒内）", "kind": "bool"},
     # ── Module A 周期上报的传感器 ──
-    "temperature": {"label": "温度", "kind": "number", "unit": "°C"},
-    "humidity": {"label": "湿度", "kind": "number", "unit": "%"},
-    "light": {"label": "光照（原始 ADC，越大越暗）", "kind": "number", "unit": "0-1023"},
+    "temperature": {"label": "温度", "kind": "number", "unit": "°C",
+                    "min": -40, "max": 125},
+    "humidity": {"label": "湿度", "kind": "number", "unit": "%",
+                 "min": 0, "max": 100},
+    "light": {"label": "光照（原始 ADC，越大越暗）", "kind": "number", "unit": "0-1023",
+              "min": 0, "max": 1023},
     "light_dark": {"label": "光照状态（暗/亮）", "kind": "bool"},
     "smoke": {"label": "烟雾报警", "kind": "bool"},
     "rain": {"label": "雨水检测", "kind": "bool"},
@@ -55,8 +61,10 @@ CONDITION_SOURCES = {
     "light_status": {"label": "灯状态", "kind": "enum",
                      "choices": ["on", "off"],
                      "choice_labels": {"on": "开", "off": "关"}},
-    "light_brightness": {"label": "灯亮度", "kind": "number", "unit": "%"},
-    "fan_speed": {"label": "风扇转速", "kind": "number", "unit": "%"},
+    "light_brightness": {"label": "灯亮度", "kind": "number", "unit": "%",
+                         "min": 0, "max": 100},
+    "fan_speed": {"label": "风扇转速", "kind": "number", "unit": "%",
+                  "min": 0, "max": 100},
     # ── 空调设定（美的红外遥控，由面板/语音/规则下发后写库）──
     "ac_status": {"label": "空调开关", "kind": "enum",
                   "choices": ["on", "off"],
@@ -65,7 +73,8 @@ CONDITION_SOURCES = {
                 "choices": ["auto", "cool", "heat", "dry", "fan"],
                 "choice_labels": {"auto": "自动", "cool": "制冷", "heat": "制热",
                                   "dry": "抽湿", "fan": "送风"}},
-    "ac_temperature": {"label": "空调设定温度", "kind": "number", "unit": "℃"},
+    "ac_temperature": {"label": "空调设定温度", "kind": "number", "unit": "℃",
+                       "min": 17, "max": 30},
     # ── 硬件在线健康位（15 秒心跳判定）──
     "sensor_online": {"label": "传感器板在线", "kind": "bool"},
     "output_online": {"label": "执行器板在线", "kind": "bool"},
@@ -133,6 +142,24 @@ EVENT_TRIGGERS = {
                                    {"id": "ac", "label": "空调"}],
                        "payload": {"event": "manual_control"}},
 }
+
+
+def _assert_event_payload_contract() -> None:
+    """导入时自检：每条事件触发块都必须带 ``payload.event``。
+
+    ``engine._evaluate_event_rule`` 用 payload 做全等匹配；payload 缺失（或没写
+    ``event``）时 ``all(...)`` 恒真，该触发块会退化成「任意事件都触发」。这里
+    把契约从注释提升为断言，新增事件漏写会在导入期立刻暴露，而不是静默变通配符。
+    """
+    for event_id, spec in EVENT_TRIGGERS.items():
+        if not (spec.get("payload") or {}).get("event"):
+            raise RuntimeError(
+                f"EVENT_TRIGGERS[{event_id!r}] 缺少 payload.event："
+                "空 payload 会让该事件触发块匹配任意事件")
+
+
+_assert_event_payload_contract()
+
 
 # 执行器动作块
 ACTION_DEVICES = {
