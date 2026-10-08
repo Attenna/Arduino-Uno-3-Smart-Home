@@ -91,6 +91,6 @@
 // ---- 设备标识 ----
 #define BOARD_TYPE          "MODULE_B"
 #define BOARD_ROLE          "OUTPUT_NODE"
-#define FW_VERSION          "V2.11"  // V2.11 限制灯带 USB 电流并放宽看门狗瞬时阻塞容限；V2.10 新增 HC-SR04 按需测距；V2.9 新增状态回读与自检
+#define FW_VERSION          "V2.12"  // V2.12 OLED 多页轮播下移固件并改为 B 每 15s 主动拉取；V2.11 限制灯带 USB 电流并放宽看门狗瞬时阻塞容限；V2.10 新增 HC-SR04 按需测距；V2.9 新增状态回读与自检
 
 #endif // CONFIG_B_H

@@ -2,6 +2,30 @@
 
 记录对系统行为 / 接口有影响的变更。新条目置于顶部。
 
+## 未发布 · OLED 多页轮播下移 B 板固件（B 主动拉取）
+
+分支：`feat/oled-b-pull-carousel`
+
+### 背景
+- 旧实现的 OLED 多页轮播跑在**香橙派**侧：每 15s 切页、逐行调用 `oled` 工具，每页向 B 板下发 4~8 条串口命令。这种持续的「Pi 逐行推送 + B 逐行 SPI 刷新」串口流量，是此前怀疑「OLED 刷新导致 B 板复位」的来源。
+- 前置核查：仓库固件**并未禁用 OLED**（`CommandDispatcher::begin()` 无条件 `_oled.begin()`），引脚定义正确（CS=D10 / DC=A0 / RES=A1，SCK=D13 / MOSI=D11 硬件 SPI）；真正关闭的是香橙派侧轮播（`engine.oled_enabled` 默认 `False`）。
+
+### 变更
+- **固件（Module B `V2.12`）**：新增 `src/core/OledCarousel.{h,cpp}`，把 3 页（Environment/Devices/Safety）排版与 15s 轮播硬编码进固件，全部文案走 PROGMEM；`Protocol` 每拍发一帧上行 `{"module":"output","type":"oled_req","id":N}`，并新增按首字符 `@` 分流的紧凑数据帧解析（早于 JSON 解析，不触发 `parse_error`）。
+- **上位机（MCP）**：`mcp_home_server.py` 新增 `_compose_oled_frame` / `_push_oled_frame` 与 `oled_req` 分支；回帧为 8 段逗号分隔的紧凑文本 `@D<id>,<t10>,<h10>,<light>,<smoke>,<rain>,<touch>,<motion>`（温度/湿度 ×10，读不到用 `-32768`，帧长恒 <64B）。写帧用非阻塞 `_b_lock`：拿不到锁即丢帧（B 15s 后重试），绝不阻塞读线程。
+- **上位机（Web）**：停用 `engine` 的逐行轮播线程 `_oled_loop`（`start()` 不再起 `automation-oled` 线程）；OLED 配置与 `oled_carousel` 保留仅作存档与 `{}` 占位符格式化。`automation.html` OLED 面板文案同步说明。
+- **线协议**：新增上行 `oled_req` 与下行 `@D...` 紧凑帧，记录于 `docs/serial-protocol.md`。
+
+### 影响与迁移
+- 串口流量从「每页 4~8 帧」降到「每 15s 2 帧」，从根本上规避逐行 SPI 刷新风险。
+- `oled/show_text`、`oled/clear` 命令保留但会被下一拍切页覆盖（仅调试用）。
+- 需烧录 B 板固件 V2.12 方可见屏上轮播；未升级时上位机收到 `oled_req` 也只回一帧、不影响旧行为。
+
+### 验收
+- 单测：新增 `test_oled_pull.py`（9 项）、`test_oled_startup.py` 新增 1 项；全量套件仅剩与基线一致的 6 项环境 ImportError。
+- 固件：`pio run` 编译通过（RAM 80.9% / Flash 86.1%）。
+- 真机：待分支验收（香橙派）。
+
 ## 2026-10-09 · 人脸识别历史记录入库修复（#75）
 
 分支：`fix/75-face-event-persistence`。Issue：#75「人脸识别历史记录入库不及时、有丢失」。

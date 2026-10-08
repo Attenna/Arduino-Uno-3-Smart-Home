@@ -691,6 +691,54 @@ class HomeController:
                     return index
         return None
 
+    def _compose_oled_frame(self, req_id: int) -> bytes:
+        """把 A 板最新快照压成一帧紧凑 OLED 数据（Pi→B，**非 JSON**）。
+
+        格式：``@D<id>,<t10>,<h10>,<light>,<smoke>,<rain>,<touch>,<motion>\\n``
+        温度/湿度 ×10（读不到用哨兵 -32768），布尔转 0/1。帧长恒 <64B，
+        压进 Uno 的串口 RX 缓冲。
+        """
+        with self._snapshot_lock:
+            snap = dict(self._snapshot)
+
+        def tenths(key):
+            v = snap.get(key)
+            if v is None:
+                return -32768
+            try:
+                return int(round(float(v) * 10))
+            except (TypeError, ValueError):
+                return -32768
+
+        try:
+            light = max(0, min(1023, int(snap.get("light") or 0)))
+        except (TypeError, ValueError):
+            light = 0
+        bits = ["1" if snap.get(k) else "0"
+                for k in ("smoke", "rain", "touch", "motion")]
+        return (f"@D{int(req_id) & 0xFFFF},{tenths('temperature')},"
+                f"{tenths('humidity')},{light},"
+                f"{bits[0]},{bits[1]},{bits[2]},{bits[3]}\n").encode("ascii")
+
+    def _push_oled_frame(self, req_id: int) -> None:
+        """回应 B 板的 OLED 数据拉取（B 每 15s 一次 oled_req）。
+
+        用非阻塞方式取 `_b_lock`：若此刻正有命令在等响应（持锁），**直接丢帧**——
+        B 板 15s 后自然重试下一拍。绝不阻塞读线程，也全程不碰 `_b_resp_lock`，
+        与 `_send_b` 无死锁环。先组帧（取快照锁）再取 b 锁，避免锁嵌套。
+        """
+        if self.ser_b is None:
+            return
+        frame = self._compose_oled_frame(req_id)
+        if not self._b_lock.acquire(blocking=False):
+            return
+        try:
+            self.ser_b.write(frame)
+        except Exception as e:                       # noqa: BLE001
+            print(f"[B] OLED 数据帧写入失败: {e}", file=sys.stderr, flush=True)
+        finally:
+            self._b_lock.release()
+
     def _dispatch_b_frame(self, msg: dict, text: str) -> None:
         """按 type 分类一帧：response/state 唤醒等待者，ready/alert 记账并上报。"""
         mtype = msg.get("type")
@@ -752,6 +800,10 @@ class HomeController:
             self._b_last_alert = text
             self._b_last_alert_ts = time.time()
             print(f"[B] ⚠ 告警: {text}", file=sys.stderr, flush=True)
+        elif mtype == "oled_req":
+            # B 板轮播到期，主动索取显示数据：回一帧紧凑数据（不占命令等待者，
+            # 也不刷新 state 时间戳，因此不影响空闲心跳判据）。
+            self._push_oled_frame(msg.get("id", 0))
         else:
             print(f"[B] 未知帧: {text[:120]}", file=sys.stderr, flush=True)
 

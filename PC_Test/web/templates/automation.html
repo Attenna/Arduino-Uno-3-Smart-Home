@@ -191,8 +191,12 @@
                     <div class="card">
                         <div class="card-header"><h3>🖥️ OLED 轮播</h3></div>
                         <div class="card-body" style="display:flex;flex-direction:column;gap:10px">
+                            <div style="font-size:13px;color:var(--text-secondary)">
+                                屏上 3 页（Environment / Devices / Safety）现由 <b>B 板固件每 15 秒</b>
+                                主动拉取传感器数据并本地渲染，香橙派不再逐行推送。此处设置仅存档，不再驱动屏幕。
+                            </div>
                             <label style="display:flex;align-items:center;gap:8px;font-size:14px">
-                                <input type="checkbox" id="oledEnabled"> 启用轮播
+                                <input type="checkbox" id="oledEnabled"> 启用轮播（存档）
                             </label>
                             <label style="display:flex;align-items:center;gap:8px;font-size:14px">
                                 每

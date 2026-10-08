@@ -128,7 +128,9 @@ class AutomationEngine:
         # 最近一次启动的旧规则迁移结果（页面提示一次后由 API 消费清空）
         self._migration_info: dict | None = None
 
-        # ── OLED 轮播（默认关闭，避免扰民） ──
+        # ── OLED（V2.12：屏上 3 页 Environment/Devices/Safety 已由 B 板固件每 15s
+        # 主动拉取渲染，香橙派不再逐行推送。此处配置仅存档；`_oled_carousel` 仍供
+        # {} 占位符格式化与手动 oled 工具/规则使用） ──
         self.oled_path = Path(rules_path).parent / "oled_carousel.json"
         self.oled_enabled = False
         self.oled_interval = OLED_MIN_INTERVAL
@@ -136,7 +138,6 @@ class AutomationEngine:
         self._oled_config_loaded = False
         self._oled_carousel = OledCarousel(emitter=self._oled_emit,
                                            on_log=self._oled_log)
-        self._oled_thread: threading.Thread | None = None
 
         # ── 自动化下发去重（原 home_mode 的 _last_fan/_fan_memory，状态机拆除后留在引擎）──
         # 只记「最近一次自动化下发的值」，同值重放不再占串口；手动/语音不经这里，互不影响
@@ -173,9 +174,8 @@ class AutomationEngine:
         self._tick_thread = threading.Thread(
             target=self._tick_loop, name="automation-tick", daemon=True)
         self._tick_thread.start()
-        self._oled_thread = threading.Thread(
-            target=self._oled_loop, name="automation-oled", daemon=True)
-        self._oled_thread.start()
+        # OLED 轮播线程已移除：屏上内容现由 B 板固件每 15s 主动拉取渲染，
+        # 香橙派不再逐行下发（避免持续串口流量触发 B 板复位）。
         logger.info("[自动化] 引擎已启动，规则 %d 条", len(self.rules))
 
     def stop(self) -> None:
@@ -814,18 +814,6 @@ class AutomationEngine:
                     self._oled_carousel.interval = self.oled_interval
             except Exception as e:                   # noqa: BLE001
                 logger.debug("[自动化] OLED 配置读取失败: %s", e)
-
-    def _oled_loop(self) -> None:
-        """独立轮播线程：仅当启用时填充数据源并 tick。"""
-        while not self._stopping:
-            time.sleep(0.5)
-            try:
-                if not self.oled_enabled:
-                    continue
-                self._oled_carousel.set_data(self._oled_data())
-                self._oled_carousel.tick()
-            except Exception as e:                   # noqa: BLE001
-                logger.debug("[自动化] OLED 轮播异常: %s", e)
 
     def _oled_data(self) -> dict:
         """A 板快照 + B 板执行器状态 + 最近自动化，组成扁平数据源。"""
