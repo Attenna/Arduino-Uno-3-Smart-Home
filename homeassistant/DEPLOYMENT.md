@@ -108,7 +108,7 @@ docker compose logs -f homeassistant
 ### 3.3 检查实体与状态
 
 - HA 页面「设置 → 设备与服务 → MQTT」看集成是否正常；
-- 开发者工具 → 状态，搜索 `sensor.temperature` 等，看数值是否更新（每 2s 随 A 板上报刷新）；
+- 开发者工具 → 状态，搜索 `sensor.temperature` 等，看数值是否更新（默认每 1s 随 A 板上报刷新）；
 - 开发者工具 → 服务，手动调用 `switch.turn_on`（Door）验证命令链路到 B 板。
 
 ### 3.4 常见问题

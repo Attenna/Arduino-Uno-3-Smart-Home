@@ -26,7 +26,7 @@ PC_Test/
 ├── voice_context_client.py #    语音编排器使用的 MCP stdio 客户端
 ├── qwen_server.py          #    本地 Qwen2.5 OpenAI 兼容服务（llama.cpp 后端；离线兜底，默认不用）
 ├── download_qwen.py        #    Qwen2.5 权重下载器（ModelScope 国内渠道）
-├── mcp_home_server.py      # 智能家居 MCP server（⑤ 的 stdio 子进程：独占串口，暴露 13 个工具；④ 经 ⑤ 用它）
+├── mcp_home_server.py      # 智能家居 MCP server（⑤ 的 stdio 子进程：独占串口，暴露 14 个工具；④ 经 ⑤ 用它）
 ├── tts_player.py           #    流式 TTS 播放器（Sherpa-ONNX VITS 本地合成）
 ├── sherpa_listener.py      #    Sherpa-ONNX KWS/ASR 前端封装
 ├── voice_config.yaml       #    语音模式配置（web 网关地址/LLM 引擎/唤醒词/TTS 音色）
@@ -199,7 +199,7 @@ py -3.13 camera_test.py --cam 0 --frames 10
 
 对着麦克风说唤醒词「**Hey Bota**」（或直接键盘打字 / HTTP 下发指令），
 再说一句指令（如「把灯调成蓝色」「现在多少度」），
-**Qwen2.5 大模型**理解意图后，通过 ⑤ Web 的硬件网关控制 Arduino Module B，回复用流式 TTS 播放。
+**Qwen2.5 大模型**理解意图后，通过 ⑤ Web 的硬件网关控制 Arduino（`light` 走 A 板 A0，其余执行器走 Module B），回复用流式 TTS 播放。
 
 **数据流**：
 
@@ -210,7 +210,7 @@ py -3.13 camera_test.py --cam 0 --frames 10
 用户指令 ──上下文 MCP（读取确认历史）──▶ Qwen3.5 流式 + 工具调用──▶ VITS TTS
 本轮结果 ──上下文 MCP（记录回答和真实工具结果）◀──────────────────────────┘
                                   └─ tool_calls ──HTTP──▶ ⑤ web POST /api/hardware/tool
-                                                            └─ MCP ──▶ mcp_home_server ──▶ Module B
+                                                            └─ MCP ──▶ mcp_home_server ──▶ 板子（light→A，其余→B）
 ```
 
 语音前端为 **Sherpa-ONNX**（全离线，同栈可直接移植香橙派）：
@@ -218,10 +218,11 @@ KWS 关键词声学唤醒（zipformer-wenetspeech 3.3M）+ 流式 ASR（streamin
 自带端点检测）+ 本地 VITS 语音合成（vits-melo-tts-zh_en）。
 模型一键下载：`py -3.13 download_sherpa_models.py`（KWS ~31MB / ASR ~1GB / TTS ~160MB，国内镜像加速）。
 
-`mcp_home_server.py` 是 **⑤ web 的 stdio 子进程**，由它独占 A/B 两串口，暴露 13 个工具：
-`light / door / window / fan / buzzer / oled / display / ir / ac / get_sensor_status /
-get_serial_health / get_output_state / self_test`。
-（`ir` 为红外发射，发 NEC 码控家电；`ac` 生成美的空调状态帧并走 `send_midea` 发射；
+`mcp_home_server.py` 是 **⑤ web 的 stdio 子进程**，由它独占 A/B 两串口，暴露 14 个工具：
+`light / door / window / fan / buzzer / oled / display / ir / ac / get_distance /
+get_sensor_status / get_serial_health / get_output_state / self_test`。
+（`light` 路由到 **Module A**（A0 灯带），其余执行器/显示工具与 `get_distance`/`self_test` 路由到 **Module B**；
+`ir` 为红外发射，发 NEC 码控家电；`ac` 生成美的空调状态帧并走 `send_midea` 发射；
 `display` 对应已移除的 TM1637 数码管，属保留接口，当前固件会返回 error；
 `get_output_state` / `self_test` 是只读诊断：前者给 B 板硬件回读，后者给固件侧自检
 ——排查「灯不亮 / 风扇自转」时先用它们把故障定位到层次。）
@@ -374,7 +375,7 @@ py -3.13 voice_assistant.py --gateway http://127.0.0.1:5000 --llm-mode local --m
 启动后说「Hey Bota」（发音贴近「黑波塔」）→ 听到滴声 → 说指令；
 也可以直接在终端打字回车发送指令。例如：
 
-- 「把灯调成蓝色」→ Module B 灯变蓝 + TTS「已为您把灯调成蓝色」
+- 「把灯调成蓝色」→ A 板灯带变蓝 + TTS「已为您把灯调成蓝色」
 - 「现在多少度」→ 调 `get_sensor_status` → TTS 回读数
 - 「开门」「关风扇」「蜂鸣器响三声」→ 对应工具执行
 
@@ -539,7 +540,7 @@ py -3.13 run_web.py --no-serial
 
 ```text
 浏览器 ──HTTP── Flask(web/ 蓝图) ──MCP stdio── mcp_home_server.py ──USB── A/B 板
-    │                 │                        （独占串口，13 个工具）
+    │                 │                        （独占串口，14 个工具）
     │                 ├── 每 2s get_sensor_status 轮询 → data/smart_home.db
     │                 │        └─ 每 10s 刷新 get_serial_health / B 板回读
     │                 └── GET /api/hardware/tools ＋ POST /api/hardware/tool

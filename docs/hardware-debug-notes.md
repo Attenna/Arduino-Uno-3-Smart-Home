@@ -62,6 +62,9 @@ I2C 时序在错误引脚上的乱翻信号窜进邻近的 D4（灯带数据线�
 
 **如何区分屏是 I2C 还是 SPI**：看引脚数——I2C 屏只有 4 根（VCC/GND/SCL/SDA）；SPI 屏有 7 根（VCC/GND/SCK/SDA/RES/DC/CS）。
 
+> 历史备注：本节记录当年 B 板 D4 走灯带的情形。灯带数据线现已迁到 **A 板 A0**
+> （`light` 命令由 A 板执行），新接线请以 [module-a-sensor/README.md](../module-a-sensor/README.md) 引脚表为准。
+
 ### 2.4 型号 SH1106 vs SSD1306
 
 **现象**：接线正确但白屏 / 显示错乱 / 有残影。

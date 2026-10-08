@@ -3,7 +3,7 @@
 > 面向：在 **Linux 主机** 上编译烧录 Module B 固件、安装接线、调试、扩展新执行器。
 > 基础信息（用途/引脚/命令表）见 [README.md](README.md) 与 [docs/serial-protocol.md](../docs/serial-protocol.md)。
 
-**功能一句话**：Module B 是一块 Arduino Uno，当前固件 `V2.11` 带 7 类现役执行器/显示设备，接收命令并执行硬件动作，不做业务判断。TM1637 数码管已于 2026-09 正式版裁剪；红外支持 NEC 与美的空调长码；V2.11 使用 4 秒看门狗并限制灯带 USB 电流，避免短时 OLED/SPI 拥塞或满白灯带负载触发复位（见 [docs/serial-protocol.md](../docs/serial-protocol.md) §4.4）。
+**功能一句话**：Module B 是一块 Arduino Uno，当前固件 `V2.11` 带 6 类现役执行器/显示设备（门/窗舵机、风扇、蜂鸣器、OLED、红外）并支持 HC-SR04 测距输入，接收命令并执行硬件动作，不做业务判断。灯带数据线现接 **A 板 A0**，`light` 命令由 A 板执行。TM1637 数码管已于 2026-09 正式版裁剪；红外支持 NEC 与美的空调长码；V2.11 使用 4 秒看门狗并限制灯带 USB 电流，避免短时 OLED/SPI 拥塞或满白灯带负载触发复位（见 [docs/serial-protocol.md](../docs/serial-protocol.md) §4.4）。
 
 ---
 
@@ -76,7 +76,7 @@ JSON 形式同样正常：`{"cmd":"light","action":"red"}`。
 
 > TM1637 已移除；D5 接 HC-SR04 Echo，D6 接 Trig。VCC 接 5V，GND 共地。
 > ⚠️ 电源共地是硬性要求：所有独立电源的 **GND 必须与 Uno GND 相连**。
-> ⚠️ 灯带数据线 D4 与供电地线尽量分开走，避免刷新 OLED 时打乱灯带。
+> ⚠️ 灯带数据线（现接 A 板 A0）与供电地线尽量分开走，避免刷新 OLED 时打乱灯带。
 
 ### 2.2 接线总表（引脚以 `src/Config.h` 为准）
 
@@ -84,7 +84,7 @@ JSON 形式同样正常：`{"cmd":"light","action":"red"}`。
 |--------|-----------|------|------|
 | 门舵机 SG90 | D2 | 独立 5V | 开=90° / 关=0° |
 | 窗舵机 SG90 | D3 | 独立 5V | 开=120° / 关=0° / 正常=45° |
-| NeoPixel 灯带 | D4 | 5V | 8 颗，需加 300Ω 串联电阻防上电毛刺 |
+| NeoPixel 灯带 | 数据线接 **A 板 A0** | 5V | 由 A 板执行 `light` 命令；B 板保留驱动但不由网关路由 |
 | 风扇驱动（L298N/TB6612） | INA=D8, INB=D7 | 独立电源 | **D8/D7 非 PWM**，退化为开关（0=停，非 0=全速） |
 | 蜂鸣器 | D9 | 5V | `BUZZER_ACTIVE_LOW=1` 时低电平触发（有源蜂鸣器） |
 | SH1106 OLED（SPI 4 线） | SCK=D13, MOSI=D11, CS=D10, DC=A0, RES=A1 | 5V/3.3V | **SPI 接口非 I2C** |

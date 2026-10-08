@@ -9,8 +9,8 @@
 >
 > | 板 | 固件版本 | 说明 |
 > |----|---------|------|
-> | Module A | `V2.1` | 移除超声波 / 土壤湿度，新增矩阵键盘 |
-> | Module B | `V2.10` | HC-SR04 按需测距（Trig D6 / Echo D5）； 移除 TM1637 数码管；红外支持 NEC + 美的空调长码；风扇引脚每 loop 自愈；响应回显请求 `id`（V2.6）；看门狗 `WDTO_2S`（V2.7，固件挂死 2s 自动复位）；灯带全局亮度 60→255（V2.8）；**命令响应/就绪帧回附固件状态快照 `state`，新增 `system/selftest` 自检**（V2.9） |
+> | Module A | `V2.2` | 移除超声波 / 土壤湿度，新增矩阵键盘；**A0 接管 8 颗 NeoPixel 灯带，`light` 命令由 A 板执行** |
+> | Module B | `V2.11` | HC-SR04 按需测距（Trig D6 / Echo D5）； 移除 TM1637 数码管；红外支持 NEC + 美的空调长码；风扇引脚每 loop 自愈；响应回显请求 `id`（V2.6）；看门狗 `WDTO_4S`（V2.11，V2.7 曾为 `WDTO_2S`，固件挂死 4s 自动复位）；命令响应/就绪帧回附固件状态快照 `state`，新增 `system/selftest` 自检（V2.9）；灯带电流限流与看门狗容差（V2.11）。**灯带数据线已移至 A 板 A0**，`light` 命令不再由网关下发到 B 板 |
 >
 > 下文中，被裁剪的字段/命令均以 **「（已裁剪）」** 标注。
 
@@ -23,12 +23,12 @@
 上电时发送一次（**含 `role` 字段**）：
 
 ```json
-{"module":"sensor","type":"ready","board":"MODULE_A","role":"SENSOR_NODE","version":"V2.1"}
+{"module":"sensor","type":"ready","board":"MODULE_A","role":"SENSOR_NODE","version":"V2.2"}
 ```
 
-### 1.2 周期状态上报（默认每 2s）
+### 1.2 周期状态上报（默认每 1s）
 
-`V2.1` 默认裁剪配置下的实际上报（**不含** `distance` / `soil_*` 字段）：
+`V2.2` 默认裁剪配置下的实际上报（**不含** `distance` / `soil_*` 字段）：
 
 ```json
 {
@@ -95,19 +95,40 @@
 
 ```json
 {"module":"sensor","type":"response","result":"ok","interval":5000}
-{"module":"sensor","type":"who","board":"MODULE_A","role":"SENSOR_NODE","version":"V2.1"}
+{"module":"sensor","type":"who","board":"MODULE_A","role":"SENSOR_NODE","version":"V2.2"}
 ```
 
 ---
 
-## 2. Module A ← 下行（可选，纯文本控制命令）
+## 2. Module A ← 下行
 
-Module A 原则上"只报告"，下行仅支持少量**无业务含义**的控制命令（不改变其"不做决定"的定位）：
+Module A 以"只报告"为主，另按命令驱动 **A0 的 8 颗 NeoPixel 灯带**（仍不做业务判断）。
+
+### 2.1 灯光控制（A0 灯带）
+
+网关的 `light` 工具（面板 / 语音 / 自动化）**恒路由到 A 板**。固件接受两种等价格式：
+
+```json
+{"cmd":"light","action":"rgb","r":255,"g":80,"b":10,"value":128,"count":4,"id":7}
+```
+
+避开 Uno 64 字节串口接收缓冲的紧凑文本帧：
+```text
+L,<code>,<value>,<r>,<g>,<b>,<count>,<id>
+```
+`<code>`：`O`=关灯、`W`=白光、`P`=指定 RGB。支持的 `action`：`off` / `white` / `night` /
+`red` / `green` / `blue` / `yellow` / `purple` / `cyan` / `rgb` / `pixels`（**无 `temp`**）。
+响应形如：
+```json
+{"module":"sensor","type":"response","result":"ok","cmd":"light","id":7,"state":{"light":128,"lit":4}}
+```
+
+### 2.2 调试命令（纯文本）
 
 | 命令 | 作用 |
 |------|------|
 | `REPORT` 或 `STATUS` | 立即上报一次完整状态 |
-| `INTERVAL:<毫秒>` | 设置周期上报间隔（200~60000ms） |
+| `INTERVAL:<毫秒>` | 设置周期上报间隔（200~60000ms，默认 1000） |
 | `WHO` | 返回设备标识 |
 
 > 命令不区分大小写。开门密码（如 `1111`）的业务校验在香橙派 MCP 侧完成，不在固件内。
@@ -115,6 +136,8 @@ Module A 原则上"只报告"，下行仅支持少量**无业务含义**的控�
 ---
 
 ## 3. Module B（Output Node）← 下行（JSON 命令）
+
+> 下表除 **`light`** 外都由 Module B 执行；**`light` 现由 Module A 执行**（灯带接 A0，见 §2.1）。
 
 命令格式统一为 `{cmd, action, ...}`：
 
@@ -144,7 +167,7 @@ Module A 原则上"只报告"，下行仅支持少量**无业务含义**的控�
 | `fan` | `off` / `stop` | - | 保留 | 停止 |
 | `light` | `white` | `value` 0~255 | 保留 | 白光亮度（整条灯带）；命令由 Module A 执行 |
 | `light` | `night` | `value` 0~255（缺省 `LIGHT_NIGHT_LEVEL`=60） | 保留 | 夜灯：只点亮居中 `LIGHT_NIGHT_COUNT`（默认 2）颗灯珠，其余保持熄灭 |
-| `light` | `temp` | `temp` 2700~6500(K)，`value` 0~255（缺省 255） | 保留 | 色温白光：`temp` 定冷暖，`value` 定亮度（查表插值，无浮点运算） |
+| `light` | `temp` | `temp` 2700~6500(K)，`value` 0~255（缺省 255） | **已停用** | 色温白光。灯带移至 A 板后，A 板固件无 `temp` 分支，网关下发会返回 error（面板已移除色温入口） |
 | `light` | `red` / `green` / `blue` / `yellow` / `purple` / `cyan` | - | 保留 | 预设颜色（固定亮度，不带 `value`） |
 | `light` | `rgb` | `r`,`g`,`b`，`value` 0~255（缺省 255） | 保留 | 自定义颜色；`value` 是整体亮度缩放 |
 | `light` | `off` | - | 保留 | 关灯 |
@@ -201,7 +224,7 @@ Module A 原则上"只报告"，下行仅支持少量**无业务含义**的控�
 ### 4.1 就绪
 
 ```json
-{"module":"output","type":"ready","board":"MODULE_B","role":"OUTPUT_NODE","version":"V2.9","state":{"door":"closed","window":"normal","fan":0,"light":0,"buzzer":"off"}}
+{"module":"output","type":"ready","board":"MODULE_B","role":"OUTPUT_NODE","version":"V2.11","state":{"door":"closed","window":"normal","fan":0,"light":0,"buzzer":"off"}}
 ```
 
 ### 4.2 命令响应
@@ -229,7 +252,7 @@ Module A 原则上"只报告"，下行仅支持少量**无业务含义**的控�
 下发 `{"cmd":"system","action":"selftest"}`，固件回一帧：
 
 ```json
-{"module":"output","type":"selftest","version":"V2.9","uptime_ms":9904,"ok":2,"err":0,
+{"module":"output","type":"selftest","version":"V2.11","uptime_ms":9904,"ok":2,"err":0,
  "fan":{"speed":0,"reclaim":0,"pin":[1,0,1,0]},
  "light":{"level":255,"bright":255,"shows":1,"lit":0,"d4":[1,1,0]},"buzzer":"off"}
 ```
@@ -251,6 +274,9 @@ Module A 原则上"只报告"，下行仅支持少量**无业务含义**的控�
 >
 > **复位原因不可读（optiboot）**：引导程序进入应用前已清 `MCUSR`，固件读到的恒为 0，
 > 因此不提供「复位原因」字段，避免给出恒为 unknown 的假信息。
+>
+> `light.*` 字段反映的是 **B 板保留的灯带驱动**；实际 8 颗灯带接在 A 板 A0，
+> 由 `light` 命令经 A 板驱动。
 
 ---
 
@@ -272,9 +298,9 @@ Trig=D6、Echo=D5；仅 `valid=true` 时 `distance_cm` 可用。
 
 ### 八灯珠分档（pixels）
 
-新增原子指令：`{"cmd":"light","action":"pixels","count":4,"r":255,"g":128,"b":0,"value":128}`。
+原子指令：`{"cmd":"light","action":"pixels","count":4,"r":255,"g":128,"b":0,"value":128}`。
 `count` 为 1~8，面板提供 2/4/6/8 四档；灯珠居中点亮，剩余灯珠清零。
 `r/g/b` 为 0~255，`value` 为整体亮度 0~255（缺省 255）。颜色与数量独立。
-A 板无需修改。B 板必须更新此版本固件，网关同步更新 `light` 工具。
-旧 B 板不识别 `pixels` 时返回失败，服务端不能更新灯的状态，也不得降级为全亮。
-旧 `white/night/temp/rgb/off` 协议保留兼容，面板已移除色温入口。
+`pixels` 由 **Module A（固件 V2.2）** 执行（紧凑帧的 `P` 分支），B 板无需改动。
+A 板不识别 `pixels` 时返回失败，服务端不能更新灯的状态，也不得降级为全亮。
+`white/night/rgb/off` 协议保留；`temp` 因 A 板无对应分支已停用，面板已移除色温入口。
