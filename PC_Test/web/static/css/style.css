@@ -2737,6 +2737,45 @@ body {
 .maint-result:empty { display: none; }
 .card-footer .foot-note { margin-left: 12px; color: var(--text-secondary); font-size: 13px; }
 
+/* 通知与提醒：开关（复用 editor-toggle，全站统一） */
+.editor-toggle {
+    margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    user-select: none;
+}
+.editor-toggle input[type="checkbox"] {
+    appearance: none;
+    -webkit-appearance: none;
+    flex: 0 0 auto;
+    position: relative;
+    width: 38px; height: 22px;
+    border-radius: 999px;
+    background: var(--border-color);
+    cursor: pointer;
+    transition: var(--transition);
+}
+.editor-toggle input[type="checkbox"]::after {
+    content: "";
+    position: absolute;
+    top: 3px; left: 3px;
+    width: 16px; height: 16px;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 1px 3px rgba(120, 95, 60, 0.28);
+    transition: var(--transition);
+}
+.editor-toggle input[type="checkbox"]:checked { background: var(--accent-cyan); }
+.editor-toggle input[type="checkbox"]:checked::after { transform: translateX(16px); }
+.editor-toggle input[type="checkbox"]:focus-visible { outline: 2px solid var(--accent-cyan); outline-offset: 2px; }
+
+/* 快捷控制卡片：焦糖棕描边，与远程面板呼应 */
+.card-remote { border-color: rgba(169, 116, 63, 0.30); }
+
 /* ==================== 登录页 ==================== */
 .login-shell { display: grid; grid-template-columns: 60fr 40fr; min-height: 100vh; }
 
