@@ -10,6 +10,7 @@
 | | [serial-protocol.md](serial-protocol.md) | 串口 JSON 协议规范（A 上报 / B 命令，含固件裁剪说明） |
 | | [development-guide.md](development-guide.md) | 开发规范（依赖方向、命名、禁止跨层、PC_Test/Web 前端硬约定） |
 | | [git-workflow.md](git-workflow.md) | 多人并行开发、分支、worktree、提交、评审和部署规范 |
+| | [CHANGELOG.md](CHANGELOG.md) | 版本变更记录（光照语义反转、接口字段规范化等） |
 | **接口 / 配置** | [api.md](api.md) | 全部编程接口（Web REST / 语音 HTTP / MCP 工具 / LLM / 摄像头） |
 | | [ultrasonic.md](ultrasonic.md) | B 板 HC-SR04 接线、实时测距、HTTP/MCP 调用和异常处理 |
 | | [extension-guide.md](extension-guide.md) | 二次开发接口指南（对外表面、四条扩展缝、加积木的清单与落地顺序） |

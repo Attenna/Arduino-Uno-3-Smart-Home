@@ -431,20 +431,25 @@ class SmartHomeDB:
 
         最近 1 小时保留每秒原始读数；更长的 7 天内窗口按时间分桶，避免一次把
         数十万点送进浏览器；超过原始保留期后与 sensor_hourly 小时归档拼接。
+
+        返回数组，元素字段：``timestamp``（ISO-8601 UTC，秒级，带 Z）、
+        ``light_raw``（取整后的 ADC 值）、``samples``（该桶样本数）。
         """
         hours = max(1, min(int(hours), 720))
         since = (datetime.now(timezone.utc)-timedelta(hours=hours)).strftime('%Y-%m-%d %H:%M:%S')
         if hours > self.HISTORY_RETENTION_DAYS * 24:
             return self._rows(
-                "SELECT hour_start AS timestamp, light_raw, samples "
+                "SELECT strftime('%Y-%m-%dT%H:00:00Z',hour_start) AS timestamp, "
+                "CAST(ROUND(light_raw) AS INTEGER) light_raw, samples "
                 "FROM sensor_hourly WHERE hour_start>? UNION ALL "
-                "SELECT strftime('%Y-%m-%d %H:00:00',received_at) AS timestamp, "
-                "AVG(light_raw),COUNT(*) FROM sensor_history "
+                "SELECT strftime('%Y-%m-%dT%H:00:00Z',received_at) AS timestamp, "
+                "CAST(ROUND(AVG(light_raw)) AS INTEGER),COUNT(*) FROM sensor_history "
                 "WHERE received_at>? GROUP BY strftime('%Y-%m-%d %H:00:00',received_at) "
                 "ORDER BY timestamp DESC LIMIT 5000", (since, since))
         bucket_seconds = 1 if hours == 1 else max(5, hours*3600//5000)
         return self._rows(
-            "SELECT MIN(received_at) timestamp, AVG(light_raw) light_raw, COUNT(*) samples "
+            "SELECT strftime('%Y-%m-%dT%H:%M:%SZ',MIN(received_at)) timestamp, "
+            "CAST(ROUND(AVG(light_raw)) AS INTEGER) light_raw, COUNT(*) samples "
             "FROM sensor_history WHERE received_at>? "
             "GROUP BY CAST(strftime('%s',received_at) AS INTEGER)/? "
             "ORDER BY timestamp DESC LIMIT 5000", (since, bucket_seconds))

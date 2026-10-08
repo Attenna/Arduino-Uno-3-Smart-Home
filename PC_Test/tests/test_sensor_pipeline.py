@@ -46,8 +46,12 @@ class IngestToleranceTests(unittest.TestCase):
             c.execute("INSERT INTO sensor_history(received_at,light_raw) VALUES(?,?)",
                       ((now - timedelta(seconds=1)).strftime('%Y-%m-%d %H:%M:%S'), 654))
         rows = self.db.get_light_level_history(hours=1)
-        self.assertEqual([row["light_raw"] for row in rows], [654.0, 321.0])
+        self.assertEqual([row["light_raw"] for row in rows], [654, 321])
         self.assertEqual([row["samples"] for row in rows], [1, 1])
+        # 返回格式规范化：ISO-8601 UTC 秒级带 Z，light_raw 取整。
+        for row in rows:
+            self.assertRegex(row["timestamp"], r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+            self.assertIsInstance(row["light_raw"], int)
 
     def test_out_of_range_field_nulls_only_that_column(self):
         # 温度毛刺 999：整帧必须照入库，只把 temperature 列写 NULL
@@ -115,6 +119,12 @@ class RetentionTests(unittest.TestCase):
         self.assertAlmostEqual(hourly[0]["temperature"], 21.0)
         self.assertAlmostEqual(hourly[0]["light_raw"], 200.0)
         self.assertEqual(hourly[0]["samples"], 2)
+
+        # 光照历史长窗口（>7 天）拼接 sensor_hourly 归档，字段同样规范化。
+        light_agg = self.db.get_light_level_history(hours=24 * 14)
+        self.assertTrue(light_agg)
+        self.assertTrue(all(isinstance(r["light_raw"], int) for r in light_agg))
+        self.assertRegex(light_agg[-1]["timestamp"], r"^\d{4}-\d{2}-\d{2}T\d{2}:00:00Z$")
 
         # 超过保留窗口必须同时包含归档小时与最近的原始数据。
         agg = self.db.get_temperature_history(hours=24 * 14)

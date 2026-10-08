@@ -4,7 +4,7 @@
 温度和光照使用回差，周期复查确保人员进入时立即响应当前环境。
 """
 
-PRESETS_VERSION = 7
+PRESETS_VERSION = 8
 
 DEFAULT_RULES = [{'preset': 'access_open_door',
   'name': '门禁通过：开门并在10秒后关门',
@@ -116,24 +116,24 @@ DEFAULT_RULES = [{'preset': 'access_open_door',
   'match': 'all',
   'cooldown': 0},
  {'preset': 'light_dark',
-  'name': '有人：光照低于400开灯',
+  'name': '有人：光照偏暗（暗/亮二态）开灯',
   'enabled': True,
   'trigger': {'kind': 'interval', 'seconds': 2},
   'conditions': [{'sensor': 'sensor_fresh', 'op': '==', 'value': True},
                  {'sensor': 'g:有人在家', 'op': '==', 'value': True},
                  {'sensor': 'g:手动优先_灯', 'op': '==', 'value': False},
-                 {'sensor': 'light', 'op': '<', 'value': 400}],
+                 {'sensor': 'light_dark', 'op': '==', 'value': True}],
   'actions': [{'device': 'light', 'status': 'on', 'brightness': 100}],
   'match': 'all',
   'cooldown': 0},
  {'preset': 'light_off',
-  'name': '有人：光照高于700关灯',
+  'name': '有人：光照偏亮（暗/亮二态）关灯',
   'enabled': True,
   'trigger': {'kind': 'interval', 'seconds': 2},
   'conditions': [{'sensor': 'sensor_fresh', 'op': '==', 'value': True},
                  {'sensor': 'g:有人在家', 'op': '==', 'value': True},
                  {'sensor': 'g:手动优先_灯', 'op': '==', 'value': False},
-                 {'sensor': 'light', 'op': '>', 'value': 700}],
+                 {'sensor': 'light_dark', 'op': '==', 'value': False}],
   'actions': [{'device': 'light', 'status': 'off', 'brightness': 0}],
   'match': 'all',
   'cooldown': 0},

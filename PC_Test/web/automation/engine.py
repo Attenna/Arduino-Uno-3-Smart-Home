@@ -67,6 +67,9 @@ class AutomationEngine:
         self._lock = threading.RLock()          # 保护规则热更新
         self._snapshot: dict = {}               # A 板最新一帧（原始字段名）
         self._snapshot_ts: float = 0.0
+        # 光照明暗判定（带回差）：raw≥730 判暗、raw≤670 判亮，区间内维持上一状态。
+        # light_dark 作为布尔源供积木引用，回差避免灯光回照导致的自激抖动。
+        self._light_dark: bool | None = None
         self.doorway = DoorwayDistance()
         self.capture_photo = None
         # 事件队列（带序号），规则按各自 last_event_id 消费
@@ -337,9 +340,9 @@ class AutomationEngine:
             if pid in self._REMOVED_PRESETS:
                 dropped.append(name)
                 continue
-            if (presets_version == 6 and pid in v4_by_pid
+            if (presets_version >= 6 and pid in v4_by_pid
                     and pid not in {"light_dark", "light_off"}):
-                # v7 只调整光敏回差阈值；保留其他现有预设的全部用户配置。
+                # v7/v8 只调整光敏二分阈值；保留其他现有预设的全部用户配置。
                 out.append(rule)
                 continue
             if pid in v4_by_pid and presets_version < PRESETS_VERSION:
@@ -783,13 +786,31 @@ class AutomationEngine:
                 if rule.get("enabled", True):
                     yield rule
 
+    # 光照明暗回差边界（现场实测：捂住光敏≈918、环境光≈479，两态分离≈440）。
+    LIGHT_DARK_RAW = 730
+    LIGHT_BRIGHT_RAW = 670
+
+    def _track_light_dark(self, raw) -> None:
+        """按回差维护 self._light_dark：raw≥730 判暗、raw≤670 判亮，区间内维持。"""
+        if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+            return
+        if raw >= self.LIGHT_DARK_RAW:
+            self._light_dark = True
+        elif raw <= self.LIGHT_BRIGHT_RAW:
+            self._light_dark = False
+
     def _context(self) -> dict:
         """传感器快照 + SQLite 中的执行器当前状态 + 全局状态（g: 变量）。"""
         ctx = dict(self._snapshot)
         ctx["distance_cm"] = self.doorway.snapshot()["distance_cm"]
         ctx["sensor_fresh"] = bool(self._snapshot_ts and time.time() - self._snapshot_ts <= 10)
-        if not ctx["sensor_fresh"]:
-            for key in ("temperature", "humidity", "light", "motion", "touch", "rain", "smoke"):
+        if ctx["sensor_fresh"]:
+            self._track_light_dark(ctx.get("light"))
+            if self._light_dark is not None:
+                ctx["light_dark"] = self._light_dark
+        else:
+            for key in ("temperature", "humidity", "light", "light_dark",
+                        "motion", "touch", "rain", "smoke"):
                 ctx.pop(key, None)
         try:
             status = self.db.get_current_status()

@@ -39,7 +39,8 @@ CONDITION_SOURCES = {
     # ── Module A 周期上报的传感器 ──
     "temperature": {"label": "温度", "kind": "number", "unit": "°C"},
     "humidity": {"label": "湿度", "kind": "number", "unit": "%"},
-    "light": {"label": "光照", "kind": "number", "unit": "0-1023"},
+    "light": {"label": "光照（原始 ADC，越大越暗）", "kind": "number", "unit": "0-1023"},
+    "light_dark": {"label": "光照状态（暗/亮）", "kind": "bool"},
     "smoke": {"label": "烟雾报警", "kind": "bool"},
     "rain": {"label": "雨水检测", "kind": "bool"},
     "touch": {"label": "触摸传感器", "kind": "bool"},

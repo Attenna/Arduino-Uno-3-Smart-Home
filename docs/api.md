@@ -246,6 +246,15 @@ GET 与 POST 等价（便于浏览器地址栏直接点）。
 
 `light_rgb` 对外**一律是 `[r,g,b]` 三元列表**（库里存成 `"r,g,b"` 文本，接口层已归一）；不是自定义颜色时为 `null`。`light_mode` ∈ `white` / `night` / `temp` / `rgb`，`light_temp` 仅在 `mode:"temp"` 时有值。GET `/api/status` 里的同名字段口径完全一致。
 
+### GET `/api/light-level/history?hours=24`
+
+返回环境光敏 ADC 历史（**不是**灯具开关历史，后者见 `/api/light/history`）。返回数组，
+元素形如 `{"timestamp": "YYYY-MM-DDTHH:MM:SSZ", "light_raw": 整数, "samples": N}`：
+
+- `timestamp`：ISO-8601 UTC、秒级、带 `Z`；最近 1 小时按秒分桶，更长窗口按时间分桶。
+- `light_raw`：该桶光照 ADC 平均值取整（0~1023）；**读数越大越暗**（实测：捂住≈918、环境光≈479）。
+- `samples`：该桶样本数；超过 7 天原始保留期后来自 `sensor_hourly` 小时归档。
+
 ### GET `/api/light/history?hours=24`
 
 返回灯光操作历史。
