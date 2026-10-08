@@ -240,10 +240,12 @@ ls -l /dev/ttyUSB* /dev/ttyACM* /dev/serial/by-id/* /dev/video*
 | `ENABLE_IR_RECV` | `1` | 红外接收（D3） |
 | `ENABLE_PIR` | `1` | PIR（D8） |
 | `ENABLE_RFID` | `1` | RC522 |
+| `ENABLE_LIGHT_OUTPUT` | `1` | A0 的 8 颗 NeoPixel 灯带（`light` 命令由 A 板执行） |
 
-常用参数宏：`SERIAL_BAUD`、`DHT_PIN`、`DHT_INTERVAL_MS`、`REPORT_INTERVAL_MS`、
-`KEYPAD_DEBOUNCE_MS`、`KEYPAD_RELEASE_MS`、`RAIN_THRESHOLD`、各类 `DEBOUNCE_*`，
-以及设备标识 `BOARD_TYPE` / `BOARD_ROLE` / `FW_VERSION`。
+常用参数宏：`SERIAL_BAUD`、`DHT_PIN`、`DHT_INTERVAL_MS`、`REPORT_INTERVAL_MS`（默认 `1000`）、
+`KEYPAD_DEBOUNCE_MS`、`KEYPAD_RELEASE_MS`、`RAIN_THRESHOLD`、各类 `DEBOUNCE_*`、
+`RGB_PIN`（`A0`）/ `RGB_LED_COUNT`（`8`）/ `RGB_SAFE_BRIGHTNESS`，
+以及设备标识 `BOARD_TYPE` / `BOARD_ROLE` / `FW_VERSION`（当前 `V2.2`）。
 
 ### 6.2 Module B（[Config.h](../module-b-output/src/Config.h)）
 
@@ -253,10 +255,11 @@ ls -l /dev/ttyUSB* /dev/ttyACM* /dev/serial/by-id/* /dev/video*
 | `ENABLE_IR_TX` | `1` | 红外发射（D12） |
 
 常用参数宏：门/窗舵机引脚与角度（`DOOR_*` / `WINDOW_*` / `SERVO_SETTLE_TIME`）、
-`FAN_INA` / `FAN_INB`、`RGB_PIN` / `LED_COUNT` / `LIGHT_BRIGHTNESS`、
-`LIGHT_BOOT_ON` / `LIGHT_BOOT_LEVEL`、`LIGHT_NIGHT_COUNT` / `LIGHT_NIGHT_LEVEL`、
-`BUZZER_*`、`OLED_*` / `OLED_IS_SH1106`、
-`MIDEA_*`（美的长码时序）、`FW_VERSION`。
+`FAN_INA` / `FAN_INB`、`BUZZER_*`、`OLED_*` / `OLED_IS_SH1106`、
+`ULTRASONIC_TRIG_PIN` / `ULTRASONIC_ECHO_PIN`（D6/D5）、
+`MIDEA_*`（美的长码时序）、`FW_VERSION`（当前 `V2.11`）。
+B 板仍保留 `RGB_PIN` / `LED_COUNT` / `LIGHT_*` 等灯带宏与驱动，但**灯带实际接 A 板 A0**，
+`light` 命令由 A 板执行，网关不向 B 板下发灯光命令。
 
 > 所有引脚/阈值/时序只能改 Config.h，禁止在驱动 `.cpp` 内硬编码。
 

@@ -760,12 +760,13 @@ curl http://<host>:8101/trigger
 # 4. MCP 工具（mcp_home_server.py）
 
 `mcp_home_server.py` 以 stdio 方式提供 MCP 服务，由 **web 作为子进程启动并独占 A/B 串口**，
-共 **13 个工具**。本进程之外的调用方（语音助手 / 外部程序）经 web 的
+共 **14 个工具**。其中 `light` 路由到 **Module A**（A0 灯带），其余执行器/显示工具与
+`get_distance`/`self_test` 路由到 **Module B**。本进程之外的调用方（语音助手 / 外部程序）经 web 的
 `POST /api/hardware/tool` 以 HTTP 方式调用（工具名/参数相同，见 §2.3）。
 
 | 工具 | 主要参数 | 作用 |
 |------|---------|------|
-| `light` | `action`, `value`, `temp`, `r`,`g`,`b` | 灯光：off / white / night / temp / 预设色 / rgb（**没有 `on`**；开灯由 `white`/`night`/`temp`/rgb 表达，`value` 是 0~255 亮度，缺省 255、夜灯缺省 60） |
+| `light` | `action`, `value`, `r`,`g`,`b`, `count` | 灯光（**执行于 A 板 A0**）：off / white / night / 预设色 / rgb / pixels（**没有 `on`**；`temp` 已停用，A 板无该分支；`value` 是 0~255 亮度，缺省 255、夜灯缺省 60；`pixels` 需 `count` 1~8） |
 | `door` | `action` = open/close | 门 |
 | `window` | `action` = open/close/normal | 窗 |
 | `fan` | `action` = on/off/set_speed, `value` | 风扇 |
