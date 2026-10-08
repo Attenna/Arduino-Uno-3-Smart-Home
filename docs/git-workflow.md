@@ -9,8 +9,9 @@
 3. 不在共享工作目录中同时开发。每位开发者使用独立 clone，或使用 `git worktree`。
 4. 不直接向 `main` 提交业务修改。修改通过 Pull Request 合并。
 5. 一个 Pull Request 只解决一个问题；不要加入无关重构。
-6. 只有已经合并到 `main` 的提交才能部署到香橙派。
-7. 同一时间只能有一个人执行香橙派部署。
+6. 新功能或修复先在**任务分支**上做真机测试，`main` 保持不动；每次测试前必须备份当前运行时与香橙派仓库的 `main` 头。
+7. 分支测试通过后才并入 `main` 并同步到运行时，刷新运行状态（重建受影响容器、更新 `.deployed-git-commit`）。
+8. 同一时间只能有一个人执行香橙派部署。
 
 ## 2. 开始工作
 
@@ -152,6 +153,17 @@ Pull Request 描述必须包含：
 默认使用 **Squash and merge**，让一个问题在 `main` 中对应一个清晰提交。需要保留多步迁移历史时可以使用普通 merge。
 
 ## 8. 部署规范
+
+### 分支真机测试（合并前）
+
+新功能或修复在合并前先做真机测试，`main` 保持不动：
+
+1. 备份当前运行时（`/home/HwHiAiUser/smart-home`，至少包含 `.deployed-git-commit`、`docker-compose.yml` 和将被修改的源文件）到 `/home/HwHiAiUser/smart-home-backups/<任务>-<时间戳>/`；
+2. 记录香橙派仓库 `main` 头：`git -C /home/HwHiAiUser/Arduino-Uno-3-Smart-Home rev-parse main`（必要时用 `git bundle` 快照）；
+3. 只把任务分支的必要改动部署到运行时并重建受影响容器，验证功能；
+4. 测试通过后按下方流程合并到 `main` 并同步运行时；失败则从备份恢复运行时，并按需回滚仓库 `main`。
+
+### 合并后部署
 
 合并后由一名部署负责人执行：
 
