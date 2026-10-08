@@ -2,7 +2,7 @@
 
 记录对系统行为 / 接口有影响的变更。新条目置于顶部。
 
-## 未发布 · 人脸识别历史记录入库修复（#75）
+## 2026-10-09 · 人脸识别历史记录入库修复（#75）
 
 分支：`fix/75-face-event-persistence`。Issue：#75「人脸识别历史记录入库不及时、有丢失」。
 
@@ -28,7 +28,11 @@
 - 单测：新增 `PC_Test/tests/test_face_event_persistence.py`（逐轮留痕、陌生人各成行、去抖只挡
   动作、终态一次写入、观测留痕与环境去抖、`/recognize` 留痕不开门）；`test_face_latency.py`
   的测试替身同步新增 `record_observation`。
-- 真机：待分支验收。
+- 真机（2026-10-09，分支部署后并入 `main`，香橙派）：每轮都有记录（30 秒窗口 16 行，相邻轮次
+  最大间隔 2 秒＝取帧间隔）；连续陌生人 `unmatched_face` 各自成行；网页路径命中已录身份 `B`
+  （score 0.998）单条写入 `granted`/`verified=1`/`deny_reason=NULL`，全表 `pending=0`；
+  `/api/face/recognize` 行 `device_source='web'` 且 `access_logs`、门状态不变（`record_only`）；
+  去抖只挡动作日志（同窗口 `access_logs` 约每 8 秒一条，`face_events` 每轮都写）。
 - 影响：不改数据库结构、不改人脸库、无需重建模型；部署只需重建 Web 容器。
 
 ## 未发布 · 积木自动化风险修复（R1–R10）
