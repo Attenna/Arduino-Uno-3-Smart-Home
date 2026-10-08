@@ -2,6 +2,26 @@
 
 记录对系统行为 / 接口有影响的变更。新条目置于顶部。
 
+## 未发布 · 积木自动化风险修复（R1–R10）
+
+分支：`fix/automation-risks`。规格：`.trae/documents/issue-blocks-automation-risks.md`（高/中危条目）。
+
+### 变更
+- **R1 空调风速枚举统一**：规则保存期接入执行层真源 `midea_ac.FAN_LEVELS`（`auto/low/mid/high`），旧 6 档数值（20/40/60/80/100）由 `ac_state.normalize_fan_level` 折算；`turbo` 之类非法值直接报错，不再出现「选低/中/高保存失败」。
+- **R7 条件/触发按数据源类型校验**：数值源只接受真数字并按量程校验（温度 -40~125、湿度 0~100、光照 0~1023、转速/亮度 0~100、空调温度 17~30、距离 2~400）；布尔/枚举只允许 `==`/`!=`，枚举值必须在 `choices` 内。引擎读盘走宽松模式（只归一不拒绝），历史脏数据不会让整表被丢弃。
+- **R8「设置全局状态」动作按变量定义校验**：enum 取值越界、对非数字变量 `add`、对非双项变量 `toggle` 在保存期即报错。
+- **R9 事件触发块 payload 契约**：`EVENT_TRIGGERS` 每项必须有 `payload.event`（导入期断言），运行期空 payload 不再退化成「匹配任意事件」。
+- **R2 手动优先对窗户生效**：`window_normal` 补 `g:手动优先_窗 == false` 条件；门/空调保留 mark/clear 变量（仅对自定义规则有效）。**安全动作不让位**（雨烟关窗、蜂鸣、门禁开门）。
+- **R3 `g:` 触发的规则随滴答求值**：传感器板离线时「手动优先到期释放」不再被永久卡住。
+- **R4 预设迁移只覆盖未改动过的预设**：`light_dark` / `light_off` / `window_normal` 与内置旧版逐字段一致才替换，用户改过的一律保留并记迁移告警；`PRESETS_VERSION` 8→9。
+- **R5 关键安全动作有界重试**：关门/关窗/蜂鸣失败重试 2 次（间隔 1 秒），仍失败记「部分成功」并告警；非安全动作保持 fail-fast。
+- **R6 `_fire` 返回是否入队**：「持续 N 秒」只在真正入队后才记已触发，冷却未到不再静默吞掉整轮。
+- **R10 计时统一单调时钟**：hold / interval / cooldown 改用 `time.monotonic()`；定时触发允许在 300 秒窗口内补触发一次（按当日 key 去重）。
+
+### 验收
+- 单测：`test_home_automation.py` 新增 R1–R10 定向用例，`test_home_automation.py`/`test_doorway_linkage.py` 全绿；全量套件仅剩与 `main` 基线一致的 8 项环境依赖错误（缺 `mcp`/`sounddevice` 等）。
+- 真机：待分支验收。
+
 ## 未发布 · B 板串口帧断流修复（主机侧）
 
 分支：`fix/b-serial-frame-stall`

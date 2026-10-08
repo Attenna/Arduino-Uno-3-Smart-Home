@@ -26,6 +26,9 @@ from .capabilities import (
 from .global_state import is_var_id
 # RFID 卡号归一化（"AA BB CC DD"）与上报值全等比对，避免大小写/分隔符导致匹配失败
 from ..database import normalize_uid
+# 空调风速的唯一真源是执行层的 midea_ac.FAN_LEVELS；旧 6 档数值由 ac_state 归一
+import midea_ac
+from ..ac_state import normalize_fan_level
 
 COMPARATOR_IDS = {c["id"] for c in COMPARATORS}
 
@@ -40,23 +43,38 @@ def _require(obj: dict, keys: tuple[str, ...], where: str) -> None:
             raise ValidationError(f"{where} 缺少字段 {key}")
 
 
-def _check_source(sensor_id, where: str, var_types: dict | None) -> None:
+def _check_source(sensor_id, where: str, vars_info: dict | None,
+                  strict: bool = True) -> None:
     """触发/条件的数据源合法性。
 
     静态白名单（CONDITION_SOURCES）之外，放行形如 ``g:名字`` 的全局状态。
-    **宽松/严格双模**：``var_types`` 为 None（引擎读盘）时只校验格式——变量被删掉
-    不能让整个规则集校验失败（那会清空所有规则）；传了 var_types（页面保存）时
-    要求变量确实存在，避免用户写出永远不成立的错字规则。
+    ``strict=False``（引擎读盘）只校验格式——变量被删掉不能让整个规则集校验
+    失败（那会清空所有规则）；``strict=True``（页面保存 / 直接调用）要求变量
+    确实存在，避免用户写出永远不成立的错字规则。
     """
     if sensor_id in CONDITION_SOURCES:
         return
     if is_var_id(sensor_id):
-        if var_types is None or sensor_id in var_types:
+        if not strict or vars_info is None or sensor_id in vars_info:
             return
         raise ValidationError(
             f"{where}引用的全局状态不存在: {sensor_id}"
             "（请先在自动化页新建这条「📌 状态」条目）")
     raise ValidationError(f"{where}未知传感器/状态: {sensor_id}")
+
+
+def _source_spec(sensor_id: str, vars_info: dict | None) -> dict | None:
+    """数据源的比较元数据（kind + choices/min/max）。
+
+    静态白名单永远有定义；``g:`` 变量只有严格模式（vars_info 来自页面保存时的
+    变量定义）才知道类型，宽松模式拿不到 → 返回 None，比较校验随之跳过。
+    """
+    spec = CONDITION_SOURCES.get(sensor_id)
+    if spec:
+        return spec
+    if is_var_id(sensor_id):
+        return (vars_info or {}).get(sensor_id)
+    return None
 
 
 def _as_number(value, where: str) -> float:
@@ -65,28 +83,92 @@ def _as_number(value, where: str) -> float:
     return float(value)
 
 
-def _distance_threshold(sensor, value):
-    if sensor == "distance_cm" and (type(value) not in (int, float)
-            or not math.isfinite(value) or not 2 <= value <= 400):
-        raise ValidationError("超声波距离需为 2~400 厘米的有效数字")
+# 各 kind 允许的比较符：布尔/选项只能比相等，数值可全量比较
+_OPS_BY_KIND = {"bool": ("==", "!="), "number": tuple(COMPARATOR_IDS),
+                "enum": ("==", "!=")}
 
 
-def validate_trigger(trig: dict, var_types: dict | None = None) -> dict:
+def _clean_comparison(sensor_id, op, value, where, vars_info, strict: bool):
+    """按数据源类型约束比较符与阈值，并归一化阈值。
+
+    ``_compare`` 遇到「数值源 vs 字符串阈值」会掉进字符串分支、``>``/``<`` 恒假，
+    所以这类「保存得下去、运行永远不成立」的组合必须在保存期拦掉：
+
+    - number：阈值必须能转成数字（``"26"`` 也接受并归一成 26），有量程的源查范围；
+    - bool：只允许 ==/!=，阈值归一成 true/false；
+    - enum：只允许 ==/!=，阈值必须是该源的合法选项。
+
+    宽松模式（引擎读盘，strict=False）只做**能做的归一**、不做拒绝：历史脏数据
+    不能让整条规则在启动时被丢掉（与 ``_check_source`` 的双模约定一致）。
+    """
+    spec = _source_spec(sensor_id, vars_info)
+    if spec is None:
+        return value
+    label = spec.get("label", sensor_id)
+    allowed = _OPS_BY_KIND.get(spec.get("kind"))
+    if allowed is None:
+        if strict:
+            raise ValidationError(f"{where}「{label}」不能作为比较源")
+        return value
+    if op not in allowed:
+        if strict:
+            raise ValidationError(
+                f"{where}「{label}」只支持 {'/'.join(allowed)} 比较")
+        return value
+    if spec["kind"] == "bool":
+        if isinstance(value, bool):
+            return value
+        text = str(value).strip().lower()
+        if text in ("true", "false"):
+            return text == "true"
+        if strict:
+            raise ValidationError(
+                f"{where}「{label}」的条件值只能是 是/否（true/false）")
+        return value
+    if spec["kind"] == "number":
+        # 只接受真正的数字（bool 也是 int 的子类，必须先从数值里排除）：字符串阈值
+        # 会让运行期 `_compare` 掉进字符串分支、"26" > 26 恒假
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            if strict:
+                raise ValidationError(f"{where}「{label}」需要数字，得到 {value!r}")
+            # 宽松模式（引擎读盘）：能安全转成数字的历史脏值就地归一，其余原样保留
+            try:
+                num = float(value)
+            except (TypeError, ValueError):
+                return value
+            if not math.isfinite(num):
+                return value
+            return int(num) if num.is_integer() else num
+        num = float(value)
+        if not math.isfinite(num):
+            if strict:
+                raise ValidationError(f"{where}「{label}」需要有限数字")
+            return value
+        lo, hi = spec.get("min"), spec.get("max")
+        if strict and lo is not None and hi is not None and not lo <= num <= hi:
+            raise ValidationError(
+                f"{where}「{label}」需在 {lo:g}~{hi:g}{spec.get('unit') or ''} 之间")
+        return int(num) if num.is_integer() else num
+    # enum：阈值先归成字符串，再按 choices 校验
+    text = value if isinstance(value, str) else str(value)
+    choices = spec.get("choices") or []
+    if strict and choices and text not in choices:
+        raise ValidationError(
+            f"{where}「{label}」只能是 {'/'.join(map(str, choices))} 之一")
+    return text
+
+
+def validate_trigger(trig: dict, vars_info: dict | None = None,
+                     strict: bool = True) -> dict:
     _require(trig, ("kind",), "触发块")
     kind = trig["kind"]
     if kind == "sensor":
         _require(trig, ("sensor", "op", "value"), "传感器触发块")
-        _check_source(trig["sensor"], "传感器触发块", var_types)
+        _check_source(trig["sensor"], "传感器触发块", vars_info, strict)
         if trig["op"] not in COMPARATOR_IDS:
             raise ValidationError(f"非法比较符: {trig['op']}")
-        value = trig["value"]
-        _distance_threshold(trig["sensor"], value)
-        if isinstance(value, bool):
-            pass
-        elif isinstance(value, str) and value in ("true", "false"):
-            value = value == "true"
-        elif not isinstance(value, (int, float, str)):
-            raise ValidationError("触发阈值必须是数字或 true/false")
+        value = _clean_comparison(trig["sensor"], trig["op"], trig["value"],
+                                  "传感器触发块", vars_info, strict=strict)
         clean = {"kind": "sensor", "sensor": trig["sensor"],
                  "op": trig["op"], "value": value}
         # 「持续 N 秒」：条件连续保持该时长才触发（逗留报警/烟雾确认这类需求）
@@ -138,23 +220,21 @@ def validate_trigger(trig: dict, var_types: dict | None = None) -> dict:
     raise ValidationError(f"未知触发类型: {kind}")
 
 
-def validate_condition(cond: dict, var_types: dict | None = None) -> dict:
+def validate_condition(cond: dict, vars_info: dict | None = None,
+                       strict: bool = True) -> dict:
     _require(cond, ("sensor", "op", "value"), "条件块")
-    _check_source(cond["sensor"], "条件块", var_types)
+    _check_source(cond["sensor"], "条件块", vars_info, strict)
     if cond["op"] not in COMPARATOR_IDS:
         raise ValidationError(f"条件块非法比较符: {cond['op']}")
-    value = cond["value"]
-    _distance_threshold(cond["sensor"], value)
-    if isinstance(value, str) and value in ("true", "false"):
-        value = value == "true"
-    if not isinstance(value, (int, float, bool, str)):
-        raise ValidationError("条件值必须是数字、布尔或字符串")
+    value = _clean_comparison(cond["sensor"], cond["op"], cond["value"],
+                              "条件块", vars_info, strict=strict)
     return {"sensor": cond["sensor"], "op": cond["op"], "value": value}
 
 
 def validate_action(action: dict, where: str = "动作块",
-                    var_types: dict | None = None,
-                    http_policy: dict | None = None) -> dict:
+                    vars_info: dict | None = None,
+                    http_policy: dict | None = None,
+                    strict: bool = True) -> dict:
     _require(action, ("device",), where)
     device = action["device"]
     if device not in ACTION_DEVICES:
@@ -171,7 +251,7 @@ def validate_action(action: dict, where: str = "动作块",
         clean["seconds"] = seconds
         return clean
     if device == "state":
-        return _validate_state_action(action, clean, where, var_types)
+        return _validate_state_action(action, clean, where, vars_info, strict)
     if device == "door":
         status = action.get("status", "open")
         if status not in ("open", "close"):
@@ -282,9 +362,13 @@ def validate_action(action: dict, where: str = "动作块",
             clean["temperature"] = temperature
         fan = str(action.get("fan") or "").strip()
         if fan:
-            if fan not in ("auto", "20", "40", "60", "80", "100"):
-                raise ValidationError("空调风速只能是 auto/20/40/60/80/100")
-            clean["fan"] = fan
+            # 唯一真源是执行层的 midea_ac.FAN_LEVELS；旧版数值档位（20/40/60/80/100）
+            # 由 ac_state.normalize_fan_level 折算到最近的物理档位，此后全网只有一套枚举
+            level = normalize_fan_level(fan)
+            if level is None:
+                raise ValidationError(
+                    "空调风速只能是 " + "/".join(midea_ac.FAN_LEVELS))
+            clean["fan"] = level
         for key in ("swing_ud", "swing_lr", "eco", "fzc"):
             if action.get(key) is not None:
                 clean[key] = bool(action[key])
@@ -342,28 +426,42 @@ STATE_OPS = ("set", "toggle", "add")
 
 
 def _validate_state_action(action: dict, clean: dict, where: str,
-                           var_types: dict | None) -> dict:
+                           vars_info: dict | None, strict: bool = True) -> dict:
     """「设置全局状态」动作校验。
 
-    值的类型归一交给 ``GlobalStateStore.set_value``（写时强校验），这里只保证
-    JSON 结构合法 + 变量存在（严格模式）。宽松模式（引擎读盘）下变量被删不再
-    报错——否则删一个变量会清空整个规则集。
+    ``strict=True`` 且拿到变量定义（``vars_info``）时按变量的类型与选项校验 op 与
+    取值：enum 必须落在 choices 内、toggle 只对是/否或双项选项成立、add 只对数字
+    成立——这些原本要等运行期 ``GlobalStateStore.set_value`` 才拒绝，规则却已经存
+    进库。``strict=False``（引擎读盘）下变量被删不再报错——否则删一个变量会清空
+    整个规则集。
     """
     name = str(action.get("name") or "").strip()
     if not is_var_id(name):
         raise ValidationError(
             f"{where}需选择一个全局状态（先新建「📌 状态」条目）")
-    if var_types is not None and name not in var_types:
-        raise ValidationError(f"{where}引用的全局状态不存在: {name}")
+    spec = None
+    if vars_info is not None:
+        spec = vars_info.get(name)
+        if spec is None and strict:
+            raise ValidationError(f"{where}引用的全局状态不存在: {name}")
     op = str(action.get("op") or "set").strip()
     if op not in STATE_OPS:
         raise ValidationError(f"{where}全局状态操作只能是 set/toggle/add")
     clean["name"] = name
     clean["op"] = op
+    type_ = spec.get("type") if spec else None
+    choices = list(spec.get("choices") or []) if spec else []
     value = action.get("value")
     if op == "toggle":
+        if spec is not None:
+            if type_ not in ("bool", "enum"):
+                raise ValidationError(f"{where}只有「是/否」或选项状态可以切换")
+            if type_ == "enum" and len(choices) != 2:
+                raise ValidationError(f"{where}只有两项的选项状态可以切换")
         return clean
     if op == "add":
+        if spec is not None and type_ != "number":
+            raise ValidationError(f"{where}只有数字状态可以加减")
         if value in (None, ""):
             value = 1
         clean["value"] = _as_number(value, f"{where}加减量")
@@ -371,7 +469,6 @@ def _validate_state_action(action: dict, clean: dict, where: str,
     if value is None or (isinstance(value, str) and value.strip() == ""):
         # 注意不能写 `value == ""`：False == "" 在 Python 里成立，会把布尔 False 误判成空
         raise ValidationError(f"{where}设置全局状态需要填值")
-    type_ = (var_types or {}).get(name)
     if type_ == "number":
         clean["value"] = _as_number(value, f"{where}值")
     elif type_ == "bool" or (type_ is None and isinstance(value, bool)):
@@ -382,27 +479,32 @@ def _validate_state_action(action: dict, clean: dict, where: str,
             raise ValidationError(f"{where}「是/否」状态的值只能是 是/否")
         clean["value"] = value
     else:                                    # enum / text / 宽松模式
-        clean["value"] = str(value)
+        text = str(value)
+        if choices and text not in choices:
+            raise ValidationError(
+                f"{where}「{spec.get('label', name)}」只能是 "
+                f"{'/'.join(map(str, choices))} 之一")
+        clean["value"] = text
     return clean
 
 
-def validate_rule(rule: dict, var_types: dict | None = None,
-                  http_policy: dict | None = None) -> dict:
+def validate_rule(rule: dict, vars_info: dict | None = None,
+                  http_policy: dict | None = None, strict: bool = True) -> dict:
     _require(rule, ("name", "trigger", "actions"), "规则")
     name = str(rule["name"]).strip()
     if not name:
         raise ValidationError("规则名称不能为空")
-    trigger = validate_trigger(rule["trigger"], var_types)
-    conditions = [validate_condition(c, var_types)
+    trigger = validate_trigger(rule["trigger"], vars_info, strict)
+    conditions = [validate_condition(c, vars_info, strict)
                   for c in (rule.get("conditions") or [])]
     match = rule.get("match", "all")
     if match not in ("all", "any"):
         raise ValidationError("条件组合方式只能是 all/any")
-    actions = [validate_action(a, "执行块", var_types, http_policy)
+    actions = [validate_action(a, "执行块", vars_info, http_policy, strict)
                for a in (rule.get("actions") or [])]
     if not actions:
         raise ValidationError("每条规则至少要有一个执行动作")
-    else_actions = [validate_action(a, "否则块", var_types, http_policy)
+    else_actions = [validate_action(a, "否则块", vars_info, http_policy, strict)
                     for a in (rule.get("else_actions") or [])]
     raw_cooldown = rule.get("cooldown", 3)
     cooldown = 3.0 if raw_cooldown is None else float(raw_cooldown)
@@ -424,12 +526,16 @@ def validate_rule(rule: dict, var_types: dict | None = None,
     return clean
 
 
-def validate_rules(payload, var_types: dict | None = None,
-                   http_policy: dict | None = None) -> list[dict]:
+def validate_rules(payload, vars_info: dict | None = None,
+                   http_policy: dict | None = None,
+                   strict: bool = True) -> list[dict]:
     """payload 可以是 {'rules': [...]} 或直接 [...]。
 
-    var_types=None 为宽松模式（引擎读盘：变量被删也不清空全表）；
-    传 var_types（页面保存）为严格模式（引用不存在的全局状态直接报错）。
+    ``strict=False`` 是引擎读盘用的宽松模式：变量被删、历史脏阈值都不再拒绝，
+    只做能做的归一化（否则一条坏规则会连带整表被丢弃）。
+    ``strict=True``（默认，页面保存与直接调用）会拒绝：引用不存在的全局状态、
+    比较符/阈值与源类型不匹配、enum 取值越界。``vars_info``（``{变量id:
+    {type, choices, label}}``）用于解析 ``g:`` 变量的类型。
     http_policy 同理：None 只查 URL 格式，传策略字典则连主机放行一起查。
     """
     if isinstance(payload, dict):
@@ -438,4 +544,4 @@ def validate_rules(payload, var_types: dict | None = None,
         raise ValidationError("规则列表格式错误")
     if len(payload) > 80:
         raise ValidationError("规则数量不能超过 80 条")
-    return [validate_rule(r, var_types, http_policy) for r in payload]
+    return [validate_rule(r, vars_info, http_policy, strict) for r in payload]

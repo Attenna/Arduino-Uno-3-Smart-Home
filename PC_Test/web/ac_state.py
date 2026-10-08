@@ -30,10 +30,20 @@ _DEFAULT_TEMPERATURE = 26
 _LEGACY_FAN = {"20": "low", "40": "low", "60": "mid", "80": "high", "100": "high"}
 
 
-def _fan_from_db(raw) -> str:
-    fan = str(raw) if raw else "auto"
+def normalize_fan_level(raw) -> str | None:
+    """把任意来源的风速值归一成 ``midea_ac.FAN_LEVELS`` 里的档位。
+
+    旧 6 档数值（20/40/60/80/100）折算到最近的物理档位；无法识别返回 None。
+    规则校验（schema）与数据库读回（``_fan_from_db``）共用这一份映射，避免
+    校验层与执行层再次各写一套枚举。
+    """
+    fan = str(raw).strip().lower() if raw not in (None, "") else ""
     fan = _LEGACY_FAN.get(fan, fan)
-    return fan if fan in midea_ac.FAN_LEVELS else "auto"
+    return fan if fan in midea_ac.FAN_LEVELS else None
+
+
+def _fan_from_db(raw) -> str:
+    return normalize_fan_level(raw) or "auto"
 
 
 def ac_state_from_db(db) -> midea_ac.AcState:
