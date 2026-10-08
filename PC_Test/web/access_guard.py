@@ -189,6 +189,7 @@ class AccessGuard:
             try:
                 uid = normalize_uid(event.get("uid"))
             except ValueError:
+                self.fail_pending_card("读卡器返回了无效卡号，请移开卡片后重试")
                 return
             if self.capture_card(uid):
                 return
@@ -223,7 +224,27 @@ class AccessGuard:
         with self._lock:
             self._prune_locked()
             session = self._sessions.get(sid)
-            return dict(session) if session else None
+            if not session:
+                return None
+            out = dict(session)
+            now = time.time()
+            out["age_seconds"] = max(0.0, now - session["started"])
+            out["remaining_seconds"] = max(0.0, session["expires_at"] - now)
+            return out
+
+    def fail_pending_card(self, error: str) -> bool:
+        """让最早的等待会话立即失败，避免坏串口事件最终只表现成超时。"""
+        with self._lock:
+            self._prune_locked()
+            waiting = sorted((s for s in self._sessions.values()
+                              if s["state"] == "pending"),
+                             key=lambda s: s["started"])
+            if not waiting:
+                return False
+            waiting[0]["state"] = "error"
+            waiting[0]["error"] = error
+            logger.warning("[门禁] 房卡录入失败：%s", error)
+            return True
 
     def cancel_card_session(self, sid: str) -> bool:
         with self._lock:
@@ -259,5 +280,6 @@ class AccessGuard:
         for sid, session in list(self._sessions.items()):
             if session["state"] == "pending" and now >= session["expires_at"]:
                 session["state"] = "expired"
+                session["error"] = "等待刷卡超时，未收到有效 RFID 事件"
             if now >= session["expires_at"] + CARD_RESULT_KEEP_S:
                 self._sessions.pop(sid, None)

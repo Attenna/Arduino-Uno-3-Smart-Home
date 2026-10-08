@@ -570,7 +570,9 @@ async function startCardEnroll(personId) {
     bar.classList.remove('hidden');
     tickCardBar();
     card.timer = setInterval(async () => {
-        if (Date.now() > card.deadline) {
+        // 给服务端几秒钟返回带具体原因的 expired/error 状态；否则页面会在
+        // 最后一次状态请求之前先报一个无法排障的通用超时。
+        if (Date.now() > card.deadline + 3000) {
             stopCardPolling();
             document.getElementById('cardBar').classList.add('hidden');
             showNotification(t('access.card_timeout'), 'error');
