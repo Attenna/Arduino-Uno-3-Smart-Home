@@ -67,6 +67,9 @@ class AutomationEngine:
         self._lock = threading.RLock()          # 保护规则热更新
         self._snapshot: dict = {}               # A 板最新一帧（原始字段名）
         self._snapshot_ts: float = 0.0
+        # 光照明暗判定（带回差）：raw≥730 判暗、raw≤670 判亮，区间内维持上一状态。
+        # light_dark 作为布尔源供积木引用，回差避免灯光回照导致的自激抖动。
+        self._light_dark: bool | None = None
         self.doorway = DoorwayDistance()
         self.capture_photo = None
         # 事件队列（带序号），规则按各自 last_event_id 消费
@@ -162,7 +165,7 @@ class AutomationEngine:
     # 拆除后不再有对应物的源：带这些引用的规则整条丢弃（宁缺勿猜）
     _LEGACY_UNMAPPABLE = ("home_enabled", "home_fan", "home_light")
     # v4 起删除的预设：touch_toggle 拆成两条条件规则，档位 cycle 类不再重建
-    _REMOVED_PRESETS = ("ir_fan_cycle", "ir_light_cycle_2", "ir_light_cycle_3",
+    _REMOVED_PRESETS = ("ir_fan_toggle", "ir_fan_cycle", "ir_light_cycle_2", "ir_light_cycle_3",
                         "touch_toggle", "touch_to_manual", "touch_to_auto",
                         "door_in", "door_out", "dwell_alarm", "light_mid",
                         "access_auto_close")
@@ -337,9 +340,32 @@ class AutomationEngine:
             if pid in self._REMOVED_PRESETS:
                 dropped.append(name)
                 continue
-            if (presets_version == 6 and pid in v4_by_pid
+            if (presets_version >= 6 and pid in v4_by_pid
+                    and pid in {"away_close_all", "window_normal"}):
+                # v9 adds manual-priority guards to two unchanged shipped rules. Preserve any
+                # user-edited version instead of silently replacing its conditions.
+                old = copy.deepcopy(v4_by_pid[pid])
+                old["conditions"] = [
+                    c for c in old.get("conditions", [])
+                    if not str(c.get("sensor", "")).startswith("g:手动优先_")]
+                keys = ("trigger", "conditions", "actions", "else_actions", "match", "cooldown")
+                default_for = {"conditions": [], "else_actions": [], "match": "all", "cooldown": 3}
+                if all(rule.get(k, default_for.get(k)) == old.get(k, default_for.get(k))
+                       for k in keys):
+                    new = copy.deepcopy(v4_by_pid[pid])
+                    new["id"] = rule.get("id") or None
+                    new["enabled"] = bool(rule.get("enabled", True))
+                    out.append(new)
+                    migrated += 1
+                    continue
+                out.append(rule)
+                continue
+            if presets_version >= 8 and pid in v4_by_pid:
+                out.append(rule)
+                continue
+            if (presets_version >= 6 and pid in v4_by_pid
                     and pid not in {"light_dark", "light_off"}):
-                # v7 只调整光敏回差阈值；保留其他现有预设的全部用户配置。
+                # v7/v8 只调整光敏二分阈值；保留其他现有预设的全部用户配置。
                 out.append(rule)
                 continue
             if pid in v4_by_pid and presets_version < PRESETS_VERSION:
@@ -783,13 +809,31 @@ class AutomationEngine:
                 if rule.get("enabled", True):
                     yield rule
 
+    # 光照明暗回差边界（现场实测：捂住光敏≈918、环境光≈479，两态分离≈440）。
+    LIGHT_DARK_RAW = 730
+    LIGHT_BRIGHT_RAW = 670
+
+    def _track_light_dark(self, raw) -> None:
+        """按回差维护 self._light_dark：raw≥730 判暗、raw≤670 判亮，区间内维持。"""
+        if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+            return
+        if raw >= self.LIGHT_DARK_RAW:
+            self._light_dark = True
+        elif raw <= self.LIGHT_BRIGHT_RAW:
+            self._light_dark = False
+
     def _context(self) -> dict:
         """传感器快照 + SQLite 中的执行器当前状态 + 全局状态（g: 变量）。"""
         ctx = dict(self._snapshot)
         ctx["distance_cm"] = self.doorway.snapshot()["distance_cm"]
         ctx["sensor_fresh"] = bool(self._snapshot_ts and time.time() - self._snapshot_ts <= 10)
-        if not ctx["sensor_fresh"]:
-            for key in ("temperature", "humidity", "light", "motion", "touch", "rain", "smoke"):
+        if ctx["sensor_fresh"]:
+            self._track_light_dark(ctx.get("light"))
+            if self._light_dark is not None:
+                ctx["light_dark"] = self._light_dark
+        else:
+            for key in ("temperature", "humidity", "light", "light_dark",
+                        "motion", "touch", "rain", "smoke"):
                 ctx.pop(key, None)
         try:
             status = self.db.get_current_status()
@@ -1102,7 +1146,8 @@ class AutomationEngine:
             style = (light_state.from_color_param(
                 color, action.get("r"), action.get("g"), action.get("b"))
                 if color else light_state.from_status(current))
-            target_light = (status, brightness, style)
+            count = current.get("light_count") if not color else None
+            target_light = (status, brightness, style, count)
             if not color and self._last_cmd.get("light") == target_light \
                     and (current.get("light_status"), current.get("light_brightness")) == (status, brightness):
                 return True, "灯重复指令跳过"
@@ -1121,13 +1166,13 @@ class AutomationEngine:
                     brightness = 100
             else:
                 # 与面板同一条口径：下发前把亮法展开成固件能执行的完整命令
-                method, args, kwargs = light_state.hardware_plan(status, brightness, style)
+                method, args, kwargs = light_state.hardware_plan(status, brightness, style, count)
                 ok, msg = getattr(self.bridge, method)(*args, **kwargs)
             if ok:
                 self._last_cmd["light"] = target_light if not color else None
                 # 亮法一并记账：规则把灯设成红色/色温后，面板显示的才是灯真正的
                 # 样子，而不是上一次面板命令留下的颜色（#27）。关灯不改亮法。
-                values = light_state.status_values(status, brightness, style)
+                values = light_state.status_values(status, brightness, style, count)
                 self.db.update_status(**values)
                 self.db.add_light_event("客厅主灯(自动化)", values["light_status"],
                                         values["light_brightness"])

@@ -26,7 +26,7 @@ class HomeRulesTests(unittest.TestCase):
         self.engine.load()
         self.addCleanup(self.engine.stop)
         self.rules = {r["preset"]: r for r in self.engine.rules}
-        self.snapshot(temperature=27, light=100, motion=True, rain=False, smoke=False, touch=False)
+        self.snapshot(temperature=27, light=900, motion=True, rain=False, smoke=False, touch=False)
 
     def snapshot(self, **data):
         self.engine._snapshot.update(data)
@@ -42,37 +42,45 @@ class HomeRulesTests(unittest.TestCase):
     def test_occupied_temperature_and_light_hysteresis(self):
         self.apply("temp_hot"); self.apply("light_dark")
         self.assertEqual((self.status["fan_speed"], self.status["light_status"]), (100, "on"))
-        self.snapshot(temperature=26, light=550)
+        self.snapshot(temperature=26, light=700)
         self.apply("temp_cool"); self.apply("light_off")
         self.assertEqual((self.status["fan_speed"], self.status["light_status"]), (100, "on"))
-        self.snapshot(temperature=25, light=701)
+        self.snapshot(temperature=25, light=479)
         self.apply("temp_cool"); self.apply("light_off")
         self.assertEqual((self.status["fan_speed"], self.status["light_status"]), (0, "off"))
 
-    def test_threshold_boundaries_do_not_start_devices(self):
-        self.snapshot(temperature=26, light=400)
-        self.apply("temp_hot"); self.apply("light_dark")
-        self.bridge.control_fan.assert_not_called()
-        self.bridge.control_light.assert_not_called()
-
-        self.status["light_status"] = "on"
+    def test_light_band_without_state_does_not_start_light(self):
+        # 无历史状态时落在回差区间（670~730）：既不判暗也不判亮，两条光照预设都不动作。
+        self.engine._light_dark = None
         self.snapshot(temperature=26, light=700)
-        self.apply("light_off")
+        self.apply("temp_hot"); self.apply("light_dark"); self.apply("light_off")
         self.bridge.control_light.assert_not_called()
 
-    def test_v7_upgrade_only_updates_light_threshold_presets(self):
+    def test_light_dark_hysteresis_holds_state_inside_band(self):
+        # raw≥730 判暗、raw≤670 判亮，区间内维持上一状态，避免灯光回照自激。
+        self.snapshot(temperature=26, light=900)
+        self.engine._context()
+        self.assertTrue(self.engine._light_dark)
+        self.snapshot(temperature=26, light=700)
+        self.engine._context()
+        self.assertTrue(self.engine._light_dark)
+        self.snapshot(temperature=26, light=479)
+        self.engine._context()
+        self.assertFalse(self.engine._light_dark)
+
+    def test_v8_upgrade_only_updates_light_presets(self):
         old_dark = dict(self.rules["light_dark"])
         old_dark["conditions"] = [dict(c) for c in old_dark["conditions"]]
         old_dark["conditions"][-1] = {
-            "sensor": "light", "op": "<", "value": 200}
+            "sensor": "light", "op": "<", "value": 400}
         old_off = dict(self.rules["light_off"])
         old_off["conditions"] = [dict(c) for c in old_off["conditions"]]
         old_off["conditions"][-1] = {
-            "sensor": "light", "op": ">=", "value": 300}
+            "sensor": "light", "op": ">", "value": 700}
         untouched = dict(self.rules["temp_hot"])
         untouched["name"] = "保留的温度规则"
         self.engine.rules_path.write_text(json.dumps({
-            "presets_version": 6,
+            "presets_version": 7,
             "rules": [old_dark, old_off, untouched],
         }))
 
@@ -80,11 +88,13 @@ class HomeRulesTests(unittest.TestCase):
         rules = {r["preset"]: r for r in self.engine.rules}
         dark = rules["light_dark"]["conditions"][-1]
         bright = rules["light_off"]["conditions"][-1]
-        self.assertEqual((dark["op"], dark["value"]), ("<", 400))
-        self.assertEqual((bright["op"], bright["value"]), (">", 700))
+        self.assertEqual((dark["sensor"], dark["op"], dark["value"]),
+                         ("light_dark", "==", True))
+        self.assertEqual((bright["sensor"], bright["op"], bright["value"]),
+                         ("light_dark", "==", False))
         self.assertEqual(rules["temp_hot"]["name"], "保留的温度规则")
         saved = json.loads(self.engine.rules_path.read_text())
-        self.assertEqual(saved["presets_version"], 7)
+        self.assertEqual(saved["presets_version"], 9)
 
     def test_access_uses_one_unconditional_open_close_sequence(self):
         r = self.rules["access_open_door"]
@@ -114,10 +124,13 @@ class HomeRulesTests(unittest.TestCase):
         self.engine.global_state.set_value("g:有人在家", False)
         self.engine.global_state.set_value("g:手动优先_窗", True)
         for rain, smoke, expected in [(True,False,"closed"),(True,True,"closed"),
-                                      (False,True,"closed"),(False,False,"normal")]:
+                                      (False,True,"closed"),(False,False,"closed")]:
             self.snapshot(rain=rain,smoke=smoke)
             self.apply("rain_window"); self.apply("window_normal")
             self.assertEqual(self.status["window_status"], expected)
+        self.engine.global_state.set_value("g:手动优先_窗", False)
+        self.apply("window_normal")
+        self.assertEqual(self.status["window_status"], "normal")
 
     def test_open_window_rechecks_hazard_at_execution(self):
         self.snapshot(smoke=True)

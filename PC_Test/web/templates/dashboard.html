@@ -183,36 +183,49 @@
                     <span class="light-indicator" id="lightIndicator"></span>
                 </div>
                 <div class="card-body">
+                    <div class="light-power-row">
+                        <span id="lightSummary" aria-live="polite">已关闭</span>
+                        <button id="lightPower" class="btn btn-sm" onclick="toggleLightPower()" aria-pressed="false" data-i18n="light.on">开灯</button>
+                    </div>
                     <div class="light-preview" id="lightPreview">
                         <div class="bulb" id="bulb"></div>
                     </div>
+                    <div class="light-beads" aria-hidden="true">
+                        <span id="lightBead0"></span>
+                        <span id="lightBead1"></span>
+                        <span id="lightBead2"></span>
+                        <span id="lightBead3"></span>
+                        <span id="lightBead4"></span>
+                        <span id="lightBead5"></span>
+                        <span id="lightBead6"></span>
+                        <span id="lightBead7"></span>
+                    </div>
+                    <div class="light-levels" role="group" aria-label="灯珠档位">
+                        <button id="lightLevel2" class="btn light-level" onclick="setLightCount(2)" aria-pressed="false"><span data-i18n="light.level2">微光</span><small data-i18n="light.count2">2 颗</small></button>
+                        <button id="lightLevel4" class="btn light-level" onclick="setLightCount(4)" aria-pressed="false"><span data-i18n="light.level4">柔光</span><small data-i18n="light.count4">4 颗</small></button>
+                        <button id="lightLevel6" class="btn light-level" onclick="setLightCount(6)" aria-pressed="false"><span data-i18n="light.level6">明亮</span><small data-i18n="light.count6">6 颗</small></button>
+                        <button id="lightLevel8" class="btn light-level" onclick="setLightCount(8)" aria-pressed="false"><span data-i18n="light.level8">全灯</span><small data-i18n="light.count8">8 颗</small></button>
+                    </div>
+                    <p class="light-hint" data-i18n="light.hint">档位控制灯珠数量，亮度调节每颗灯珠的明暗</p>
                     <div class="control-row">
-                        <label data-i18n="light.brightness">灯光亮度</label>
+                        <label for="brightnessSlider" data-i18n="light.brightness">灯光亮度</label>
                         <div class="slider-container">
                             <input type="range" id="brightnessSlider" min="0" max="100" value="0" class="slider slider-light">
                             <span class="slider-value" id="brightnessValue">0%</span>
                         </div>
                     </div>
                     <div class="control-row">
-                        <label data-i18n="light.temp">色温</label>
+                        <label for="lightColor" data-i18n="light.color">灯光颜色</label>
                         <div class="slider-container">
-                            <input type="range" id="tempSlider" min="2700" max="6500" step="100" value="4000" class="slider slider-light">
-                            <span class="slider-value" id="lightTempValue">4000K</span>
-                        </div>
-                    </div>
-                    <div class="btn-group">
-                        <button class="btn btn-sm" onclick="setLightBrightness(100)" data-i18n="light.full">全亮</button>
-                        <button class="btn btn-sm" onclick="setLightBrightness(50)" data-i18n="light.half">半亮</button>
-                        <button class="btn btn-sm" onclick="setLightWhite()" data-i18n="light.white">白光</button>
-                        <button class="btn btn-sm" onclick="setLightNight()" data-i18n="light.night">夜灯</button>
-                        <button class="btn btn-sm btn-danger" onclick="turnLightOff()" data-i18n="light.off">关闭</button>
-                    </div>
-                    <div class="control-row">
-                        <label data-i18n="light.color">自定义颜色</label>
-                        <div class="slider-container">
-                            <input type="color" id="lightColor" value="#ffb347" class="color-picker">
+                            <input type="color" id="lightColor" value="#ffffff" class="color-picker">
                             <button class="btn btn-sm" onclick="applyLightColor()" data-i18n="light.apply">应用</button>
                         </div>
+                    </div>
+                    <div class="light-colors" role="group" aria-label="常用颜色">
+                        <button class="btn btn-sm" onclick="setLightColor('#ffffff')" data-i18n="light.white">白色</button>
+                        <button class="btn btn-sm" onclick="setLightColor('#ffb347')" data-i18n="light.amber">琥珀</button>
+                        <button class="btn btn-sm" onclick="setLightColor('#55aaff')" data-i18n="light.blue">天蓝</button>
+                        <button class="btn btn-sm" onclick="setLightColor('#bb88ff')" data-i18n="light.purple">淡紫</button>
                     </div>
                 </div>
             </div>
@@ -301,7 +314,7 @@
         </div>
     </main>
 
-    <script src="{{ url_for('static', filename='js/lang.js') }}?v=20261004a"></script>
-    <script src="{{ url_for('static', filename='js/main.js') }}?v=20261007b"></script>
+    <script src="{{ url_for('static', filename='js/lang.js') }}?v=20261007-light-levels"></script>
+    <script src="{{ url_for('static', filename='js/main.js') }}?v=20261007-light-levels"></script>
 </body>
 </html>

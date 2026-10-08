@@ -76,6 +76,8 @@ DEFAULTS: dict = {
             "method": "simple_grayscale_cosine",
             "model_path": str(RECOGNITION_MODEL_PATH),
             "similarity_threshold": 0.5,
+            # 第一名只比第二名略高时宁可拒绝，避免相似人员之间误放行。
+            "ambiguity_margin": 0.08,
             "image_size": 112,
         },
     },

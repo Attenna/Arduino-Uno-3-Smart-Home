@@ -22,6 +22,7 @@ public:
     void cyan();
     // rgb 的 level 是「整体亮度缩放」0~255，缺省 255 = 原样输出（与旧行为一致）。
     void rgb(int r, int g, int b, int level = 255);
+    void pixels(int r, int g, int b, int level, byte count);
     int getLevel() const;
     // 夜灯诊断用：当前实际点亮的灯珠数（0 = 整条都亮/熄灭由 level 决定）。
     uint8_t litCount() const;

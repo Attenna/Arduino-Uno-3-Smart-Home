@@ -1,5 +1,12 @@
 // ==================== 历史数据页面 JS ====================
 let historyChart = null;
+// 光照视图的数据点（按时间升序），供 tooltip 补「亮/暗」标注；
+// 状态取自后端 /api/light-level/history 的 light_dark（与引擎同款回差）。
+let lightStatesAsc = null;
+// 数据点配色：亮=暖黄，暗=夜蓝，无读数=灰
+const LIGHT_DOT_BRIGHT = '#ffca28';
+const LIGHT_DOT_DARK = '#4fa3ff';
+const LIGHT_DOT_UNKNOWN = '#8ba4b8';
 
 document.addEventListener('DOMContentLoaded', () => {
     updateClock();
@@ -79,7 +86,17 @@ function initHistoryChart() {
                     borderWidth: 1,
                     titleColor: '#e8f0f8',
                     bodyColor: '#8ba4b8',
-                    padding: 12
+                    padding: 12,
+                    callbacks: {
+                        // 光照视图在提示里补「亮/暗」，让每个数据点都自带标注
+                        label: (ctx) => {
+                            const base = `${ctx.dataset.label}: ${ctx.formattedValue}`;
+                            const point = lightStatesAsc && lightStatesAsc[ctx.dataIndex];
+                            if (point && point.light_dark === true) return `${base} · ${t('history.light_dark')}`;
+                            if (point && point.light_dark === false) return `${base} · ${t('history.light_bright')}`;
+                            return base;
+                        }
+                    }
                 }
             },
             scales: {
@@ -176,6 +193,8 @@ async function loadHistory() {
     
     // 反转数据（时间升序）
     const reversed = [...data].reverse();
+    // 光照视图保留升序行供 tooltip 标注；其它视图清空，避免串用上一次的历史
+    lightStatesAsc = dataType === 'light_level' ? reversed : null;
     
     // 更新图表
     if (historyChart) {
@@ -206,7 +225,28 @@ async function loadHistory() {
         historyChart.data.datasets[0].label = chartLabel;
         historyChart.data.datasets[0].borderColor = chartColor;
         historyChart.data.datasets[0].backgroundColor = chartBgColor;
-        historyChart.data.datasets[0].pointBackgroundColor = chartColor;
+        if (dataType === 'light_level') {
+            // ADC 越大越暗：反转 Y 轴，让「暗」落在下方、符合直觉（刻度仍是原始 ADC）
+            historyChart.options.scales.y.reverse = true;
+            historyChart.options.scales.y.title = {
+                display: true, text: t('chart.light_level_axis'),
+                color: '#5a7a8e', font: { size: 10 }
+            };
+            // 数据点按亮/暗着色，让标注一眼可辨
+            const dots = reversed.map(d => d.light_dark === true ? LIGHT_DOT_DARK
+                : (d.light_dark === false ? LIGHT_DOT_BRIGHT : LIGHT_DOT_UNKNOWN));
+            historyChart.data.datasets[0].pointBackgroundColor = dots;
+            historyChart.data.datasets[0].pointBorderColor = dots;
+            historyChart.data.datasets[0].pointRadius = 3;
+            historyChart.data.datasets[0].fill = false;
+        } else {
+            historyChart.options.scales.y.reverse = false;
+            historyChart.options.scales.y.title = { display: false };
+            historyChart.data.datasets[0].pointBackgroundColor = chartColor;
+            historyChart.data.datasets[0].pointBorderColor = chartColor;
+            historyChart.data.datasets[0].pointRadius = 2;
+            historyChart.data.datasets[0].fill = true;
+        }
         historyChart.update();
     }
     
@@ -271,7 +311,7 @@ function updateTable(dataType, data) {
             headerHTML += '<th>' + t('chart.humidity') + '</th><th>' + t('chart.temp') + '</th>';
             break;
         case 'light_level':
-            headerHTML += '<th>' + t('chart.light_level') + '</th>';
+            headerHTML += '<th>' + t('chart.light_level') + '</th><th>' + t('history.light_status') + '</th>';
             break;
         case 'door_window':
             headerHTML += '<th>' + t('history.device_type') + '</th><th>' + t('history.device_name') + '</th><th>' + t('history.status') + '</th>';
@@ -299,9 +339,14 @@ function updateTable(dataType, data) {
             case 'humidity':
                 bodyHTML += `<td>${num1(d.humidity)}</td><td>${num1(d.temperature)}</td>`;
                 break;
-            case 'light_level':
-                bodyHTML += `<td>${num1(d.light_raw)}</td>`;
+            case 'light_level': {
+                const lvTag = d.light_dark === true
+                    ? `<span class="status-tag dark">${t('history.light_dark')}</span>`
+                    : (d.light_dark === false
+                        ? `<span class="status-tag bright">${t('history.light_bright')}</span>` : '--');
+                bodyHTML += `<td>${num1(d.light_raw)}</td><td>${lvTag}</td>`;
                 break;
+            }
             case 'door_window':
                 const dwStatus = d.status === 'open' ? '已打开' : '已关闭';
                 const dwClass = d.status === 'open' ? 'granted' : 'denied';

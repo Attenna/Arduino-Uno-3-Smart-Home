@@ -688,6 +688,11 @@ class McpHardwareBridge:
         action = "night" if str(mode).lower() == "night" else "white"
         return self.call_tool("light", {"action": action, "value": value})
 
+    def control_light_pixels(self, brightness_pct, rgb, count):
+        return self.call_tool("light", {"action": "pixels", "count": count,
+            "r": rgb[0], "g": rgb[1], "b": rgb[2],
+            "value": max(0, min(255, round(brightness_pct * 255 / 100)))})
+
     def control_light_temp(self, kelvin: int, brightness_pct: int) -> tuple[bool, str]:
         """色温白光：kelvin 2700~6500K，brightness_pct 0~100。"""
         if brightness_pct <= 0:

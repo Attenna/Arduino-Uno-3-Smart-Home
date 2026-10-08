@@ -7,7 +7,7 @@
 
 数据流：
     LLM(voice_assistant) ──MCP stdio──▶ 本 server ──JSON 命令──▶ Module B (USB)
-                                         │
+                                         ├─ light 命令 ───────▶ Module A (USB)
                                          └─ A 板读线程缓存最新传感器状态
 
 启动：
@@ -100,6 +100,35 @@ def nec_code(address: int, command: int) -> int:
     return ((a << 24) | ((~a & 0xFF) << 16) | (c << 8) | (~c & 0xFF)) & 0xFFFFFFFF
 
 
+def encode_a_light_command(cmd: dict, request_id: int) -> bytes:
+    """Encode a light command below Uno's 64-byte serial RX buffer limit."""
+    action = str(cmd.get("action") or "").lower()
+    value = int(cmd.get("value", 255))
+    count = int(cmd.get("count", 8))
+    presets = {
+        "red": (255, 0, 0), "green": (0, 255, 0), "blue": (0, 0, 255),
+        "yellow": (255, 180, 0), "purple": (160, 0, 255), "cyan": (0, 180, 255),
+    }
+    if action == "off":
+        code, value, r, g, b, count = "O", 0, 0, 0, 0, 0
+    elif action in ("white", "night"):
+        code, r, g, b = "W", 255, 255, 255
+        if action == "night":
+            count = 2
+    elif action in ("rgb", "pixels"):
+        code = "P"
+        r, g, b = (int(cmd.get(k, 0)) for k in ("r", "g", "b"))
+    elif action in presets:
+        code = "P"
+        r, g, b = presets[action]
+    else:
+        raise ValueError(f"unsupported A-board light action: {action}")
+    packet = f"L,{code},{value},{r},{g},{b},{count},{request_id}\n".encode("ascii")
+    if len(packet) >= 64:
+        raise ValueError("A-board light command exceeds serial RX buffer")
+    return packet
+
+
 # ==================== 智能家居控制器（持有串口）====================
 
 # A 板读线程自愈参数
@@ -112,6 +141,14 @@ _B_CMD_TIMEOUT = 2.0            # 单条命令等响应的上限（0.8s 对舵�
 _B_HEARTBEAT_S = 10.0
 _B_HB_FAILS_TO_REOPEN = 3       # 单次抖动不重开：重开会经 DTR 复位 B 板
 _B_CMD_FAILS_TO_REOPEN = 3      # 命令连续超时这么多次才重开（理由同上，见 _send_b）
+
+# B 板断流补发（nudge）：实测 B 板每帧只吐约 146 字节就停住，余下的字节要等固件
+# 再解析到「一整行」命令才发完（`\n`/`\r` 这类空行不算，任意完整命令都算）。
+# 距离帧、state 帧、V2.9 起带 state 快照的 response 帧都超过该长度，因此只写一次
+# 命令等不到完整响应。宽限期内没等到就补一条**只读**命令把断流顶开，再继续等。
+_B_STALL_NUDGE_AFTER = 0.25     # 首次等待宽限（秒），超时即补发
+_B_STALL_NUDGE_CMD = {"cmd": "system", "action": "status"}   # 只读，不动执行器
+_B_RX_MAX_BYTES = 8192          # 接收重组缓冲上限：拼不出完整帧就丢弃重新同步
 
 
 class HomeController:
@@ -146,6 +183,14 @@ class HomeController:
         self._a_err_first_ts = 0.0
         self._a_err_last_log = 0.0
         self._a_reopen_delay = _A_REOPEN_BASE_DELAY
+        # A 板同时负责传感器上报与灯带命令。读取仍由唯一后台线程完成；命令发送方
+        # 只登记 id 并等待该线程分发 response，避免两个读者争抢串口帧。
+        self._a_cmd_lock = threading.Lock()
+        self._a_resp_lock = threading.Lock()
+        self._a_resp_event = threading.Event()
+        self._a_resp: Optional[dict] = None
+        self._a_waiter_id = -1
+        self._a_next_id = 0
 
         # ── B 板：常驻读取线程 + 等待者表（与 A 板同构）──
         # B 板串口也必须**只有一个读者**。原先"发一条等一条"内联读，没有命令时
@@ -183,6 +228,10 @@ class HomeController:
         # 最近一条下发命令的完整反馈（命令/参数/成败/耗时/固件回读状态），
         # 供 get_serial_health 暴露给中间层日志与排障。
         self._b_last_cmd: dict = {}
+        # B 板接收重组缓冲：断流会让一帧拆成两段到达（见 _send_b_once 的 nudge），
+        # 必须跨 read() 拼接才能还原成完整 JSON。读线程写、重开路径清，加锁保护。
+        self._b_rxbuf = bytearray()
+        self._b_rx_lock = threading.Lock()
 
         if self.ser_a is not None:
             self._a_thread = threading.Thread(
@@ -300,7 +349,12 @@ class HomeController:
                         })
                     if ev_name == "keypad":
                         self._handle_keypad(msg.get("key", ""))
-                # response / who 忽略
+                elif mtype == "response":
+                    with self._a_resp_lock:
+                        if msg.get("id") == self._a_waiter_id:
+                            self._a_resp = msg
+                            self._a_resp_event.set()
+                # who 忽略
             except (serial.SerialException, OSError) as e:
                 # 设备级错误（USB 断连/重枚举/多访问者）：关闭旧句柄并退避重开
                 self._note_a_error(e)
@@ -342,6 +396,31 @@ class HomeController:
             })
 
     # ── B 板发命令 + 收响应 ──
+    def _send_a(self, cmd: dict) -> str:
+        """向 Module A 下发灯带命令，并等待 A 读线程按请求 id 交付响应。"""
+        if self.ser_a is None:
+            return "error: Module A 未连接，无法执行灯光操作"
+        with self._a_cmd_lock:
+            self._a_next_id = (self._a_next_id + 1) & 0x7FFFFFFF
+            request_id = self._a_next_id
+            with self._a_resp_lock:
+                self._a_waiter_id = request_id
+                self._a_resp = None
+                self._a_resp_event.clear()
+            try:
+                self.ser_a.write(encode_a_light_command(cmd, request_id))
+                self.ser_a.flush()
+            except Exception as e:
+                return f"error: A 板写入失败: {e}"
+            if not self._a_resp_event.wait(_B_CMD_TIMEOUT):
+                return "error: A 板响应超时"
+            with self._a_resp_lock:
+                response = self._a_resp or {}
+                self._a_waiter_id = -1
+            if response.get("result") != "ok":
+                return "error: A 板拒绝灯光命令"
+            return "ok"
+
     def _send_b(self, cmd: dict, allow_reopen: bool = True,
                 expect: tuple = ("response",)) -> str:
         """发命令给 Module B；连续多次超时才重开串口自愈。
@@ -421,12 +500,16 @@ class HomeController:
 
     def _send_b_once(self, line: str, cmd_id: int = -1,
                      expect: tuple = ("response",),
-                     timeout: float = _B_CMD_TIMEOUT) -> str:
+                     timeout: float = _B_CMD_TIMEOUT,
+                     nudge: bool = True) -> str:
         """写一条命令并等它的响应帧（调用方需持有 _b_lock）。
 
         只等 ``expect`` 里列出的帧类型：普通命令等 response，心跳等 state（B 板的
         system/status 回的是 state 帧，不是 response）。响应还要 id 对得上（或对端
         是旧固件、根本不回显 id）才算本次结果，其余一律丢弃并记录。
+
+        ``nudge``：宽限期内没等到响应时，补发一条只读命令把 B 板的断流顶开，再继续
+        等原命令的响应（原因见 _B_STALL_NUDGE_AFTER 的注释）。总等待仍不超过 timeout。
         """
         if self.ser_b is None:
             return "error: Module B 未连接"
@@ -445,7 +528,11 @@ class HomeController:
                 self._b_expect = ()
                 self._b_waiter_id = -1
             return f"error: 串口写入失败 {e}"
-        got = self._b_resp_event.wait(timeout)
+        grace = min(_B_STALL_NUDGE_AFTER, timeout) if nudge else timeout
+        got = self._b_resp_event.wait(grace)
+        if not got and nudge:
+            self._nudge_b()
+            got = self._b_resp_event.wait(max(0.0, timeout - grace))
         with self._b_resp_lock:
             self._b_waiter = False
             self._b_expect = ()
@@ -464,6 +551,24 @@ class HomeController:
                 return "error: B 板未返回测距数据，请确认固件 V2.10 或以上"
             return "ok"
         return f"error: B 板返回 {resp}"
+
+    def _nudge_b(self) -> None:
+        """补发一条只读命令，把 B 板停住的断流顶开（调用方需持有 _b_lock）。
+
+        这一行会被固件当成真命令执行，所以**必须是只读命令**——用执行器命令会造成
+        门/窗/灯被重复动作。system/status 不改任何执行器状态，回的是 state 帧，顺带
+        刷新回读缓存；它的响应带独立 id，不会顶包当前等待者。
+        """
+        nudge_id = self._b_next_id
+        self._b_next_id += 1
+        line = json.dumps(dict(_B_STALL_NUDGE_CMD, id=nudge_id),
+                          ensure_ascii=False) + "\n"
+        try:
+            self.ser_b.write(line.encode("utf-8"))
+            self._b_last_cmd_ts = time.time()
+        except Exception as e:                       # noqa: BLE001
+            # 补发失败不额外制造超时：原等待照常走到超时，由上层重开自愈兜底。
+            print(f"[B] 断流补发失败: {e}", file=sys.stderr, flush=True)
 
     # ── B 板常驻读取线程（串口唯一读者）──
     def _note_b_error(self, e: Exception) -> None:
@@ -488,6 +593,12 @@ class HomeController:
 
         不重开串口（重开由 _send_b 超时路径或心跳线程持 _b_lock 执行）；异常限频记录
         后继续读，句柄被重开后自动续上新的 self.ser_b。
+
+        按字节读、再按 JSON 对象重组，不用 readline：B 板一帧吐到约 146 字节就断流
+        （见 _send_b_once 的 nudge），超过该长度的帧（距离帧、state 帧、V2.9 起带
+        state 快照的 response 帧）必然拆成两段到达。readline 会把两段各当成一行，
+        结果是「非JSON行」刷屏、等待者永远等不到归属帧（生产上表现为心跳失败 +
+        命令超时 + 反复重开串口复位 B 板）。
         """
         while not self._b_stop.is_set():
             ser = self.ser_b
@@ -495,36 +606,90 @@ class HomeController:
                 self._b_stop.wait(0.5)
                 continue
             try:
-                raw = ser.readline()
+                # in_waiting 有货就一次取完（低延迟）；没货按 1 字节阻塞等（带超时），
+                # 这样等待者一有字节就能被唤醒，不必等 tty 的 1s 超时。
+                pending = ser.in_waiting
+                chunk = ser.read(pending if pending else 1)
             except Exception as e:                   # noqa: BLE001
                 # 句柄被重开路径换走了：_send_b（命令响应超时）与心跳线程都会重开 B
-                # 口，它们 close 掉旧 fd 后，本线程手里的 ser 就成了死句柄，readline
-                # 必然抛——pyserial 内部常给出 "'NoneType' object cannot be
-                # interpreted as an integer" 这类牛头不对马嘴的 TypeError。这不是链路
-                # 故障（重开是正常自愈，成功日志由 _reopen_b 打），所以不计入异常计数、
-                # 不打误导日志，直接换到新句柄继续读。
+                # 口，它们 close 掉旧 fd 后，本线程手里的 ser 就成了死句柄，read 必然
+                # 抛——pyserial 内部常给出 "'NoneType' object cannot be interpreted
+                # as an integer" 这类牛头不对马嘴的 TypeError。这不是链路故障（重开是
+                # 正常自愈，成功日志由 _reopen_b 打），所以不计入异常计数、不打误导
+                # 日志，直接换到新句柄继续读。
                 if ser is not self.ser_b:
                     self._b_stop.wait(0.2)
                     continue
                 self._note_b_error(e)
                 self._b_stop.wait(0.5)
                 continue
-            if not raw:
-                continue
-            text = raw.decode("utf-8", "replace").strip()
-            if not text:
+            if not chunk:
                 continue
             if self._b_err_count:
                 print(f"[B] 读取恢复正常（此前连续 {self._b_err_count} 次异常）",
                       file=sys.stderr, flush=True)
                 self._b_err_count = 0
             self._b_last_frame_ts = time.time()
-            try:
-                msg = json.loads(text)
-            except json.JSONDecodeError:
-                print(f"[B] 非JSON行: {text[:120]}", file=sys.stderr, flush=True)
+            for text in self._take_b_frames(chunk):
+                try:
+                    msg = json.loads(text)
+                except json.JSONDecodeError:
+                    print(f"[B] 非JSON行: {text[:120]}", file=sys.stderr, flush=True)
+                    continue
+                self._dispatch_b_frame(msg, text)
+
+    def _take_b_frames(self, chunk: bytes) -> list:
+        """把新到的字节并入重组缓冲，取出其中所有完整的 JSON 对象文本。
+
+        以 `{` 定位对象起点（丢弃前面残留的 `\\r\\n`/噪声），按花括号配对找终点，
+        并跟踪字符串状态，避免把字符串里的括号当成结构。跨 read() 的半个对象留在
+        缓冲里等下一段；缓冲长期拼不出完整对象则整段丢弃重新同步，防止无界增长。
+        """
+        with self._b_rx_lock:
+            self._b_rxbuf.extend(chunk)
+            texts: list = []
+            while True:
+                start = self._b_rxbuf.find(0x7B)          # '{'
+                if start < 0:
+                    del self._b_rxbuf[:]
+                    break
+                if start:
+                    del self._b_rxbuf[:start]
+                end = self._json_object_end(self._b_rxbuf)
+                if end is None:
+                    break
+                texts.append(bytes(self._b_rxbuf[:end + 1]).decode("utf-8", "replace"))
+                del self._b_rxbuf[:end + 1]
+            if len(self._b_rxbuf) > _B_RX_MAX_BYTES:
+                print(f"[B] 重组缓冲超过 {_B_RX_MAX_BYTES} 字节仍无完整帧，"
+                      f"丢弃重新同步", file=sys.stderr, flush=True)
+                del self._b_rxbuf[:]
+            return texts
+
+    @staticmethod
+    def _json_object_end(buf) -> Optional[int]:
+        """返回缓冲里第一个完整 JSON 对象的结束下标（`}`），未收全则 None。"""
+        depth = 0
+        in_string = False
+        escaped = False
+        for index, byte in enumerate(buf):
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif byte == 0x5C:                        # '\\'
+                    escaped = True
+                elif byte == 0x22:                        # '"'
+                    in_string = False
                 continue
-            self._dispatch_b_frame(msg, text)
+            if byte == 0x22:
+                in_string = True
+            elif byte == 0x7B:                            # '{'
+                depth += 1
+            elif byte == 0x7D:                            # '}'
+                depth -= 1
+                if depth == 0:
+                    return index
+        return None
 
     def _dispatch_b_frame(self, msg: dict, text: str) -> None:
         """按 type 分类一帧：response/state 唤醒等待者，ready/alert 记账并上报。"""
@@ -679,6 +844,9 @@ class HomeController:
         帧分类已经由读取线程负责，不再需要靠清缓冲来避免误匹配。
         """
         port = self.port_b or getattr(self.ser_b, "port", None)
+        # 复位前的半个对象不能和后复位的数据拼在一起（会拼出假帧），清空重组缓冲
+        with self._b_rx_lock:
+            del self._b_rxbuf[:]
         try:
             self.ser_b.close()
         except Exception:                            # noqa: BLE001
@@ -707,7 +875,7 @@ class HomeController:
             self.ser_b = None
 
     # ── 工具实现 ──
-    def handle_light(self, action, value=None, r=None, g=None, b=None, temp=None) -> str:
+    def handle_light(self, action, value=None, r=None, g=None, b=None, temp=None, count=None) -> str:
         cmd = {"cmd": "light", "action": action}
         if action == "white":
             cmd["value"] = value if value is not None else 255
@@ -719,13 +887,17 @@ class HomeController:
                 return "error: temp 需要 temp 参数(2700~6500)"
             cmd["temp"] = temp
             cmd["value"] = value if value is not None else 255
-        elif action == "rgb":
+        elif action in ("rgb", "pixels"):
             if None in (r, g, b):
                 return "error: rgb 需要 r/g/b 三个参数(0~255)"
+            if action == "pixels":
+                if type(count) is not int or not 1 <= count <= 8:
+                    return "error: pixels count 必须为 1~8 的整数"
+                cmd["count"] = count
             cmd.update({"r": r, "g": g, "b": b})
             if value is not None:
                 cmd["value"] = value          # 整体亮度缩放，缺省由固件按 255 处理
-        return self._send_b(cmd)
+        return self._send_a(cmd)
 
     def handle_door(self, action) -> str:
         return self._send_b({"cmd": "door", "action": action})
@@ -855,20 +1027,22 @@ def _audit(name: str) -> None:
 @mcp.tool()
 async def light(
     action: Literal["off", "white", "night", "temp", "red", "green", "blue",
-                    "yellow", "purple", "cyan", "rgb"],
+                    "yellow", "purple", "cyan", "rgb", "pixels"],
     value: Optional[int] = None,
     r: Optional[int] = None,
     g: Optional[int] = None,
     b: Optional[int] = None,
     temp: Optional[int] = None,
+    count: Optional[int] = None,
 ) -> str:
     """控制灯光。action：off/white(可带 value 亮度 0-255)/night(夜灯，只亮中间几颗，value 可选)/
     temp(色温，需 temp 2700-6500K，value 可选亮度)/red/green/blue/yellow/purple/cyan/rgb(需 r,g,b 0-255，value 可选亮度缩放)。
 
+    pixels：居中点亮 count(1~8) 颗，需 r/g/b，value 为亮度；旧固件会拒绝此动作。
     注意：B 板固件没有 "on" 分支，开灯请用 white（或彩色预设/色温）。
     """
     _audit("light")
-    return await asyncio.to_thread(HOME.handle_light, action, value, r, g, b, temp)
+    return await asyncio.to_thread(HOME.handle_light, action, value, r, g, b, temp, count)
 
 
 @mcp.tool()

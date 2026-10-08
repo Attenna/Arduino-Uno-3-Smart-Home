@@ -8,19 +8,23 @@
 
 ## 1. 模块用途
 
-Module B 是一块 Arduino Uno，负责执行硬件动作并驱动显示设备。**固件版本 `V2.4`**，经 2026-09 正式版硬件裁剪：
+Module B 是一块 Arduino Uno，负责执行硬件动作并驱动显示设备。**固件版本 `V2.11`**，经 2026-09 正式版硬件裁剪：
 
-**现役执行器/显示设备（7 类）**
+**现役执行器/显示设备（6 类）**
 
 | # | 执行器 | 类型 | 说明 |
 |---|--------|------|------|
 | 1 | 门舵机（SG90） | PWM | 开门 90° / 关门 0° |
 | 2 | 窗舵机（SG90） | PWM | 开 120° / 关 0° / 正常 45° |
 | 3 | 直流风扇 | 开关 | 开关控制（D8 非 PWM） |
-| 4 | NeoPixel RGB 灯带 | 数字 | 8 颗，颜色/亮度 |
-| 5 | 蜂鸣器 | 数字 | 持续 / 间歇蜂鸣 |
-| 6 | SH1106 OLED | SPI | 8 行 × 16 列文本 |
-| 7 | V1221 红外发射管 | 数字 | NEC 协议 + 美的空调长码，38kHz，遥控家电 |
+| 4 | 蜂鸣器 | 数字 | 持续 / 间歇蜂鸣 |
+| 5 | SH1106 OLED | SPI | 8 行 × 16 列文本 |
+| 6 | V1221 红外发射管 | 数字 | NEC 协议 + 美的空调长码，38kHz，遥控家电 |
+
+**其它 I/O**：
+
+- **HC-SR04 超声波测距**（V2.10 起）：`Trig=D6` / `Echo=D5`，由 `get_distance`（MCP）/ `{"cmd":"ultrasonic","action":"read"}` 按需测距；详见 [docs/ultrasonic.md](../docs/ultrasonic.md)。
+- **NeoPixel RGB 灯带**：**灯带数据线现接 A 板 A0**，`light` 命令经网关一律路由到 Module A 执行；B 板固件保留同名 `Light` 驱动与 `light` 命令处理，但不参与网关路由。
 
 **已裁剪**
 
@@ -46,7 +50,7 @@ Module B 是一块 Arduino Uno，负责执行硬件动作并驱动显示设备�
 | Arduino Uno | 1 |
 | SG90 舵机 | 2 |
 | 直流风扇 + 驱动（L298N/TB6612） | 1 |
-| NeoPixel 灯带（8 颗） | 1 |
+| NeoPixel 灯带（8 颗） | 1（数据线接 **A 板 A0**，`light` 命令由 A 板执行） |
 | 有源/无源蜂鸣器 | 1 |
 | SH1106 OLED 128×64（SPI 4 线） | 1 |
 | V1221 红外发射管（TSAL1221，940nm） | 1 |
@@ -59,7 +63,7 @@ Module B 是一块 Arduino Uno，负责执行硬件动作并驱动显示设备�
 |------|------|
 | D2 | 门舵机 |
 | D3 | 窗舵机 |
-| D4 | NeoPixel RGB 灯带（数据线） |
+| D4 | NeoPixel 灯带数据线（B 板保留驱动；灯带实际接 **A 板 A0**，`light` 命令由 A 板执行） |
 | D5 | HC-SR04 Echo（输入） |
 | D6 | HC-SR04 Trig（输出） |
 | D7 | 风扇 INB（方向） |
@@ -121,6 +125,10 @@ PlatformIO 已在 [platformio.ini](platformio.ini) 中声明。
 | `system` | `status` | - | 查询执行器状态 |
 | `system` | `who` | - | 返回设备标识 |
 
+> **`light` 命令由 Module A 执行**：灯带接在 A 板 A0，MCP 的 `light` 工具与面板/语音/自动化
+> 的灯光动作都路由到 A 板（支持的 `action` 见 [module-a-sensor/README.md](../module-a-sensor/README.md) §5：
+> `off`/`white`/`night`/预设色/`rgb`/`pixels`）。B 板上表里的 `light` 分支为保留驱动，不由网关使用。
+
 ### 5.2 命令示例
 
 ```json
@@ -159,7 +167,7 @@ PlatformIO 已在 [platformio.ini](platformio.ini) 中声明。
 
 **上电输出：**
 ```json
-{"module":"output","type":"ready","board":"MODULE_B","role":"OUTPUT_NODE","version":"V2.4"}
+{"module":"output","type":"ready","board":"MODULE_B","role":"OUTPUT_NODE","version":"V2.11","state":{"door":"closed","window":"normal","fan":0,"light":0,"buzzer":"off"}}
 ```
 
 **输入 `{"cmd":"light","action":"red"}`，输出：**
@@ -197,9 +205,11 @@ pio run -t upload --upload-port COM4
 | `ENABLE_TM1637` | `0` | 数码管裁剪开关（默认已移除） |
 | `ENABLE_IR_TX` | `1` | 红外发射裁剪开关 |
 | `LED_COUNT` | `8` | 灯带颗数 |
-| `LIGHT_BRIGHTNESS` | `60` | 灯带整体亮度 0~255 |
+| `LIGHT_BRIGHTNESS` | `128` | 灯带整体亮度 0~255（限流约 50%，避免满白拉低 B 板 5V） |
 | `LIGHT_BOOT_ON` | `0` | `1`=上电默认点亮，`0`=上电熄灭 |
 | `LIGHT_BOOT_LEVEL` | `20` | 上电点亮时的亮度（越小越省电） |
+| `ULTRASONIC_TRIG_PIN` / `ULTRASONIC_ECHO_PIN` | `6` / `5` | HC-SR04 Trig/Echo（D6/D5） |
+| 看门狗 | `WDTO_4S` | V2.11 起 4 秒看门狗（原 V2.7 为 2 秒） |
 | `OLED_IS_SH1106` | `1` | `1`=SH1106，`0`=SSD1306 |
 | `BUZZER_ACTIVE_LOW` | `1` | `1`=低电平触发，`0`=高电平触发 |
 | `BUZZER_DEFAULT_OFF` | `1` | `1`=上电静音，`0`=上电响 |

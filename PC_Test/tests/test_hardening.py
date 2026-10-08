@@ -270,37 +270,37 @@ class AcProtocolTests(unittest.TestCase):
 
 
 class LightSerialTests(unittest.TestCase):
-    """Web 语义 → B 板串口帧的映射（MCP 工具层）。"""
+    """Web 语义 → A 板串口帧的映射（MCP 工具层）。"""
 
     def _controller(self):
         from mcp_home_server import HomeController
         controller = HomeController.__new__(HomeController)
-        controller._send_b = Mock(return_value="ok")
+        controller._send_a = Mock(return_value="ok")
         return controller
 
     def test_white_is_unchanged(self):
         controller = self._controller()
         controller.handle_light("white", 180)
-        controller._send_b.assert_called_once_with(
+        controller._send_a.assert_called_once_with(
             {"cmd": "light", "action": "white", "value": 180})
 
     def test_night_falls_back_to_firmware_default(self):
         controller = self._controller()
         controller.handle_light("night")
-        controller._send_b.assert_called_once_with(
+        controller._send_a.assert_called_once_with(
             {"cmd": "light", "action": "night", "value": 60})
 
     def test_temp_needs_kelvin(self):
         controller = self._controller()
         self.assertTrue(controller.handle_light("temp").startswith("error"))
         controller.handle_light("temp", 200, temp=3000)
-        controller._send_b.assert_called_once_with(
+        controller._send_a.assert_called_once_with(
             {"cmd": "light", "action": "temp", "temp": 3000, "value": 200})
 
     def test_rgb_keeps_value_as_brightness(self):
         controller = self._controller()
         controller.handle_light("rgb", 128, r=255, g=128, b=0)
-        controller._send_b.assert_called_once_with(
+        controller._send_a.assert_called_once_with(
             {"cmd": "light", "action": "rgb", "r": 255, "g": 128, "b": 0, "value": 128})
 
 

@@ -128,6 +128,44 @@ class LightApiTests(unittest.TestCase):
         return self.client.post("/api/light", json=payload,
                                headers={"Origin": "http://localhost"})
 
+    def test_pixel_levels_preserve_color_and_brightness(self):
+        for count in (2, 4, 6, 8):
+            response = self._post({"status": "on", "brightness": 35,
+                                   "rgb": [255, 90, 10], "count": count})
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.get_json()["light_count"], count)
+            self.hardware.assert_called_with("control_light_pixels", 35, (255, 90, 10), count)
+        self._post({"status": "on", "brightness": 60})
+        self.hardware.assert_called_with("control_light_pixels", 60, (255, 90, 10), 8)
+        self._post({"status": "off"})
+        self.assertEqual(self._row()["light_count"], 8)
+        self._post({"status": "on"})
+        self.hardware.assert_called_with("control_light_pixels", 100, (255, 90, 10), 8)
+
+    def test_white_with_explicit_count_uses_pixels(self):
+        self._post({"status": "on", "brightness": 50, "mode": "white", "count": 4})
+        self.hardware.assert_called_with("control_light_pixels", 50, (255, 255, 255), 4)
+
+    def test_invalid_count_never_reaches_hardware(self):
+        for count in (0, 9, True, 2.5, "4"):
+            self.assertEqual(self._post({"status": "on", "count": count}).status_code, 400)
+        self.hardware.assert_not_called()
+
+    def test_failed_pixel_command_does_not_record_level(self):
+        self._post({"status": "on", "brightness": 40, "rgb": [5, 6, 7], "count": 2})
+        self.hardware.return_value = (False, "unknown_action")
+        response = self._post({"status": "on", "brightness": 80, "count": 6})
+        self.assertGreaterEqual(response.status_code, 400)
+        self.assertEqual(self._row()["light_count"], 2)
+        self.assertEqual(self._row()["light_brightness"], 40)
+
+    def test_pixel_tool_report_preserves_count(self):
+        report = devices._tool_state_report("light", {"action": "pixels", "count": 4,
+                                            "r": 1, "g": 2, "b": 3, "value": 153})
+        devices._bookkeep(report, "test")
+        self.assertEqual(self._row()["light_count"], 4)
+        self.assertEqual(self._row()["light_rgb"], [1, 2, 3])
+
     def test_brightness_only_keeps_color_temperature(self):
         self._post({"status": "on", "brightness": 80, "temp": 4000})
         self.assertEqual((self._row()["light_mode"], self._row()["light_temp"]),
@@ -207,7 +245,7 @@ class LightApiTests(unittest.TestCase):
         self._post({"status": "on", "brightness": 30, "rgb": [10, 20, 30]})
         payload = self.client.get("/api/light",
                                   headers={"Origin": "http://localhost"}).get_json()
-        self.assertEqual(payload, {"light_status": "on", "light_brightness": 30,
+        self.assertEqual(payload, {"light_status": "on", "light_brightness": 30, "light_count": 8,
                                    "light_mode": "rgb", "light_temp": None,
                                    "light_rgb": [10, 20, 30]})
 

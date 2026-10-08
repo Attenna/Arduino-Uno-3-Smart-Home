@@ -23,10 +23,16 @@ OUTPUTS = ('door_status', 'window_status', 'fan_speed',
            'light_status', 'light_brightness', 'buzzer_status',
            # 灯的「亮法」（白光/夜灯/色温/自定义颜色）：与开关、亮度一起持久化，
            # 面板据此回显当前是怎么亮的，也让只调亮度的命令不必猜颜色（#27）
-           'light_mode', 'light_temp', 'light_rgb',
+           'light_mode', 'light_temp', 'light_rgb', 'light_count',
            # 美的空调（红外遥控）：都是"已收到 ACK 的指令状态"，与其它执行器一样持久保留
            'ac_status', 'ac_mode', 'ac_temperature', 'ac_fan',
            'ac_swing_ud', 'ac_swing_lr', 'ac_eco', 'ac_fzc', 'ac_timer')
+
+# 光照明暗二态的回差边界：与 automation/engine.py 的
+# SmartHomeEngine.LIGHT_DARK_RAW / LIGHT_BRIGHT_RAW 必须保持一致，
+# 历史接口据此给每个采样点补 light_dark 标注，避免前端另行定义而口径不一。
+LIGHT_DARK_RAW = 730
+LIGHT_BRIGHT_RAW = 670
 
 
 def utcnow():
@@ -153,7 +159,7 @@ class SmartHomeDB:
             # 灯的「亮法」（#27）：除白光/夜灯外还有色温与自定义颜色，B 板一条命令
             # 只认一种。mode 记是哪一种，temp/rgb 只在对应 mode 下有值，所以库里
             # 不会出现「色温和颜色同时有效」的矛盾行。
-            extra.update({'light_mode': 'TEXT', 'light_rgb': 'TEXT',
+            extra.update({'light_count': 'INTEGER', 'light_mode': 'TEXT', 'light_rgb': 'TEXT',
                           'light_temp': 'INTEGER'})
             columns = {r['name'] for r in c.execute('PRAGMA table_info(system_status)')}
             for key, kind in extra.items():
@@ -432,23 +438,53 @@ class SmartHomeDB:
 
         最近 1 小时保留每秒原始读数；更长的 7 天内窗口按时间分桶，避免一次把
         数十万点送进浏览器；超过原始保留期后与 sensor_hourly 小时归档拼接。
+
+        返回数组，元素字段：``timestamp``（ISO-8601 UTC，秒级，带 Z）、
+        ``light_raw``（取整后的 ADC 值）、``samples``（该桶样本数）、
+        ``light_dark``（布尔，true=暗；按引擎同款回差逐点标注，口径与
+        ``light_dark`` 能力源一致，供前端做「亮/暗」呈现）。
         """
         hours = max(1, min(int(hours), 720))
         since = (datetime.now(timezone.utc)-timedelta(hours=hours)).strftime('%Y-%m-%d %H:%M:%S')
         if hours > self.HISTORY_RETENTION_DAYS * 24:
-            return self._rows(
-                "SELECT hour_start AS timestamp, light_raw, samples "
+            rows = self._rows(
+                "SELECT strftime('%Y-%m-%dT%H:00:00Z',hour_start) AS timestamp, "
+                "CAST(ROUND(light_raw) AS INTEGER) light_raw, samples "
                 "FROM sensor_hourly WHERE hour_start>? UNION ALL "
-                "SELECT strftime('%Y-%m-%d %H:00:00',received_at) AS timestamp, "
-                "AVG(light_raw),COUNT(*) FROM sensor_history "
+                "SELECT strftime('%Y-%m-%dT%H:00:00Z',received_at) AS timestamp, "
+                "CAST(ROUND(AVG(light_raw)) AS INTEGER),COUNT(*) FROM sensor_history "
                 "WHERE received_at>? GROUP BY strftime('%Y-%m-%d %H:00:00',received_at) "
                 "ORDER BY timestamp DESC LIMIT 5000", (since, since))
+            return self._annotate_light_dark(rows)
         bucket_seconds = 1 if hours == 1 else max(5, hours*3600//5000)
-        return self._rows(
-            "SELECT MIN(received_at) timestamp, AVG(light_raw) light_raw, COUNT(*) samples "
+        rows = self._rows(
+            "SELECT strftime('%Y-%m-%dT%H:%M:%SZ',MIN(received_at)) timestamp, "
+            "CAST(ROUND(AVG(light_raw)) AS INTEGER) light_raw, COUNT(*) samples "
             "FROM sensor_history WHERE received_at>? "
             "GROUP BY CAST(strftime('%s',received_at) AS INTEGER)/? "
             "ORDER BY timestamp DESC LIMIT 5000", (since, bucket_seconds))
+        return self._annotate_light_dark(rows)
+
+    @staticmethod
+    def _annotate_light_dark(rows):
+        """按引擎同款回差，给按时间倒序返回的光照历史逐点补 ``light_dark``。
+
+        从最旧点往后遍历（列表倒序即时间正序）：raw≥730 判暗、raw≤670 判亮，
+        回差区间内沿用上一点状态；窗口首个点就落在回差区间时用中点兜底，
+        保证每个有读数的点都有明确标注。
+        """
+        state = None
+        for row in reversed(rows):
+            raw = row.get('light_raw')
+            if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+                if raw >= LIGHT_DARK_RAW:
+                    state = True
+                elif raw <= LIGHT_BRIGHT_RAW:
+                    state = False
+                elif state is None:
+                    state = raw >= (LIGHT_DARK_RAW + LIGHT_BRIGHT_RAW) / 2
+            row['light_dark'] = state
+        return rows
 
     def get_hardware_events(self, hours=24):
         return self._history('hardware_events',hours)

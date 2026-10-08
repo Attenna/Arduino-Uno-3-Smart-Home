@@ -30,6 +30,8 @@
   `simple_grayscale_cosine` 调试回退仍可不加载检测模型。
 - **推送接口**：`POST /api/face/notify` 新增 `score`、`detection_confidence` 字段；旧调用方
   传入的 `confidence` 仍兼容映射为 ArcFace 分数，新调用方应使用语义明确的新字段。
+- **歧义匹配保护**：合并 main 的双阈值判定，除 `score >= 0.62` 外还要求第一名与第二名
+  的分差 `margin >= 0.08`；候选人过于接近时拒绝放行，避免把相似人员误认成另一人。
 
 ### 数据兼容与部署
 

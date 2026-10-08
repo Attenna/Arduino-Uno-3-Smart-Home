@@ -202,6 +202,8 @@ class FaceEngine:
                         method=recog_cfg.get("method", "simple_grayscale_cosine"),
                         similarity_threshold=float(
                             recog_cfg.get("similarity_threshold", 0.5)),
+                        ambiguity_margin=float(
+                            recog_cfg.get("ambiguity_margin", 0.08)),
                         image_size=int(recog_cfg.get("image_size", 112)),
                     )
                     self._check_library_model()
@@ -461,6 +463,7 @@ class FaceEngine:
                     "confidence": round(det.confidence, 3),
                     "score": None,
                     "aligned": False,
+                    "margin": None,
                     "bbox": {"x1": x1, "y1": y1, "x2": x2, "y2": y2},
                 }
                 rank = (-1.0, det.confidence)
@@ -474,6 +477,7 @@ class FaceEngine:
                         embed_ms += (time.perf_counter() - t1) * 1000.0
                         info["score"] = round(rec.score, 3)
                         info["aligned"] = aligned
+                        info["margin"] = round(getattr(rec, "margin", 1.0), 3)
                         if rec.authorized:
                             info["face_id"] = rec.identity
                             info["person_name"] = rec.identity

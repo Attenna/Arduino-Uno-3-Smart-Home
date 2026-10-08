@@ -216,13 +216,8 @@ function initControlSliders() {
                        v => v + '%',
                        v => {
                            const n = parseInt(v);
-                           postLightDebounced(n > 0 ? 'on' : 'off', n, lightStyle);
+                           postLightDebounced(n > 0 ? 'on' : 'off', n, panelLightStyle());
                        });
-    // 色温 / 自定义颜色：两者都是「亮法」，滑杆与取色器走同一套防抖收口
-    bindActuatorSlider(document.getElementById('tempSlider'),
-                       document.getElementById('lightTempValue'),
-                       v => v + 'K',
-                       v => applyLightTemp(parseInt(v)));
     const colorInput = document.getElementById('lightColor');
     if (colorInput) colorInput.addEventListener('change', applyLightColor);
 }
@@ -315,10 +310,14 @@ function rgbToHex(rgb) {
 }
 
 function syncLightControls(data) {
+    if (lightPending) return;
     const lightOn = data.light_status === 'on';
     const brightness = Number(data.light_brightness) || (lightOn ? 100 : 0);
     lastKnownLight = { status: lightOn ? 'on' : 'off', brightness };
     lightStyle = lightStyleFromStatus(data);
+    lightCount = Number(data.light_count) || (data.light_mode === 'night' ? 2 : 8);
+    if (lightOn) rememberedBrightness = brightness;
+    renderLightLevels(lightOn);
 
     const bulb = document.getElementById('bulb');
     if (bulb) {
@@ -335,13 +334,9 @@ function syncLightControls(data) {
     const brightLabel = document.getElementById('brightnessValue');
     if (brightLabel) brightLabel.textContent = brightness + '%';
 
-    // 色温滑杆与取色器只在服务端记着对应亮法时回写。程序化赋值 .value 不触发
-    // input，因此不会被 bindActuatorSlider 当成用户操作再下发一遍。
-    if (lightStyle.temp) {
-        const tempSlider = document.getElementById('tempSlider');
-        if (tempSlider && document.activeElement !== tempSlider) tempSlider.value = lightStyle.temp;
-        const tempLabel = document.getElementById('lightTempValue');
-        if (tempLabel) tempLabel.textContent = lightStyle.temp + 'K';
+    if (!lightStyle.rgb) {
+        const input = document.getElementById('lightColor');
+        if (input && document.activeElement !== input) input.value = '#ffffff';
     }
     if (lightStyle.rgb) {
         const colorInput = document.getElementById('lightColor');
@@ -549,29 +544,17 @@ async function toggleWindow() {
 
 function guardWindow() { tapGuard('window', toggleWindow); }
 
-// 灯光卡片按钮：全亮/半亮/夜灯/关闭
-// 移动端浏览器拖动 range 时会连续触发 change（不像桌面端只在松手时触发一次），
-// 直接下发会让滑块经过的每个中间值都打到串口。统一用 300ms 防抖收口，
-// 连续操作只下发最后一次。
-//
-// 去重只认「本页正在下发的同一意图」，**绝不拿服务端回报的状态当依据**：web 是
-// --no-serial，DB 里的 light_status/light_brightness 只是「上次命令值」，灯被 B 板
-// 复位或外部关掉后它仍可能记着 on/100。拿它去重会把用户的点击静默吞掉——连请求都
-// 不发、也没有任何提示，表现为「按下没反应」（后端 /api/light 同样已去掉 DB 幂等）。
-// style 是「亮法」：{mode:'night'} 夜灯（只亮中间几颗）/ {temp:4000} 色温 / {rgb:[r,g,b]} 自定义色，
-// 缺省 {} 表示白光。后端按 rgb > temp > mode 的优先级只认一种，界面上也照此下发。
-let lightInflight = null;    // 正在飞的意图串 status/brightness/亮法
-const postLightDebounced = debounce(async (status, brightness, style) => {
+// 灯光操作在 300ms 内合并成最后一次完整意图；轮询在提交完成后再回写。
+// 不按数据库状态去重：设备复位后，用户必须能再次下发相同档位。
+let lightPending = false;
+let lightRevision = 0;
+const sendLightDebounced = debounce(async (status, brightness, style, revision) => {
     brightness = Number(brightness) || 0;
     const extra = style || {};
-    const target = status + '/' + brightness + '/' + JSON.stringify(extra);
-    if (lightInflight === target) {
-        return;              // 同一意图已在飞（触摸双发/连点），其结果即本次结果
-    }
-    lightInflight = target;
     // 乐观更新：立即刷新本地显示，指令在飞期间界面不卡顿；
     // 失败时 loadStatus() 会用服务端真值回滚界面
     lastKnownLight = { status, brightness };
+    if (brightness > 0) rememberedBrightness = brightness;
     const bSlider = document.getElementById('brightnessSlider');
     if (bSlider && document.activeElement !== bSlider) bSlider.value = brightness;
     const bLabel = document.getElementById('brightnessValue');
@@ -582,10 +565,20 @@ const postLightDebounced = debounce(async (status, brightness, style) => {
             showNotification(getMessage(result));
         }
     } finally {
-        if (lightInflight === target) lightInflight = null;
+        if (revision === lightRevision) lightPending = false;
     }
     loadStatus();
 }, 300);
+
+function postLightDebounced(status, brightness, style) {
+    lightPending = true;
+    const revision = ++lightRevision;
+    const extra = status === 'on' ? { ...(style || {}), count: lightCount } : {};
+    // 防抖窗口内也记住最新意图，连续改颜色/亮度或双击开关不会使用旧值。
+    lastKnownLight = { status, brightness };
+    if (brightness > 0) rememberedBrightness = brightness;
+    sendLightDebounced(status, brightness, extra, revision);
+}
 
 // 亮度与亮法是两条正交的意图，但 B 板一条命令只认一种亮法，所以下发必须带齐。
 // 全部入口收敛到 setLightStyle / setLightBrightness：改亮法保留当前亮度，改亮度
@@ -596,31 +589,19 @@ function setLightStyle(style, brightness) {
     postLightDebounced('on', brightness, lightStyle);
 }
 
-// 色温 / 自定义颜色只改「亮法」，亮度沿用当前档位（灯是关的就用 100% 起步）。
+// 颜色与档位切换保留亮度；关灯后的本页操作恢复最近一次非零亮度。
 function currentBrightness(fallback) {
     const n = lastKnownLight ? Number(lastKnownLight.brightness) : 0;
     return n > 0 ? n : fallback;
 }
 
 function setLightBrightness(pct) {
-    postLightDebounced(pct > 0 ? 'on' : 'off', pct, lightStyle);
-}
-
-function setLightWhite() {
-    setLightStyle({ mode: 'white' }, currentBrightness(100));
-}
-
-function setLightNight() {
-    setLightStyle({ mode: 'night' }, 25);
+    postLightDebounced(pct > 0 ? 'on' : 'off', pct, panelLightStyle());
 }
 
 // 关灯不带亮法：服务端沿用库里当前值，本页缓存过期时也不会覆盖别的页面刚设的颜色。
 function turnLightOff() {
     postLightDebounced('off', 0, {});
-}
-
-function applyLightTemp(kelvin) {
-    setLightStyle({ temp: Number(kelvin) }, currentBrightness(100));
 }
 
 function hexToRgb(hex) {
@@ -634,7 +615,7 @@ function hexToRgb(hex) {
 function applyLightColor() {
     const input = document.getElementById('lightColor');
     if (!input) return;
-    setLightStyle({ rgb: hexToRgb(input.value) }, currentBrightness(100));
+    setLightStyle({ rgb: hexToRgb(input.value) }, currentBrightness(rememberedBrightness));
 }
 
 // 风扇卡片按钮：关闭/低速/中速/高速（与灯光相同的防抖收口原因）
@@ -647,7 +628,8 @@ let fanInflight = null;      // 正在飞的转速
 const postFanDebounced = debounce(async (speed) => {
     speed = Number(speed) || 0;
     if (fanInflight === speed) {
-        return;              // 同一意图已在飞（触摸双发/连点），其结果即本次结果
+        lightPending = false;
+        return;              // 同一意图已在飞
     }
     fanInflight = speed;
     // 乐观更新：立即刷新本地显示，指令在飞期间界面不卡顿；
@@ -822,4 +804,51 @@ async function loadTemperatureChart() {
             }
         }
     });
+}
+
+// 档位、亮度、颜色分别保存；关灯只改变开关状态。
+let lightCount = 8;
+let rememberedBrightness = 100;
+function renderLightLevels(on) {
+    for (const count of [2, 4, 6, 8]) {
+        const button = document.getElementById('lightLevel' + count);
+        if (button) {
+            button.classList.toggle('active', lightCount === count);
+            button.setAttribute('aria-pressed', String(lightCount === count));
+        }
+    }
+    const color = lightStyle.rgb ? 'rgb(' + lightStyle.rgb.join(',') + ')' : '#ffffff';
+    for (let i = 0; i < 8; i++) {
+        const bead = document.getElementById('lightBead' + i);
+        if (bead) {
+            const lit = on && i >= Math.floor((8 - lightCount) / 2) && i < Math.floor((8 - lightCount) / 2) + lightCount;
+            bead.classList.toggle('lit', lit);
+            bead.style.background = lit ? color : '';
+        }
+    }
+    const power = document.getElementById('lightPower');
+    if (power) {
+        power.textContent = t(on ? 'light.off' : 'light.on');
+        power.setAttribute('aria-pressed', String(on));
+        power.setAttribute('data-i18n', on ? 'light.off' : 'light.on');
+        power.classList.toggle('btn-danger', on);
+    }
+    const summary = document.getElementById('lightSummary');
+    if (summary) summary.textContent = on ? lightCount + ' / 8 · ' + currentBrightness(100) + '%' : t('light.isOff');
+}
+function panelLightStyle() {
+    // 旧夜灯/色温不再作为面板可选模式；颜色从取色器明确取得。
+    return {rgb: lightStyle.rgb || hexToRgb(document.getElementById('lightColor').value)};
+}
+function setLightCount(count) {
+    lightCount = count;
+    setLightStyle(panelLightStyle(), currentBrightness(rememberedBrightness));
+}
+function setLightColor(hex) {
+    document.getElementById('lightColor').value = hex;
+    applyLightColor();
+}
+function toggleLightPower() {
+    if (lastKnownLight && lastKnownLight.status === 'on') turnLightOff();
+    else setLightStyle(panelLightStyle(), rememberedBrightness);
 }

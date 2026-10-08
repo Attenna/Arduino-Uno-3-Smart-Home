@@ -121,10 +121,12 @@ def from_tool_args(args):
     亮度为 0 一律记成关灯 —— 先判亮度，参数不全的畸形调用才不会记出一个亮着的灯。
     """
     action = str(args.get("action") or "").lower()
+    if action == "pixels" and (type(args.get("count")) is not int or not 1 <= args["count"] <= 8):
+        return None
     if action == "off":
         return ("off", 0, None)
     preset = PRESET_RGB.get(action)
-    if preset is None and action not in ("white", "on", "night", "temp", "rgb"):
+    if preset is None and action not in ("white", "on", "night", "temp", "rgb", "pixels"):
         return None
     # 先把固件的 0~255 电平凑齐，再统一换算成面板用的百分比
     if preset is not None:
@@ -146,7 +148,7 @@ def from_tool_args(args):
         if kelvin is None:
             return None
         return ("on", brightness, ("temp", kelvin, None))
-    if action == "rgb":
+    if action in ("rgb", "pixels"):
         color = parse_rgb([args.get("r"), args.get("g"), args.get("b")])
         if color is None:
             return None
@@ -202,17 +204,18 @@ def to_request(style):
     return {"mode": mode, "temp": kelvin, "rgb": list(color) if color else None}
 
 
-def status_values(status, brightness, style):
+def status_values(status, brightness, style, count=None):
     """system_status 的灯光记账字段（含亮法），供四条写入路径共用。"""
     mode, kelvin, color = style
     if status != "on" or not brightness:
         status, brightness = "off", 0
     return {"light_status": status, "light_brightness": brightness,
+            "light_count": count,
             "light_mode": mode, "light_temp": kelvin,
             "light_rgb": rgb_field(color)}
 
 
-def hardware_plan(status, brightness, style):
+def hardware_plan(status, brightness, style, count=None):
     """意图 → 硬件桥调用 (方法名, 位置参数, 关键字参数)。
 
     0 亮度一律走 off：否则 rgb 会下发一条 value=0 的「全黑但不是关灯」命令，
@@ -221,6 +224,8 @@ def hardware_plan(status, brightness, style):
     mode, kelvin, color = style
     if status != "on" or not brightness:
         return "control_light", ("off", 0), {}
+    if count is not None and mode != "temp":
+        return "control_light_pixels", (brightness, color or (255, 255, 255), count), {}
     if mode == "rgb":
         return ("control_light_color", ("rgb", color[0], color[1], color[2]),
                 {"brightness_pct": brightness})

@@ -8,9 +8,9 @@
 
 ## 1. 模块用途
 
-Module A 是一块 Arduino Uno，负责环境感知与用户交互检测。**固件版本 `V2.1`**，经 2026-09 正式版硬件裁剪：
+Module A 是一块 Arduino Uno，负责环境感知与用户交互检测。**固件版本 `V2.2`**，经 2026-09 正式版硬件裁剪：
 
-**现役传感器（9 类）**
+**现役传感器（9 类）与灯光输出**
 
 | # | 传感器 | 类型 | 说明 |
 |---|--------|------|------|
@@ -28,11 +28,11 @@ Module A 是一块 Arduino Uno，负责环境感知与用户交互检测。**固
 
 | 传感器 | 原引脚 | 裁剪开关 |
 |--------|--------|---------|
-| HC-SR04 超声波 | A0/A1 | `ENABLE_ULTRASONIC=0`（引脚悬空） |
+| HC-SR04 超声波 | A0/A1 | `ENABLE_ULTRASONIC=0`（A0 已改接 NeoPixel 灯带，A1 悬空） |
 | 土壤湿度 YL-69/FC-28 | D4/A4 | `ENABLE_SOIL=0`（引脚改接矩阵键盘） |
 
 数据通过 USB 串口以 JSON 形式上报，分两种：
-- **周期状态**（`type: data`，默认 2s 一次）
+- **周期状态**（`type: data`，默认 1s 一次）
 - **事件**（`type: event`，边沿触发即时推送）
 
 > 传感器驱动遵循统一的 `begin()` / `read()` / getter 接口，新增传感器只需按同样模式新增一个类，并在 `SensorManager` 中登记即可。
@@ -53,6 +53,7 @@ Module A 是一块 Arduino Uno，负责环境感知与用户交互检测。**固
 | RC522 RFID 模块 | 1 |
 | PIR 人体红外模块（SR602/HC-SR501） | 1 |
 | 矩阵键盘（当前 1×1） | 1 |
+| NeoPixel 灯带（8 颗，接 A0） | 1 |
 
 ---
 
@@ -69,7 +70,7 @@ Module A 是一块 Arduino Uno，负责环境感知与用户交互检测。**固
 | D9 | RFID RST |
 | D10 | RFID SS |
 | D11/D12/D13 | SPI（MOSI/MISO/SCK，RFID） |
-| A0 | （悬空；原超声波 Trig） |
+| A0 | NeoPixel 灯带数据线（数字 D14，8 颗） |
 | A1 | （悬空；原超声波 Echo） |
 | A2 | 雨滴（模拟） |
 | A3 | 烟雾（模拟） |
@@ -77,6 +78,9 @@ Module A 是一块 Arduino Uno，负责环境感知与用户交互检测。**固
 | A5 | 光敏（模拟） |
 
 > 所有引脚集中在 [src/Config.h](src/Config.h) 管理，并可通过裁剪开关调整。
+
+> D0/D1 保留给 USB 串口，禁止接灯带。灯带使用独立稳压 5V 电源并与 A 板共地；
+> 数据线建议串联 330–470Ω 电阻。
 
 ---
 
@@ -87,6 +91,7 @@ Module A 是一块 Arduino Uno，负责环境感知与用户交互检测。**固
 | DHT sensor library (Adafruit) | DHT11 |
 | MFRC522 | RC522 RFID |
 | IRremote | 红外解码 |
+| Adafruit NeoPixel | A0 的 8 颗灯带 |
 
 PlatformIO 已在 [platformio.ini](platformio.ini) 中声明，无需手动安装。
 
@@ -99,7 +104,7 @@ PlatformIO 已在 [platformio.ini](platformio.ini) 中声明，无需手动安�
 
 ### 上行示例
 
-周期状态（`V2.1`，无 distance/soil 字段）：
+周期状态（`V2.2`，无 distance/soil 字段）：
 ```json
 {"module":"sensor","type":"data","timestamp":123456,"data":{"temperature":26.4,"humidity":61.0,"light":423,"smoke":false,"rain":false,"touch":false,"motion":false}}
 ```
@@ -110,13 +115,32 @@ PlatformIO 已在 [platformio.ini](platformio.ini) 中声明，无需手动安�
 {"module":"sensor","type":"event","event":"keypad","key":"1"}
 ```
 
-### 下行（可选，纯文本）
+### 下行命令
+
+**控制命令（灯光，A0 8 颗 NeoPixel）**：网关下发的 `light` 恒路由到 A 板，固件接受两种等价格式：
+
+```json
+{"cmd":"light","action":"white","value":200,"id":7}
+{"cmd":"light","action":"rgb","r":255,"g":80,"b":10,"value":128,"count":4}
+```
+
+以及等价的紧凑文本帧（避开 Uno 64 字节串口接收缓冲）：
+```text
+L,<code>,<value>,<r>,<g>,<b>,<count>,<id>
+```
+`<code>`：`O`=关灯、`W`=白光、`P`=指定 RGB。支持的 `action`：`off` / `white` / `night` /
+`red` / `green` / `blue` / `yellow` / `purple` / `cyan` / `rgb` / `pixels`（无 `temp`）。
+响应回 `{"module":"sensor","type":"response","result":"ok","cmd":"light",...,"state":{"light":..,"lit":..}}`。
+
+**调试命令（纯文本）**：
 
 | 命令 | 作用 |
 |------|------|
 | `REPORT` / `STATUS` | 立即上报一次 |
-| `INTERVAL:<ms>` | 设置上报间隔（200~60000） |
+| `INTERVAL:<ms>` | 设置上报间隔（200~60000，默认 1000） |
 | `WHO` | 返回设备标识 |
+
+> 命令不区分大小写。开门密码（如 `1111`）的业务校验在香橙派 MCP 侧完成，不在固件内。
 
 ---
 
@@ -124,7 +148,7 @@ PlatformIO 已在 [platformio.ini](platformio.ini) 中声明，无需手动安�
 
 **输出（上电）：**
 ```
-{"module":"sensor","type":"ready","board":"MODULE_A","role":"SENSOR_NODE","version":"V2.1"}
+{"module":"sensor","type":"ready","board":"MODULE_A","role":"SENSOR_NODE","version":"V2.2"}
 ```
 
 **输入 `REPORT`，输出：**
@@ -159,7 +183,7 @@ pio run -t upload --upload-port COM3
 | 现象 | 原因 | 处理 |
 |------|------|------|
 | `temperature` 为 `null` | DHT11 读数失败 | 检查 D7 接线与 5V/GND，DHT11 需间隔 ≥2s |
-| 找不到 `distance` / `soil_*` 字段 | `V2.1` 已裁剪 | 属预期；如需恢复请在 [src/Config.h](src/Config.h) 打开对应开关 |
+| 找不到 `distance` / `soil_*` 字段 | `V2.2` 已裁剪 | 属预期；如需恢复请在 [src/Config.h](src/Config.h) 打开对应开关 |
 | 键盘无事件 | 接线/防抖问题 | 确认 D4 行驱动、A4 列读取；一次按压只发一次（含松开保持 120ms） |
 | RFID 无刷卡事件 | 供电或接线问题 | RC522 需 3.3V，检查 SPI 与 RST/SS |
 | 无任何串口输出 | 波特率/串口选择错误 | 确认 115200，检查 USB 线是否为数据线 |

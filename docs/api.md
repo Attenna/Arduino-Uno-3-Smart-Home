@@ -246,6 +246,18 @@ GET 与 POST 等价（便于浏览器地址栏直接点）。
 
 `light_rgb` 对外**一律是 `[r,g,b]` 三元列表**（库里存成 `"r,g,b"` 文本，接口层已归一）；不是自定义颜色时为 `null`。`light_mode` ∈ `white` / `night` / `temp` / `rgb`，`light_temp` 仅在 `mode:"temp"` 时有值。GET `/api/status` 里的同名字段口径完全一致。
 
+### GET `/api/light-level/history?hours=24`
+
+返回环境光敏 ADC 历史（**不是**灯具开关历史，后者见 `/api/light/history`）。返回数组，
+元素形如 `{"timestamp": "YYYY-MM-DDTHH:MM:SSZ", "light_raw": 整数, "samples": N, "light_dark": 布尔}`：
+
+- `timestamp`：ISO-8601 UTC、秒级、带 `Z`；最近 1 小时按秒分桶，更长窗口按时间分桶。
+- `light_raw`：该桶光照 ADC 平均值取整（0~1023）；**读数越大越暗**（实测：捂住≈918、环境光≈479）。
+- `samples`：该桶样本数；超过 7 天原始保留期后来自 `sensor_hourly` 小时归档。
+- `light_dark`：布尔二态标注（`true`=暗），由后端按与自动化引擎**同款回差**逐点给出
+  （raw≥730 判暗、raw≤670 判亮、区间内沿用上一点；窗口首个点落在区间时用中点兜底），
+  口径与积木里的 `light_dark` 能力源一致，供历史页把「亮/暗」可视化。
+
 ### GET `/api/light/history?hours=24`
 
 返回灯光操作历史。
@@ -766,12 +778,13 @@ curl http://<host>:8101/trigger
 # 4. MCP 工具（mcp_home_server.py）
 
 `mcp_home_server.py` 以 stdio 方式提供 MCP 服务，由 **web 作为子进程启动并独占 A/B 串口**，
-共 **13 个工具**。本进程之外的调用方（语音助手 / 外部程序）经 web 的
+共 **14 个工具**。其中 `light` 路由到 **Module A**（A0 灯带），其余执行器/显示工具与
+`get_distance`/`self_test` 路由到 **Module B**。本进程之外的调用方（语音助手 / 外部程序）经 web 的
 `POST /api/hardware/tool` 以 HTTP 方式调用（工具名/参数相同，见 §2.3）。
 
 | 工具 | 主要参数 | 作用 |
 |------|---------|------|
-| `light` | `action`, `value`, `temp`, `r`,`g`,`b` | 灯光：off / white / night / temp / 预设色 / rgb（**没有 `on`**；开灯由 `white`/`night`/`temp`/rgb 表达，`value` 是 0~255 亮度，缺省 255、夜灯缺省 60） |
+| `light` | `action`, `value`, `r`,`g`,`b`, `count` | 灯光（**执行于 A 板 A0**）：off / white / night / 预设色 / rgb / pixels（**没有 `on`**；`temp` 已停用，A 板无该分支；`value` 是 0~255 亮度，缺省 255、夜灯缺省 60；`pixels` 需 `count` 1~8） |
 | `door` | `action` = open/close | 门 |
 | `window` | `action` = open/close/normal | 窗 |
 | `fan` | `action` = on/off/set_speed, `value` | 风扇 |
@@ -853,3 +866,14 @@ curl http://<host>:8000/v1/chat/completions \
   也只是持续重试，进程不退出。
 - 这台 UVC 摄像头**同一时刻只允许一个进程打开**：被别的容器/进程占着时会一直
   重试，等对方释放后自动接上（`/health` 期间报 `online: false`）。
+
+### 八灯珠灯光面板
+
+`POST /api/light` 新增可选整数 `count`（1~8）。例如：
+`{"status":"on","brightness":40,"rgb":[255,128,0],"count":4}`。
+面板使用微光 2 颗、柔光 4 颗、明亮 6 颗、全灯 8 颗四档，独立调整颜色与亮度。
+接口响应及 `/api/status` 新增 `light_count`；数据库新增可空整数列，无运行数据迁移丢失。
+未传 count 沿用当前分档；首次使用旧记录按原协议执行。关灯保留颜色与分档。
+显式旧 `mode`/`temp` 命令仍按原协议执行并清除分档；面板不再提供色温调节。
+旧记录的原始 `/api/status.light_count` 可为 null，面板按夜灯 2 颗、其余 8 颗显示。
+新增 pixels 指令要求先刷写 B 板固件，否则操作失败且不记账。

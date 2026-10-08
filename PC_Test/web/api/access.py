@@ -15,6 +15,7 @@ from collections import Counter
 
 from flask import Blueprint, jsonify, request
 
+from .. import extensions
 from ..access_guard import CARD_ENROLL_TTL_S, deny_texts
 from ..extensions import access_guard, db, face_engine, face_watcher
 
@@ -140,10 +141,15 @@ def enroll_rfid(person_id: int):
     person = db.get_person(person_id)
     if not person:
         return _fail(f"未找到人员 {person_id}", "Person not found", 404)
+    link_ready = bool(extensions.bridge and extensions.bridge.online)
+    if not link_ready:
+        return _fail("RFID 硬件链路离线，无法开始录卡，请检查 A 板连接",
+                     "RFID hardware link is offline", 503)
     session = access_guard.start_card_session(person_id, person["name"])
     return jsonify({"message": f"请把卡片贴到读卡器上（{int(CARD_ENROLL_TTL_S)} 秒内）",
                     "message_en": "Tap the card on the reader",
                     "session": session,
+                    "link_ready": link_ready,
                     "timeout_seconds": int(CARD_ENROLL_TTL_S)})
 
 
@@ -153,7 +159,10 @@ def enroll_rfid_status(sid: str):
     if not session:
         return _fail("录入会话不存在或已过期", "Enrollment session expired", 404)
     out = {"state": session["state"], "uid": session.get("uid"),
-           "error": session.get("error")}
+           "error": session.get("error"),
+           "age_seconds": round(session.get("age_seconds", 0.0), 1),
+           "remaining_seconds": round(session.get("remaining_seconds", 0.0), 1),
+           "link_ready": bool(extensions.bridge and extensions.bridge.online)}
     if session["state"] == "matched" and session.get("person"):
         out["person"] = _person_json(session["person"])
     return jsonify(out)
