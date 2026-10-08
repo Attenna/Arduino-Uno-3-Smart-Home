@@ -28,6 +28,12 @@ OUTPUTS = ('door_status', 'window_status', 'fan_speed',
            'ac_status', 'ac_mode', 'ac_temperature', 'ac_fan',
            'ac_swing_ud', 'ac_swing_lr', 'ac_eco', 'ac_fzc', 'ac_timer')
 
+# 光照明暗二态的回差边界：与 automation/engine.py 的
+# SmartHomeEngine.LIGHT_DARK_RAW / LIGHT_BRIGHT_RAW 必须保持一致，
+# 历史接口据此给每个采样点补 light_dark 标注，避免前端另行定义而口径不一。
+LIGHT_DARK_RAW = 730
+LIGHT_BRIGHT_RAW = 670
+
 
 def utcnow():
     return datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S.%f')
@@ -433,12 +439,14 @@ class SmartHomeDB:
         数十万点送进浏览器；超过原始保留期后与 sensor_hourly 小时归档拼接。
 
         返回数组，元素字段：``timestamp``（ISO-8601 UTC，秒级，带 Z）、
-        ``light_raw``（取整后的 ADC 值）、``samples``（该桶样本数）。
+        ``light_raw``（取整后的 ADC 值）、``samples``（该桶样本数）、
+        ``light_dark``（布尔，true=暗；按引擎同款回差逐点标注，口径与
+        ``light_dark`` 能力源一致，供前端做「亮/暗」呈现）。
         """
         hours = max(1, min(int(hours), 720))
         since = (datetime.now(timezone.utc)-timedelta(hours=hours)).strftime('%Y-%m-%d %H:%M:%S')
         if hours > self.HISTORY_RETENTION_DAYS * 24:
-            return self._rows(
+            rows = self._rows(
                 "SELECT strftime('%Y-%m-%dT%H:00:00Z',hour_start) AS timestamp, "
                 "CAST(ROUND(light_raw) AS INTEGER) light_raw, samples "
                 "FROM sensor_hourly WHERE hour_start>? UNION ALL "
@@ -446,13 +454,36 @@ class SmartHomeDB:
                 "CAST(ROUND(AVG(light_raw)) AS INTEGER),COUNT(*) FROM sensor_history "
                 "WHERE received_at>? GROUP BY strftime('%Y-%m-%d %H:00:00',received_at) "
                 "ORDER BY timestamp DESC LIMIT 5000", (since, since))
+            return self._annotate_light_dark(rows)
         bucket_seconds = 1 if hours == 1 else max(5, hours*3600//5000)
-        return self._rows(
+        rows = self._rows(
             "SELECT strftime('%Y-%m-%dT%H:%M:%SZ',MIN(received_at)) timestamp, "
             "CAST(ROUND(AVG(light_raw)) AS INTEGER) light_raw, COUNT(*) samples "
             "FROM sensor_history WHERE received_at>? "
             "GROUP BY CAST(strftime('%s',received_at) AS INTEGER)/? "
             "ORDER BY timestamp DESC LIMIT 5000", (since, bucket_seconds))
+        return self._annotate_light_dark(rows)
+
+    @staticmethod
+    def _annotate_light_dark(rows):
+        """按引擎同款回差，给按时间倒序返回的光照历史逐点补 ``light_dark``。
+
+        从最旧点往后遍历（列表倒序即时间正序）：raw≥730 判暗、raw≤670 判亮，
+        回差区间内沿用上一点状态；窗口首个点就落在回差区间时用中点兜底，
+        保证每个有读数的点都有明确标注。
+        """
+        state = None
+        for row in reversed(rows):
+            raw = row.get('light_raw')
+            if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+                if raw >= LIGHT_DARK_RAW:
+                    state = True
+                elif raw <= LIGHT_BRIGHT_RAW:
+                    state = False
+                elif state is None:
+                    state = raw >= (LIGHT_DARK_RAW + LIGHT_BRIGHT_RAW) / 2
+            row['light_dark'] = state
+        return rows
 
     def get_hardware_events(self, hours=24):
         return self._history('hardware_events',hours)

@@ -53,6 +53,29 @@ class IngestToleranceTests(unittest.TestCase):
             self.assertRegex(row["timestamp"], r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
             self.assertIsInstance(row["light_raw"], int)
 
+    def test_light_level_history_annotates_dark_with_hysteresis(self):
+        # ADC 越大越暗；回差区间（670~730）沿用上一点状态，标注须与引擎口径一致。
+        now = datetime.now(timezone.utc)
+        samples = [479, 700, 900, 690, 500]  # 由旧到新：亮、带内、暗、带内、亮
+        with self.db.connection() as c:
+            for i, raw in enumerate(samples):
+                c.execute("INSERT INTO sensor_history(received_at,light_raw) VALUES(?,?)",
+                          ((now - timedelta(seconds=len(samples) - i)).strftime('%Y-%m-%d %H:%M:%S'), raw))
+        rows = self.db.get_light_level_history(hours=1)
+        self.assertEqual([row["light_raw"] for row in rows], list(reversed(samples)))
+        # 返回按时间倒序：500(亮) 690(带内承暗) 900(暗) 700(带内承亮) 479(亮)
+        self.assertEqual([row["light_dark"] for row in rows],
+                         [False, True, True, False, False])
+
+    def test_light_level_history_band_fallback_without_prior_state(self):
+        # 窗口首个点就落在回差区间、无上一状态可继承时，用中点(700)兜底标注。
+        now = datetime.now(timezone.utc)
+        with self.db.connection() as c:
+            c.execute("INSERT INTO sensor_history(received_at,light_raw) VALUES(?,?)",
+                      ((now - timedelta(seconds=1)).strftime('%Y-%m-%d %H:%M:%S'), 720))
+        rows = self.db.get_light_level_history(hours=1)
+        self.assertIs(rows[0]["light_dark"], True)
+
     def test_out_of_range_field_nulls_only_that_column(self):
         # 温度毛刺 999：整帧必须照入库，只把 temperature 列写 NULL
         self.db.ingest_sensor(frame(temperature=999))
