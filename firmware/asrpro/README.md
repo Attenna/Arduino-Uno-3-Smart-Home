@@ -87,9 +87,10 @@ USB 拔出后进程会等待并重连，不重试已经发出的控制请求。
 
 ## 4. 串口协议与测试
 
-后续外部串口输入、通用意图注册与场景扩展的设计草案见
-[ASRPRO 外部串口输入接口设计](../../docs/asrpro-external-input-design.md)。该草案尚未改变当前
-`SH1` 运行行为；确认接口后再实施。
+外部串口输入、通用意图注册与场景扩展的**接口规范**见
+[ASRPRO 串口控制接口规范](../../docs/asrpro-serial-control.md)。`SH1` 1–9 号行为不变；
+`SH2` 意图白名单（`light`/`door`/`window`/`fan`/`buzzer`/`ac`/`status`）已在香橙派
+`asrpro_bridge.py` 落地，但**本固件仍只发 SH1**，升级到 SH2 随场景一并实施。
 
 115200、8N1、ASCII、换行结尾，每次只有一个请求在途：
 

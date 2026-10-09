@@ -21,6 +21,8 @@ services:
               "--host", "0.0.0.0", "--port", "5000"]
 
   voice:
+    # 桌面端演示栈显式启用语音助手（基础编排已默认停用）
+    profiles: !reset null
     devices: !reset null
     environment:
       - SMART_HOME_DISABLE_MIC=1

@@ -699,6 +699,10 @@ GET 与 POST 等价（便于浏览器地址栏直接点）。
 
 ### 语音（对 :8101 的同源代理）
 
+> **已弃用（2026-10-09）**：语音改由 ASRPRO 天问板经串口控制，见
+> [asrpro-serial-control.md](asrpro-serial-control.md)。本组代理与 §3 的语音服务代码保留，
+> 但容器默认不启动（`docker compose` 需显式 `--profile voice`）；未启动时本组接口返回 502/503。
+
 地址来自 `voice.url`（或环境变量 `SMART_HOME_VOICE_URL`），默认 `http://127.0.0.1:8101`；
 这条通道只做「唤醒 / 文本指令 / 状态 / 对话实况」，与硬件链路无关。
 
@@ -744,6 +748,9 @@ GET 与 POST 等价（便于浏览器地址栏直接点）。
 ---
 
 # 3. 语音助手 HTTP API（:8101）
+
+> **已弃用（2026-10-09）**：被 ASRPRO 天问板串口方案取代（见
+> [asrpro-serial-control.md](asrpro-serial-control.md)）。代码保留、默认不启动。
 
 零依赖标准库实现，供手机网页、GPIO 按钮、外部程序与 Web 容器调用。
 语音助手**不碰串口**：硬件动作一律经 web 的 `POST /api/hardware/tool`（见 §2.3），

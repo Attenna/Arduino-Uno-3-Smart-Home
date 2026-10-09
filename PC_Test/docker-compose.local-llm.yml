@@ -12,6 +12,8 @@ services:
     profiles: !reset null
 
   voice:
+    # 本覆盖文件显式启用语音助手（基础编排已默认停用，需清掉 profile 限制）
+    profiles: !reset null
     depends_on:
       web:
         condition: service_healthy

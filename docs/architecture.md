@@ -9,7 +9,7 @@
 | 形态 | 决策层 | 协议转换 | 适用场景 |
 |------|--------|---------|---------|
 | **形态 A：HA 生产架构** | Home Assistant | Python 网关（Serial ↔ MQTT） | 长期运行、以 HA 生态为中心的智能家居 |
-| **形态 B：智能终端 Docker 栈** | Web 积木引擎 + Qwen2.5 语音 | MCP server（Serial ↔ MCP stdio，由 web 独占） | 香橙派一体化交付：面板 + 人脸 + 语音 + 摄像头 |
+| **形态 B：智能终端 Docker 栈** | Web 积木引擎 + ASRPRO 语音 | MCP server（Serial ↔ MCP stdio，由 web 独占） | 香橙派一体化交付：面板 + 人脸 + 语音 + 摄像头 |
 
 ---
 
@@ -84,6 +84,11 @@
 - **LLM 默认云端硅基流动**（SiliconFlow，OpenAI 兼容，模型 `Qwen/Qwen3.5-4B`；备选阿里云百炼）：本地 `qwen` 容器退为离线兜底，只有叠加 `docker-compose.local-llm.yml`（`profiles: local-llm`）时才启动。
 
 > 非容器环境可用 `PC_Test/start_all.py` 获得完全相同的联动关系（本机端口替代容器服务发现）：先起 web（持 A/B 串口），再起 voice（指向 web 网关）与 camera。
+
+> **语音方案已弃用（2026-10-09）**：上图中的 `voice (:8101)` / `qwen (:8000)` 是旧 LLM 语音栈，
+> 现改由 **ASRPRO 天问语音板经串口**驱动香橙派（[接口规范](asrpro-serial-control.md)）。旧栈代码
+> 保留但默认不启动（`--profile voice` 才起）；ASRPRO 桥接进程同样经 `POST /api/hardware/tool`
+> 走 web 网关，因此与面板操作同权同账。
 
 ---
 

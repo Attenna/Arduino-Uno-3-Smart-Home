@@ -8,6 +8,7 @@
 |------|------|------|
 | **概念 / 架构** | [architecture.md](architecture.md) | 两种部署形态、分层架构、数据流向、模块边界 |
 | | [serial-protocol.md](serial-protocol.md) | 串口 JSON 协议规范（A 上报 / B 命令，含固件裁剪说明） |
+| | [asrpro-serial-control.md](asrpro-serial-control.md) | ASRPRO 天问语音板 → 香橙派串口控制接口规范（SH1/SH2、意图白名单） |
 | | [development-guide.md](development-guide.md) | 开发规范（依赖方向、命名、禁止跨层、PC_Test/Web 前端硬约定） |
 | | [git-workflow.md](git-workflow.md) | 多人并行开发、分支、worktree、提交、评审和部署规范 |
 | | [CHANGELOG.md](CHANGELOG.md) | 版本变更记录（光照语义反转、接口字段规范化等） |

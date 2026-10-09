@@ -100,8 +100,12 @@ services:
     restart: unless-stopped
 
   # ── ③ 语音助手（Sherpa KWS/ASR/TTS；纯 HTTP 客户端，不碰串口）─────────────
+  # 【已弃用】语音改由 ASRPRO 天问板经串口控制（见 docs/asrpro-serial-control.md）；
+  # 本容器保留代码但默认不启动。需要时显式 `--profile voice`，或使用
+  # docker-compose.local-llm.yml / dashscope.yml 覆盖文件（其中已重置该 profile）。
   voice:
     env_file: [.auth.voice.env]
+    profiles: ["voice"]
     <<: *runtime-hardening
     group_add: ["29"]
     build:

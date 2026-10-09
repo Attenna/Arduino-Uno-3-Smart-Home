@@ -24,7 +24,7 @@
 - **设备控制**：门 / 窗舵机、风扇、NeoPixel RGB 灯带、蜂鸣器、OLED、红外（NEC + 美的空调长码）
 - **Web 仪表盘**：实时监控、设备控制、历史图表（Flask + SQLite）
 - **人脸识别门禁**：YOLOv8-face + ArcFace，授权通过自动开门
-- **语音助手**：「Hey Bota」唤醒 + Qwen3.5（默认云端硅基流动 / 备选百炼 / 本地 llama.cpp 兜底）+ 流式 TTS
+- **语音助手（已弃用，默认不启动）**：改由 ASRPRO 天问语音板经串口控制（[接口规范](docs/asrpro-serial-control.md)）；旧「Hey Bota」+ Qwen3.5（云端硅基流动 / 百炼 / 本地 llama.cpp）+ 流式 TTS 代码保留，默认停用（`--profile voice` 可显式启用）
 - **积木式自动化**：Blockly 可视化编排「触发 → 条件 → 动作」，内置默认规则
 
 > 固件经 2026-09 正式版裁剪并随后迭代：A 板移除超声波 / 土壤、新增矩阵键盘，`light` 灯带迁到 **A0**（`V2.2`）；

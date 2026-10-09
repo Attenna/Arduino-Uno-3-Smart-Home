@@ -2,6 +2,42 @@
 
 记录对系统行为 / 接口有影响的变更。新条目置于顶部。
 
+## 2026-10-09 · ASRPRO 串口控制接口（SH2 意图白名单）+ 旧 LLM 语音弃用
+
+分支：`feat/asrpro-serial-control`
+
+### 变更
+- **串口桥接（`PC_Test/asrpro_bridge.py`）**：在保留 `SH1` 1–9 号命令的前提下新增 `SH2`
+  协议 `SH2 <请求编号> <意图名> [name=value ...]`，应答 `SH2 <请求编号> <意图名>
+  <OK|REJECTED|FAILED|TIMEOUT> [name=value ...]`。意图来自**启动时载入的 JSON 白名单**
+  （`--intents` / `ASRPRO_INTENTS_CONFIG`；未指定、缺失、损坏或 schema 非法一律回退内置默认），
+  带参数 schema 校验（整数/枚举/布尔，拒绝自由文本、重复/未知/缺参）、请求编号去重缓存
+  （重复帧回放结果、不二次动作）、`TimeoutError → TIMEOUT` 且**不自动重试**。
+- **动态意图与发现**：内置默认 7 个业务意图（`light`/`door`/`window`/`fan`/`buzzer`/`ac`/
+  `status`）加只读发现 `list_intents`（回 `count` 与逗号名单，过大则省略名单）。增改意图只需
+  改配置、**无需改代码**；**串口侧只读，不可注册/修改/删除意图**，保留白名单安全边界。
+- **帧长**：单帧上限由 63 提升到 127 字节（容纳带多参数的 `ac` 帧），仍整帧丢弃超长/乱码。
+- **接口文档**：设计稿转正为 [asrpro-serial-control.md](asrpro-serial-control.md)（帧格式、
+  意图清单、**配置驱动的动态意图与发现**、结果码、反向播报预留帧、ASRPRO 侧天问 C++ 收发示例、
+  接线与安全要求）。
+- **旧 LLM 语音助手**：`README`/`api.md`/`architecture.md` 标注**已弃用**；`docker-compose.yml`
+  的 `voice` 服务加 `profiles: ["voice"]`，`docker compose up -d` **默认不再启动**语音容器；
+  `local-llm`/`dashscope`/`desktop` 三个覆盖文件显式重置该 profile 以保持原用法。
+
+### 未改动 / 影响
+- 不改 A/B 板固件、不改接线、不改 `SH1` 行为；ASRPRO 板载固件仍只发 `SH1`，升级到 `SH2`
+  随场景一并实施（见接口文档 §13）。
+- 不涉及场景实现（出门天气、门禁欢迎词），仅预留接口；不实现"车库门"（无独立执行器）。
+- Web 侧 `/api/voice/*` 代理在语音容器未启动时返回 502/503，不影响硬件链路与面板。
+
+### 验收
+- 单测：`PC_Test/tests/test_asrpro_bridge.py` 扩到 23 项（`SH2` 合法/未知意图/坏参数/去重/
+  编号冲突/`status` 只读/长帧/超长丢弃 + 配置加载、缺失/损坏/非法回退、`list_intents` 发现、
+  配置不能越权 + `SH1` 全量回归），全部通过；`compileall` 通过。
+- Compose：`docker compose config --services` 验证基础编排只输出 `web/camera`（语音需
+  `--profile voice`），三个覆盖文件仍含 `voice`。
+- 真机：**未验证**（本机无法连通香橙派；按仓库流程需在分支上做真机验收后再并入 `main`）。
+
 ## 2026-10-09 · OLED 多页轮播下移 B 板固件（B 主动拉取）
 
 分支：`feat/oled-b-pull-carousel`
