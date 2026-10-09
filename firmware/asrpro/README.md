@@ -59,6 +59,8 @@ ls -l /dev/serial/by-id/
 
 识别新增 CH340 的稳定路径，不要选 A/B 板端口。
 如果多个同型号适配器没有唯一序列号，使用 `/dev/serial/by-path/` 对应固定 USB 插口。
+`ASRPRO_PORT` 可省略：省略或路径不存在时，桥接按 CH340 的 USB ID（`1a86:7522` / `1a86:7523`）
+自动发现设备，拔插后重新枚举也能自动跟上；发现只匹配 CH340，不会误开 A/B 板端口。
 源码检出环境在 `PC_Test/.auth.asrpro.env` 中配置以下两项；部署脚本会将
 `PC_Test` 内容平铺到 `/home/HwHiAiUser/smart-home`，因此香橙派运行时文件为
 `/home/HwHiAiUser/smart-home/.auth.asrpro.env`。文件权限设为 `600`：
@@ -81,7 +83,8 @@ systemctl status asrpro-bridge
 journalctl -u asrpro-bridge -n 30 --no-pager
 ```
 
-USB 拔出后进程会等待并重连，不重试已经发出的控制请求。
+USB 拔出/插入会热插拔：进程持续等待并重连，连接与断开都记录日志（含设备路径）；
+找不到适配器时只打印一次等待提示。不重试已经发出的控制请求。
 首次接线、语音模型下载及设备选口完成前，不应将服务视为已可用。
 回滚时先 `sudo systemctl disable --now asrpro-bridge`，再按仓库流程回滚代码。
 

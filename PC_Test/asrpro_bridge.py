@@ -24,6 +24,27 @@ COMMANDS = {
     6: ("fan", {"action": "off"}),
 }
 REQUEST = re.compile(rb"SH1 ([1-9][0-9]{0,8}) ([1-9])\r?\n")
+# USB IDs of the ASRPRO development board's onboard CH340 adapter. Discovery is
+# restricted to these IDs, so the bridge can never open an A/B Arduino port.
+ASRPRO_USB_IDS = frozenset({(0x1A86, 0x7522), (0x1A86, 0x7523)})
+
+
+def find_asrpro_port(comports=None):
+    """Device path of the ASRPRO USB adapter, or None while it is unplugged."""
+    if comports is None:
+        from serial.tools import list_ports
+        comports = list_ports.comports()
+    for info in comports:
+        if (info.vid, info.pid) in ASRPRO_USB_IDS and info.device:
+            return info.device
+    return None
+
+
+def resolve_port(configured, comports=None, exists=os.path.exists):
+    """Use the configured device while present, else hot-plug the discovered adapter."""
+    if configured and exists(configured):
+        return configured
+    return find_asrpro_port(comports)
 
 
 class Gateway:
@@ -106,21 +127,29 @@ class Lines:
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--port", default=os.environ.get("ASRPRO_PORT"))
+    parser.add_argument("--port", default=os.environ.get("ASRPRO_PORT"),
+                        help="ASRPRO serial device; auto-detected by USB ID when unset")
     parser.add_argument("--gateway", default="http://127.0.0.1:5000")
     args = parser.parse_args()
-    if not args.port:
-        parser.error("Set ASRPRO_PORT to the dedicated ASRPRO USB serial device")
     bridge = Bridge(Gateway(args.gateway, os.environ.get("SMART_HOME_SERVICE_TOKEN", "")))
     import serial
     logging.basicConfig(level=logging.INFO)
+    waiting = False
     while True:
+        device = resolve_port(args.port)
+        if device is None:
+            if not waiting:
+                LOG.info("ASRPRO adapter not present; waiting for hot-plug")
+                waiting = True
+            time.sleep(2)
+            continue
+        waiting = False
         try:
-            with serial.Serial(args.port, 115200, timeout=0.1,
+            with serial.Serial(device, 115200, timeout=0.1,
                                write_timeout=1, exclusive=True) as port:
                 port.reset_input_buffer()
                 lines = Lines()
-                LOG.info("ASRPRO connected")
+                LOG.info("ASRPRO connected (%s)", device)
                 while True:
                     frames = lines.feed(port.read(port.in_waiting or 1))
                     # Firmware permits one in-flight command. Never execute a backlog.
@@ -130,7 +159,7 @@ def main():
                     if reply is not None:
                         port.write(reply)
         except (serial.SerialException, OSError) as exc:
-            LOG.warning("ASRPRO disconnected (%s)", type(exc).__name__)
+            LOG.warning("ASRPRO disconnected (%s); waiting for hot-plug", type(exc).__name__)
             time.sleep(2)
 
 
