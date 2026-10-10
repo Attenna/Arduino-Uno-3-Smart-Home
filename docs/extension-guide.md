@@ -131,7 +131,25 @@ automation:
 它是 **web 拉起的 stdio 子进程**：web 侧经 `hardware.py` 的 `call_tool(name, args)`
 线程安全调用，外部（含语音助手）经 web 的 `POST /api/hardware/tool` 调同一个名字、
 `GET /api/hardware/tools` 拿清单。加一个纯软件工具（不碰新硬件）只需装饰器 + 实现；
-但它要能进自动化动作，还得走第 4 节「加一个执行器」那条链。
+但它要能进自动化动作，还得走第 3.3 节「加一个执行器」那条链。
+
+### 2.6 设备/门禁控制路径的三分类（加「门类」动作前必读）
+
+引擎里**不允许**写死任何开门/关门策略分支；门的动作只能来自「规则」或明确的「用户指令」。
+加新的设备/触发时，先判断它属于哪一类：
+
+| 类别 | 例子 | 是否评估规则 | 落点 |
+|------|------|-------------|------|
+| **用户显式指令**（允许旁路） | 面板 `POST /api/door`、`/api/window`；工具网关 `POST /api/hardware/tool`；HA `POST /api/ha/door` | 否，直达硬件 | `web/api/devices.py`（经 `_DeviceGate`）、`web/api/ha.py` |
+| **鉴权事件**（规则决定动作） | 刷脸/刷卡/键盘通过 → 广播 `access_granted` | 是 | `web/access_guard.py` 只做白名单判定与广播，动作由规则 `access_open_door` 决定 |
+| **自动化行为**（必须走规则） | 触摸开门、门禁开门、有人联动 | 是 | 写成 `web/automation/default_rules.py` 的预设（并抬 `PRESETS_VERSION`） |
+
+- 新增「到点/被触发就开门」这类自动化：**加一条默认预设，不要在引擎或 MCP 里直接下发门命令**。
+  注入由 `seed_presets` 按 `default_rules.py` 的数据完成；用户删掉的预设记进 `presets_seen`，
+  重启不再加回。写死的隐性预设（如已并入 `access_open_door` 的 `access_auto_close`）一律清理。
+- 显式指令路径执行后仍会广播 `manual_control`（风扇另同步下发水位），供「手动优先让位」等规则消费。
+- 回归基线：`PC_Test/tests/test_home_automation.py::AccessPathCloseoutTests` 钉住
+  「删光规则 → 自动化不再开门；显式指令不受规则集影响」。用户视角见 [faq.md Q36](faq.md)。
 
 ---
 
