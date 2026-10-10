@@ -12,7 +12,8 @@ from unittest.mock import Mock, patch
 from keypad_code import KeypadCode
 from web.automation.capabilities import DELAY_MAX_SECONDS
 from web.automation.default_rules import PRESETS_VERSION
-from web.automation.engine import SAFETY_RETRY, AutomationEngine
+from web.automation.engine import (SAFETY_RETRY, AutomationEngine,
+                                   _is_safety_action)
 from web.automation.schema import (ValidationError, validate_action,
                                    validate_condition, validate_rule)
 from web.security_monitor import DoorwayDwell, SecurityMonitor
@@ -731,6 +732,135 @@ class SleepBlockTests(unittest.TestCase):
         restarted.load()
         restarted.bridge.control_door.assert_not_called()
         self.assertEqual(restarted._running, {})
+
+
+class WaitBlockTests(unittest.TestCase):
+    """issue #100：「等待事件」动作——等到条件成立再继续，超时必填且有上界。
+
+    覆盖：校验（超时必填/越界、非法比较符、未知源、按源类型归一阈值）、
+    立即成立 / 等待中转真 / 超时 / 取消四条执行路径，以及「等待不参与安全重试、
+    不持久化运行态」。
+    """
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.bridge = Mock(online=True)
+        for name in ("control_door", "control_window", "control_fan", "control_light"):
+            getattr(self.bridge, name).return_value = (True, "ok")
+        self.db = Mock()
+        self.status = {"door_status": "open", "window_status": "normal",
+                       "fan_speed": 0, "light_status": "off", "light_brightness": 0}
+        self.db.get_current_status.side_effect = lambda: dict(self.status)
+        self.engine = AutomationEngine(self.bridge, self.db,
+                                       Path(self.temp.name) / "rules.json")
+        self.engine.load()
+        self.addCleanup(self.engine.stop)
+
+    @staticmethod
+    def _wait(**kwargs):
+        action = {"device": "wait", "sensor": "door_status", "op": "==",
+                  "value": "closed", "timeout_sec": 30}
+        action.update(kwargs)
+        return action
+
+    def test_timeout_is_required_and_bounded(self):
+        self.assertEqual(validate_action(self._wait())["timeout_sec"], 30)
+        self.assertEqual(validate_action(self._wait(timeout_sec=DELAY_MAX_SECONDS))["timeout_sec"],
+                         DELAY_MAX_SECONDS)
+        for bad in (0, -1, DELAY_MAX_SECONDS + 1, "abc"):
+            with self.assertRaises(ValidationError):
+                validate_action(self._wait(timeout_sec=bad))
+        # 超时必填：缺省即拒绝（#20 验收 3：等待必须有上界）
+        with self.assertRaises(ValidationError):
+            validate_action({"device": "wait", "sensor": "door_status",
+                             "op": "==", "value": "closed"})
+
+    def test_source_and_value_checked_like_a_condition(self):
+        with self.assertRaises(ValidationError):
+            validate_action(self._wait(op="~"))                  # 非法比较符
+        with self.assertRaises(ValidationError):
+            validate_action(self._wait(sensor="nope"))           # 未知源
+        with self.assertRaises(ValidationError):
+            validate_action(self._wait(value="ajar"))            # 枚举源非法取值
+        # 布尔源：字符串 "true" 归一成 True
+        cleaned = validate_action(self._wait(sensor="motion", value="true"))
+        self.assertIs(cleaned["value"], True)
+
+    def test_wait_is_not_a_safety_action(self):
+        self.assertFalse(_is_safety_action(self._wait()))
+
+    def test_returns_immediately_when_condition_already_holds(self):
+        self.status["door_status"] = "closed"
+        started = time.monotonic()
+        ok, msg = self.engine._perform(self._wait(timeout_sec=5))
+        self.assertTrue(ok, msg)
+        self.assertIn("成立", msg)
+        self.assertLess(time.monotonic() - started, 1)
+
+    def test_succeeds_when_condition_becomes_true(self):
+        threading.Thread(target=lambda: (time.sleep(0.4),
+                                         self.status.update(door_status="closed")),
+                         daemon=True).start()
+        started = time.monotonic()
+        ok, msg = self.engine._perform(self._wait(timeout_sec=5))
+        self.assertTrue(ok, msg)
+        self.assertLess(time.monotonic() - started, 3)
+
+    def test_times_out_within_bound(self):
+        started = time.monotonic()
+        ok, msg = self.engine._perform(self._wait(timeout_sec=1))
+        elapsed = time.monotonic() - started
+        self.assertFalse(ok)
+        self.assertIn("超时", msg)
+        self.assertGreaterEqual(elapsed, 1.0)
+        self.assertLess(elapsed, 3)
+
+    def test_can_be_cancelled_promptly(self):
+        rule = dict(id="w", name="等到关门", actions=[self._wait(timeout_sec=600)])
+        self.engine.rules = [rule]
+        lock = threading.Lock()
+        lock.acquire()
+        done = threading.Event()
+        logs = []
+        self.engine._log = lambda *a, **k: logs.append(k)
+
+        def run():
+            try:
+                self.engine._run_actions(rule, rule["actions"], True, "测试", lock)
+            finally:
+                done.set()
+
+        threading.Thread(target=run, daemon=True).start()
+        for _ in range(100):                        # 等它真正进入等待
+            if self.engine._running.get(rule["id"]):
+                break
+            time.sleep(0.02)
+        started = time.monotonic()
+        self.engine._running[rule["id"]].set()      # 等价于停用/保存/停止
+        self.assertTrue(done.wait(2), "取消后等待线程应立即结束，不再等满 600 秒")
+        self.assertLess(time.monotonic() - started, 2)
+        self.assertFalse(lock.locked(), "动作锁应已释放")
+        last = logs[0]["detail"][-1]
+        self.assertFalse(last.get("ok"))
+        self.assertIn("取消", str(last.get("result") or ""))
+
+    def test_rule_round_trips_and_not_persisted(self):
+        rule = dict(id="w", name="等到关门后收尾", enabled=True,
+                    trigger={"kind": "event", "event": "access_granted"},
+                    conditions=[],
+                    actions=[self._wait(timeout_sec=15),
+                             {"device": "door", "status": "close"}],
+                    else_actions=[], cooldown=0)
+        saved = self.engine.save_rules([rule])
+        act = saved[0]["actions"][0]
+        self.assertEqual(act, {"device": "wait", "sensor": "door_status", "op": "==",
+                               "value": "closed", "timeout_sec": 15})
+        # 落盘只有动作配置：没有「剩余秒数 / 截止时刻 / 待执行」这类调度状态
+        flat = json.dumps(json.loads(self.engine.rules_path.read_text(encoding="utf-8")),
+                          ensure_ascii=False)
+        for key in ("pending", "remaining", "deadline", "scheduled", "fire_at"):
+            self.assertNotIn(key, flat)
 
 
 class GatingPresetTests(unittest.TestCase):

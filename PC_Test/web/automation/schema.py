@@ -250,6 +250,21 @@ def validate_action(action: dict, where: str = "动作块",
             raise ValidationError(f"延时需在 1~{DELAY_MAX_SECONDS} 秒之间")
         clean["seconds"] = seconds
         return clean
+    if device == "wait":
+        # 「等待事件」：等到条件成立再继续。源的合法性与比较沿用「条件块」同一套
+        # （_check_source + _clean_comparison），因此触发/条件能用的源与比较符这里都能用。
+        _require(action, ("sensor", "op", "value"), "等待动作块")
+        _check_source(action["sensor"], "等待动作块", vars_info, strict)
+        if action["op"] not in COMPARATOR_IDS:
+            raise ValidationError(f"等待动作块非法比较符: {action['op']}")
+        value = _clean_comparison(action["sensor"], action["op"], action["value"],
+                                  "等待动作块", vars_info, strict=strict)
+        # 超时必填（#20 验收 3）：等待必须有上界，不能无限挂起规则动作线程。
+        timeout = _as_number(action.get("timeout_sec"), "等待动作块的最长等待时长")
+        if not 0 < timeout <= DELAY_MAX_SECONDS:
+            raise ValidationError(f"等待超时需在 1~{DELAY_MAX_SECONDS} 秒之间")
+        return {"device": "wait", "sensor": action["sensor"], "op": action["op"],
+                "value": value, "timeout_sec": timeout}
     if device == "state":
         return _validate_state_action(action, clean, where, vars_info, strict)
     if device == "door":

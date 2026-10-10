@@ -197,6 +197,15 @@ ACTION_DEVICES = {
     # 全屋模式状态机动作（home_mode）已拆除：模式/档位由 g:全屋模式 等全局状态
     # 加预设规则表达，见模块 docstring。
     "delay": {"label": "等待（延时）", "params": {"seconds": {"range": [1, DELAY_MAX_SECONDS], "unit": "秒"}}},
+    # 「等待事件」：等到某个条件成立再继续（#100）。条件语义与「条件块」完全一致
+    # （同一套源/比较符/求值），源可选传感器或 g: 全局状态；timeout_sec 必填且
+    # 1~DELAY_MAX_SECONDS：等待必须有超时上界，不能让规则动作线程无限挂起（#20 验收 3）。
+    "wait": {"label": "等待事件（等到条件成立）", "params": {
+        "sensor": {"choices": [], "label": "数据源（传感器/全局状态）"},
+        "op": {"choices": ["==", "!=", ">", ">=", "<", "<="],
+               "labels": ["等于", "不等于", "大于", "大于等于", "小于", "小于等于"]},
+        "value": {"label": "目标值"},
+        "timeout_sec": {"range": [1, DELAY_MAX_SECONDS], "unit": "秒"}}},
     # 全局状态写入（自由命名变量，见 global_state.py）。name 的可选项是运行期的，
     # 由 capabilities_payload() 在打包时注入（这里的空壳只为让校验放行 device 名）。
     "state": {"label": "设置全局状态", "params": {
