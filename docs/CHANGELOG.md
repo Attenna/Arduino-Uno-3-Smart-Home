@@ -2,6 +2,41 @@
 
 记录对系统行为 / 接口有影响的变更。新条目置于顶部。
 
+## 2026-10-10 · 门禁控制路径收口与文档分类（#19）
+
+分支：`refactor/19-access-paths-closeout`（PR #92）；用户手册与二次开发指南补充见
+`docs/19-access-path-docs`。Issue：#19「收口硬编码开/关门路径，让门禁行为由 Blocks 规则决定」。
+
+### 背景
+引擎里早已没有写死的开门 handler，但仍存在「改了 Blocks 门还是按别处开」的困惑；且旧预设
+`access_auto_close` 已并入 `access_open_door` 后，多处文档/注释仍有残留引用。本条目收尾
+文档分类、漂移修正与定向回归。**本次不改运行时行为、不改接口与数据结构。**
+
+### 变更
+- **文档分类（AC1）**：`docs/home-automation.md` 新增「控制路径划分：用户显式指令 vs
+  自动化行为」——面板/语音/HA 为显式指令（允许旁路）；人脸/房卡/键盘通过后只广播
+  `access_granted`，动作由规则决定；触摸开门、门禁开门、有人联动等自动化行为必须走规则。
+- **消除漂移**：修正 `PC_Test/web/access_guard.py`、`mcp_home_server.py`、
+  `web/face_watcher.py`、`web/api/access.py`、`web/api/face.py`、`docs/architecture.md`、
+  `docs/faq.md`、`PC_Test/README.md` 共 8 处对已删除预设 `access_auto_close` 的引用
+  （其「10 秒后关门」已由 `access_open_door` 单条承担）。
+- **用户手册**：`docs/faq.md` 新增 **Q36**「为什么删掉了 Blocks 规则，门还是能开？」。
+- **二次开发指南**：`docs/extension-guide.md` 新增 **§2.6**「设备/门禁控制路径的三分类」，
+  给出加门类动作时的落点与必须遵守的约束。
+- **回归**：`PC_Test/tests/test_home_automation.py` 新增 `AccessPathCloseoutTests`；
+  `PC_Test/web/face/changes_log.md` 记 v1.1.1（仅注释/文档）。
+
+### 影响与迁移
+- 无运行时行为变更；无需重建人脸库，无数据库结构 / 串口协议 / Docker 编排变更。
+- 键盘密码开门此前已由 MCP 直控改为上报 `access_granted`（本 Issue 的前序改动），本次仅补文档。
+
+### 验收
+- 隔离单测：香橙派 Python 3.12 下 275 tests / 0 failures（`test_home_automation` 39 OK）；
+  本地 Python 3.10 全量 285 tests，仅 `test_hardening` 2 项既有环境失败（3.10 的
+  `concurrent.futures.TimeoutError` 与内置 `TimeoutError` 不同类，3.11+ 已合并，3.12 下通过）。
+- 真机：分支验收通过后合并部署 `main` = `a8b9b65`，web/voice/camera 三容器 healthy、
+  `/api/ready` ok、匿名 `GET /api/hardware/tools` = 401；本地 / GitHub / 香橙派仓库 / 运行时四方一致。
+
 ## 2026-10-10 · 积木自动化风险清单收尾（#74）
 
 分支：`fix/74-automation-risks-closeout`。Issue：#74「Blocks 积木自动化潜在风险清单」。
