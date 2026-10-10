@@ -56,8 +56,23 @@ printf '%s\n' "$commit" > "$RUNTIME_DIR/.deployed-git-commit"
 cd "$RUNTIME_DIR"
 docker compose up -d --build
 docker compose ps
-curl --fail --silent --show-error --max-time 10 \
-  http://127.0.0.1:5000/api/ready
+# 就绪检查要有等待窗口：容器刚起时 /api/ready 会在启动窗口内短暂 503
+# （sensor_fresh / output_fresh 尚未满足），立刻 curl 会把「正在启动」误判成部署失败。
+# 这里最多等 90s（每 3s 一次）；窗口内始终不就绪才失败退出，不放宽 /api/ready 本身。
+ready_ok=0
+for _ in $(seq 1 30); do
+  if curl --fail --silent --show-error --max-time 10 \
+       http://127.0.0.1:5000/api/ready; then
+    ready_ok=1
+    break
+  fi
+  printf '\n/api/ready 尚未就绪，3 秒后重试...\n'
+  sleep 3
+done
+if [ "$ready_ok" -ne 1 ]; then
+  echo "readiness check did not pass within 90s" >&2
+  exit 1
+fi
 printf '\nAnonymous hardware API status: '
 curl --silent --output /dev/null --write-out '%{http_code}\n' \
   http://127.0.0.1:5000/api/hardware/tools
