@@ -215,6 +215,34 @@ def status_values(status, brightness, style, count=None):
             "light_rgb": rgb_field(color)}
 
 
+def expected_readback_pct(brightness, style):
+    """命令亮度 + 亮法 → B 板会回报的电平百分比（0~100）。
+
+    B 板把「实际点亮电平」记进 ``Light::_level`` 后回报，web 再把 0~255 折算成
+    百分比（``hardware.py`` 的 ``_pct(state["light"], 255)``）。这条折算对暗色
+    无效：``_level`` 是**缩放后**的最大分量，峰值 < 255 的颜色本就比命令亮度低，
+    拿「命令亮度」直接比对就会长期误报「命令未生效」（#30）。
+
+    这里按固件同款整数运算复刻一遍「命令亮度 → 会上报的电平百分比」，作为比对
+    的期望值：white/night/temp 的电平就等于缩放到 0~255 的命令亮度；rgb/pixels
+    则按最大分量缩放（``peak * value // 255``，与 ``LightMath.scaleLightChannel``
+    一致）。返回 None 表示无法判定（亮度非法），调用方跳过。
+    """
+    try:
+        pct = int(brightness)
+    except (TypeError, ValueError):
+        return None
+    if pct <= 0:
+        return 0
+    value = max(1, min(255, round(pct * 255 / 100)))
+    mode, _kelvin, color = style
+    if mode == "rgb" and color:
+        level = max(color) * value // 255
+    else:
+        level = value
+    return round(level * 100 / 255)
+
+
 def hardware_plan(status, brightness, style, count=None):
     """意图 → 硬件桥调用 (方法名, 位置参数, 关键字参数)。
 
