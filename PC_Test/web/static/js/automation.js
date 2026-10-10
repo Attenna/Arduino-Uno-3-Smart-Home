@@ -8,6 +8,7 @@
 let workspace = null;      // Blockly 工作区（懒加载，只在编辑器视图里创建）
 let CAPS = null;           // 后端能力清单
 let RULES = [];            // 全量规则（唯一数据源）
+let GATING_PRESETS = [];   // 「门控维护预设」id（后端下发；停用它们会让联动静默失效，#77）
 let PREVIEW = {};          // rule_id -> preview 条目（卡片上的实时状态）
 let editingIndex = -1;     // 正在编辑的规则在 RULES 中的下标（-1=新规则）
 let editingRule = null;    // 正在编辑的规则副本
@@ -1112,14 +1113,35 @@ function renderRuleList() {
         ? `<div class="grid-section">🧩 自动化规则 · ${RULES.length}</div>`
           + RULES.map(ruleCardHtml).join('')
         : '<div class="empty-rules">还没有规则，点右上角「＋ 新建规则」开始。</div>';
-    grid.innerHTML = states + rules;
+    grid.innerHTML = gatingBannerHtml() + states + rules;
+}
+
+// 「门控维护预设」被停用 → 依赖它们的联动会静默失效，给醒目提示（#77）
+function gatingDisabledRules() {
+    if (!GATING_PRESETS.length) return [];
+    return RULES.filter((r) => r.preset && GATING_PRESETS.includes(r.preset)
+                               && r.enabled === false);
+}
+
+function gatingBannerHtml() {
+    const off = gatingDisabledRules();
+    if (!off.length) return '';
+    const names = off.map((r) => esc(r.name)).join('、');
+    return '<div class="gating-warn">⚠️ 基础门控预设被停用：' + names
+        + '。依赖它们的联动（有人/无人判定、手动优先解除）不会报错，只会静默失效；'
+        + '点右上角「♻️ 恢复内置」可一键补回。</div>';
 }
 
 function ruleCardHtml(r, i) {
     const trig = r.trigger;
     const pv = r.id ? PREVIEW[r.id] : null;
     let statusBadge = '';
-    if (r.enabled === false) statusBadge = '<span class="badge disabled">已停用</span>';
+    if (r.enabled === false) {
+        const gating = r.preset && GATING_PRESETS.includes(r.preset);
+        statusBadge = gating
+            ? '<span class="badge disabled">已停用 · ⚠ 门控预设</span>'
+            : '<span class="badge disabled">已停用</span>';
+    }
     else if (pv && pv.trigger_now === true) statusBadge = '<span class="badge on">条件成立</span>';
     else if (pv && pv.trigger_now === false) statusBadge = '<span class="badge off">未成立</span>';
     else if (pv) statusBadge = '<span class="badge evt">事件驱动</span>';
@@ -1465,12 +1487,26 @@ function initWorkspace() {
                 if (inp.value !== v) inp.value = v;
             }
         }
+        // 画布里的「启用」勾选框与工具栏开关是同一个状态的两个入口：画布改动同步回开关，
+        // 否则用户在画布上勾选后保存会被忽略（#77 的「误置 enabled」入口之一）。
+        if (e.name === 'ENABLED') {
+            const b = workspace.getBlockById(e.blockId);
+            const cb = document.getElementById('editorEnabled');
+            if (b && b.type === 'rule_block' && cb) {
+                cb.checked = b.getFieldValue('ENABLED') === 'TRUE';
+            }
+        }
         if (!LOADING && e.isUiEvent === false) DIRTY = true;
     });
     document.getElementById('fitViewBtn')?.addEventListener('click', fitWorkspace);
     document.getElementById('editorName')?.addEventListener('input', (ev) => {
         const rb = workspace.getTopBlocks(false).find(isTopBlock);
         if (rb) rb.setFieldValue(ev.target.value, 'NAME');
+    });
+    // 反向：工具栏开关改动同步到画布（保存以开关为准，见 collectEditor）
+    document.getElementById('editorEnabled')?.addEventListener('change', (ev) => {
+        const rb = workspace.getTopBlocks(false).find((b) => b.type === 'rule_block');
+        if (rb) rb.setFieldValue(ev.target.checked ? 'TRUE' : 'FALSE', 'ENABLED');
     });
 }
 
@@ -2179,6 +2215,7 @@ async function refreshLogs() {
 async function reloadRules() {
     const data = await api('/api/automation/rules');
     RULES = data.rules || [];
+    GATING_PRESETS = data.gating_presets || [];
     await refreshPreview();
     renderRuleList();
     // 旧规则迁移提示（后端只在迁移后的首个拉带给一次）

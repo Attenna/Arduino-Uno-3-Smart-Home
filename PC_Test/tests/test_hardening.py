@@ -17,7 +17,8 @@ os.environ.update(SMART_HOME_ADMIN_USER="test-admin",
                   SMART_HOME_SERVICE_TOKEN="t" * 48)
 
 from web.app import create_app
-from web.api import access, devices, status, voice
+from web.api import access, automation, devices, status, voice
+from web.automation.default_rules import GATING_PRESETS
 from web.automation.engine import AutomationEngine
 from web.hardware import McpHardwareBridge
 import camera_stream
@@ -97,6 +98,20 @@ class ApiTests(unittest.TestCase):
                 "/api/voice/wake", headers={"Origin": "http://localhost"})
             self.assertEqual(wake_response.json["state"], "ACK")
             self.assertEqual(wake_response.json["state_label"], "提示音中")
+
+    def test_rules_api_exposes_gating_preset_list(self):
+        """#77：页面需要「门控维护预设」名单来判断哪些被停用并给醒目提示。"""
+        self.login()
+        with tempfile.TemporaryDirectory() as directory:
+            engine = AutomationEngine(Mock(), Mock(), Path(directory) / "rules.json")
+            engine.load()
+            self.addCleanup(engine.stop)
+            with patch.object(automation.extensions, "automation", engine):
+                payload = self.client.get("/api/automation/rules").get_json()
+        self.assertEqual(payload["gating_presets"], list(GATING_PRESETS))
+        # 内置门控预设确实随默认规则一起注入，页面才能在客户端判断「已停用」
+        by_preset = {r.get("preset") for r in payload["rules"]}
+        self.assertTrue(set(GATING_PRESETS) <= by_preset)
 
     def test_voice_events_has_no_hop_by_hop_header(self):
         """#88：SSE 代理不得设置 hop-by-hop 头。

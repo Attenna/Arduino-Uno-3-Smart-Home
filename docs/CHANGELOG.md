@@ -2,6 +2,39 @@
 
 记录对系统行为 / 接口有影响的变更。新条目置于顶部。
 
+## 2026-10-11 · 门控预设停用提示与编辑器 enabled 双控件收口（#77）
+
+分支：`fix/77-preset-gating-guard`。Issue：#77「全屋状态机预设被禁用（presence_motion /
+manual_clear_light）导致有人/无人门控锁死、光照等联动失效」。
+
+### 调查结论（对应 issue 待办 1）
+- 后端**没有**任何「自动把预设 `enabled` 置为 False」的代码路径：引擎的迁移与注入都
+  保留用户开关（`new["enabled"] = bool(rule.get("enabled", True))`），页面上的停用是显式操作。
+- 但编辑器里的「启用」其实有**两个控件**：工具栏开关 `#editorEnabled` 与画布 `rule_block`
+  上的 Blockly 勾选框。保存只读工具栏开关（`collectEditor`），画布勾选框**从不被读取**——
+  用户在画布上取消勾选后保存，会被静默忽略。2026-10-08 22:03 的批量停用无法用现有日志
+  归因（规则保存没有 diff 审计），但「同一状态两个入口、只生效一个」是确定缺陷。
+
+### 变更
+- **收口 enabled 双控件**：画布勾选框与工具栏开关**双向同步**（`automation.js` 的
+  `workspace.addChangeListener` + `#editorEnabled` 的 change 监听），两个入口都生效且
+  永不失配。
+- **门控预设停用提示**：新增 `default_rules.GATING_PRESETS`（`presence_motion` /
+  `presence_timeout` / `manual_mark_*` / `manual_clear_*`），`GET /api/automation/rules`
+  下发该名单；自动化页对「已停用的门控预设」显示顶部醒目横幅 + 卡片角标，并提示复用已有的
+  「♻️ 恢复内置」。`ir_remote_*` 这类顺带写 `g:手动优先_x` 的预设不列入，避免误报。
+- **不改迁移策略**：不会强制启用用户停用的预设，只做提示（保留用户意愿）。
+
+### 影响与迁移
+- 不改串口协议、不改数据库结构、不改 Docker 编排；仅 web 容器（后端多一个只读名单字段、
+  前端多一处提示与双向同步）。
+- 已有规则文件无需迁移；除新增提示与画布开关生效外，页面行为不变。
+
+### 验收
+- 单测：`test_home_automation.GatingPresetTests`（名单存在性 / 确实写门控变量 / 不误报）、
+  `test_hardening.ApiTests.test_rules_api_exposes_gating_preset_list`（接口下发名单）。
+- 真机：门控预设被停用时自动化页出现横幅与角标；画布勾选框与工具栏开关同步且保存生效。
+
 ## 2026-10-11 · 等待（延时）积木上限放宽到 1 小时（#20）
 
 分支：`feat/20-sleep-block-closeout`。Issue：#20「补强 sleep 积木（现有 delay 为阻塞式、
