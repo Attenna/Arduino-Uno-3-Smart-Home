@@ -342,6 +342,9 @@ class AccessGuard:
         for sid, session in list(self._sessions.items()):
             if session["state"] == "pending" and now >= session["expires_at"]:
                 session["state"] = "expired"
-                session["error"] = "等待刷卡超时，未收到有效 RFID 事件"
+                # 说明"为什么"而不是只说"没收到事件"：RC522 上"检出卡但读 UID 失败"很常见
+                # （issue #87），提示用户拿开重贴/换卡，比让他再点一次按钮有用。
+                session["error"] = ("等待刷卡超时，未读到卡；请拿开卡片重新贴近，"
+                                    "或换一张卡再试")
             if now >= session["expires_at"] + CARD_RESULT_KEEP_S:
                 self._sessions.pop(sid, None)

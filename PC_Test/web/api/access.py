@@ -146,8 +146,10 @@ def enroll_rfid(person_id: int):
         return _fail("RFID 硬件链路离线，无法开始录卡，请检查 A 板连接",
                      "RFID hardware link is offline", 503)
     session = access_guard.start_card_session(person_id, person["name"])
-    return jsonify({"message": f"请把卡片贴到读卡器上（{int(CARD_ENROLL_TTL_S)} 秒内）",
-                    "message_en": "Tap the card on the reader",
+    return jsonify({"message": f"请把卡片贴到读卡器上（{int(CARD_ENROLL_TTL_S)} 秒内；"
+                               f"一次没反应就拿开重贴，可多次尝试）",
+                    "message_en": "Tap the card on the reader "
+                                  f"({int(CARD_ENROLL_TTL_S)}s; lift it off and tap again if nothing happens)",
                     "session": session,
                     "link_ready": link_ready,
                     "timeout_seconds": int(CARD_ENROLL_TTL_S)})
