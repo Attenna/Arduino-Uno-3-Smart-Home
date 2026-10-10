@@ -896,3 +896,77 @@ class GatingPresetTests(unittest.TestCase):
         for pid in ("ir_remote_light_toggle", "ir_remote_fan_toggle",
                     "ir_remote_window_toggle", "temp_hot", "light_dark", "smoke_buzzer"):
             self.assertNotIn(pid, GATING_PRESETS)
+
+
+class GlobalStateSourceValidationTests(unittest.TestCase):
+    """issue #102：含 ``g:`` 全局状态触发/条件的规则必须能通过严格校验（页面保存）。
+
+    校验层有两套词汇：**变量定义**用 ``type``（``GlobalStateStore.var_specs()``、
+    能力清单的 ``state_vars``），**数据源**用 ``kind``（能力清单的 ``sources``）。
+    以前 ``_source_spec`` 把变量定义原样返回，``_clean_comparison`` 取不到 ``kind``，
+    于是严格模式下任何含 ``g:`` 触发/条件的规则都被判成「不能作为比较源」，页面
+    「保存」必然 400（整表替换，等于规则完全改不动）。
+
+    这里既锁住修复后的行为，也确认**校验强度没有被放松**。
+    """
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.bridge = Mock(online=True)
+        self.bridge.control_door.return_value = (True, "ok")
+        self.db = Mock()
+        self.db.get_current_status.return_value = dict(
+            door_status="closed", window_status="normal", fan_speed=0,
+            light_status="off", light_brightness=0)
+        self.engine = AutomationEngine(self.bridge, self.db,
+                                       Path(self.temp.name) / "rules.json")
+        self.engine.load()
+        self.addCleanup(self.engine.stop)
+        # 真实运行期的变量定义（type/label/choices），不是手搓的 kind
+        self.vars_info = self.engine.global_state.var_specs()
+
+    def test_seeded_vars_use_the_variable_vocabulary(self):
+        # 测试前提：种子变量确实存在，且用的是变量词汇 type（没有 kind）
+        self.assertIn("g:有人在家", self.vars_info)
+        self.assertEqual(self.vars_info["g:有人在家"]["type"], "bool")
+        self.assertNotIn("kind", self.vars_info["g:有人在家"])
+
+    def test_global_state_trigger_and_condition_pass_strict(self):
+        rule = validate_rule(
+            dict(name="有人在家且全屋自动", enabled=True,
+                 trigger=dict(kind="sensor", sensor="g:有人在家", op="==", value=True),
+                 conditions=[dict(sensor="g:全屋模式", op="==", value="auto")],
+                 actions=[dict(device="door", status="open")], cooldown=0),
+            vars_info=self.vars_info, strict=True)
+        self.assertIs(rule["trigger"]["value"], True)
+        self.assertEqual(rule["conditions"][0]["value"], "auto")
+
+    def test_save_rules_with_global_state_reference_succeeds(self):
+        # 走真实保存路径（save_rules → validate_rules + var_specs()）；修复前抛 ValidationError
+        rule = dict(name="有人在家时开门", enabled=True,
+                    trigger={"kind": "sensor", "sensor": "g:有人在家",
+                             "op": "==", "value": True},
+                    conditions=[{"sensor": "g:全屋模式", "op": "==", "value": "auto"}],
+                    actions=[{"device": "door", "status": "open"}],
+                    else_actions=[], cooldown=0)
+        saved = self.engine.save_rules([rule])
+        self.assertEqual(saved[0]["trigger"]["sensor"], "g:有人在家")
+        self.assertIs(saved[0]["trigger"]["value"], True)
+        self.assertEqual(saved[0]["conditions"][0]["value"], "auto")
+
+    def test_strictness_is_not_relaxed(self):
+        for bad in [dict(sensor="g:有人在家", op=">", value=True),      # 布尔不能比大小
+                    dict(sensor="g:有人在家", op="==", value="maybe"),  # 布尔值只能 是/否
+                    dict(sensor="g:全屋模式", op="==", value="party"),  # enum 取值越界
+                    dict(sensor="g:全屋模式", op=">", value="auto")]:   # enum 不能比大小
+            with self.assertRaises(ValidationError):
+                validate_condition(dict(bad), vars_info=self.vars_info)
+        # 宽松模式（引擎读盘）行为不变：变量已被删除也不拒绝
+        validate_condition(dict(sensor="g:已删除", op="==", value=True),
+                           vars_info=self.vars_info, strict=False)
+
+    def test_unknown_variable_still_rejected_on_save(self):
+        with self.assertRaises(ValidationError):
+            validate_condition(dict(sensor="g:不存在", op="==", value=True),
+                               vars_info=self.vars_info, strict=True)

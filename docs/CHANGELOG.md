@@ -2,6 +2,36 @@
 
 记录对系统行为 / 接口有影响的变更。新条目置于顶部。
 
+## 2026-10-11 · 修复：含 g: 全局状态条件的规则无法通过页面保存（#102）
+
+分支：`fix/102-global-state-source-validation`。Issue：#102。
+
+### 现象与根因
+自动化页「保存」是整表替换（`PUT /api/automation/rules`），只要规则集里有任何一条
+规则的**触发块 / 条件块**引用 `g:` 全局状态，保存必然 400：
+`条件块「有人在家」不能作为比较源`（等于页面完全改不动规则）。
+
+根因是两套词汇没对齐：**变量定义**用 `type`（`GlobalStateStore.var_specs()`、
+能力清单的 `state_vars`），**数据源**用 `kind`（能力清单的 `sources`）。
+`schema._source_spec()` 把变量定义原样交给 `_clean_comparison()`，后者取不到 `kind`，
+严格模式下直接判成「不能作为比较源」。
+
+### 变更
+- `_source_spec()` 把 `g:` 变量定义归一成数据源形状：`type → kind`，并保留 `label`
+  与 `choices`。**校验强度不变**：enum 仍按 `choices` 拦越界、bool 仍只允许 `==`/`!=`、
+  number 仍要求数字。
+- 「设置全局状态」动作仍按变量词汇 `type` 校验，未受影响。
+
+### 影响与迁移
+- 仅 `PC_Test/web/automation/schema.py`（+ 单测）。不改串口协议、数据库结构、Docker 编排。
+- 修复后页面「保存」恢复可用；已有规则文件无需迁移。
+
+### 验收
+- 单测：`test_home_automation.GlobalStateSourceValidationTests`（严格模式通过、走真实
+  `save_rules()` 路径、类型/取值越界仍拒绝、未知变量仍拒绝）。修复前该组用例确实报
+  「不能作为比较源」。
+- 真机：把运行时当前规则集原样 `PUT` 回去由 400 变为 200，规则条数与内容不变。
+
 ## 2026-10-11 · 新增「等待事件」积木：等到条件成立再继续（#100）
 
 分支：`feat/100-wait-event-block`。Issue：#100「feat(automation): 新增『等待事件』积木

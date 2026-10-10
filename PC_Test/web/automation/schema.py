@@ -68,13 +68,24 @@ def _source_spec(sensor_id: str, vars_info: dict | None) -> dict | None:
 
     静态白名单永远有定义；``g:`` 变量只有严格模式（vars_info 来自页面保存时的
     变量定义）才知道类型，宽松模式拿不到 → 返回 None，比较校验随之跳过。
+
+    两处词汇必须在这里归一：**变量定义**用 ``type``（``GlobalStateStore.var_specs()``
+    以及能力清单里的 ``state_vars``），**数据源**用 ``kind``（能力清单里的 ``sources``）。
+    以前直接把变量定义原样返回，``_clean_comparison`` 取不到 ``kind``，于是任何含
+    ``g:`` 触发/条件的规则在严格模式下都被判成「不能作为比较源」，页面根本无法保存
+    （#102）。这里只做词汇转换，不改变校验强度：enum 仍按 ``choices`` 拦越界值。
     """
     spec = CONDITION_SOURCES.get(sensor_id)
     if spec:
         return spec
-    if is_var_id(sensor_id):
-        return (vars_info or {}).get(sensor_id)
-    return None
+    if not is_var_id(sensor_id):
+        return None
+    var = (vars_info or {}).get(sensor_id)
+    if not var:
+        return None
+    return {"kind": var.get("kind") or var.get("type"),
+            "label": var.get("label", sensor_id),
+            "choices": list(var.get("choices") or [])}
 
 
 def _as_number(value, where: str) -> float:
