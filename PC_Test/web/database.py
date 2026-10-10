@@ -368,10 +368,15 @@ class SmartHomeDB:
             deleted_sh = c.execute(
                 'DELETE FROM sensor_history WHERE received_at<?',
                 (cutoff,)).rowcount
-        if deleted_th or deleted_sh:
+            # R13：automation_logs 只增不删会长到很大（detail_json 记完整动作序列）。
+            # 与原始遥测同一保留期，顺手清掉过期执行日志。
+            deleted_al = c.execute(
+                'DELETE FROM automation_logs WHERE timestamp<?',
+                (cutoff,)).rowcount
+        if deleted_th or deleted_sh or deleted_al:
             logger.info('[历史维护] 聚合截止 %s：temperature_history 删 %d 行、'
-                        'sensor_history 删 %d 行（原始保留 %d 天）',
-                        cutoff, deleted_th, deleted_sh,
+                        'sensor_history 删 %d 行、automation_logs 删 %d 行（保留 %d 天）',
+                        cutoff, deleted_th, deleted_sh, deleted_al,
                         self.HISTORY_RETENTION_DAYS)
 
     def _maybe_maintenance(self):

@@ -422,6 +422,48 @@ class AutomationRiskTests(unittest.TestCase):
             self.engine._run_actions(rule, rule["actions"], True, "测试", lock)
         self.assertEqual(self.bridge.control_door.call_count, 1)
 
+    def test_R2_door_ac_manual_priority_write_only_presets_removed(self):
+        from web.automation.default_rules import DEFAULT_RULES
+        presets = {r.get("preset") for r in DEFAULT_RULES}
+        for gone in ("manual_mark_door", "manual_clear_door",
+                     "manual_mark_ac", "manual_clear_ac"):
+            self.assertNotIn(gone, presets)
+        # 门/空调不再写「只写不读」的手动优先变量
+        door_rule = next(r for r in DEFAULT_RULES
+                         if r.get("preset") == "ir_remote_door_toggle")
+        for key in ("actions", "else_actions"):
+            for act in door_rule.get(key) or []:
+                self.assertNotEqual(act.get("name"), "g:手动优先_门")
+        # 旧文件里遗留的这几条预设要被迁移丢弃，不回到规则集
+        self.engine.rules_path.write_text(json.dumps({
+            "presets_version": 9,
+            "rules": [{"id": "d1", "preset": "manual_mark_door", "name": "旧门优先",
+                       "enabled": True,
+                       "trigger": {"kind": "event", "event": "manual_control",
+                                   "device": "door"},
+                       "actions": [{"device": "state", "name": "g:手动优先_门",
+                                    "op": "set", "value": True}],
+                       "cooldown": 0}]}))
+        self.engine.load()
+        self.assertEqual(
+            [r for r in self.engine.rules if r.get("preset") == "manual_mark_door"], [])
+
+    def test_R14_unexpected_action_exception_is_logged(self):
+        rule = self.engine.rules[0]
+        captured = []
+        self.engine._log = lambda *a, **k: captured.append(k)
+        lock = threading.Lock()
+        lock.acquire()
+        with patch.object(self.engine, "_perform_with_retry",
+                          side_effect=RuntimeError("boom")):
+            self.engine._run_actions(rule, [{"device": "fan", "speed": 10}],
+                                     True, "测试", lock)
+        self.assertEqual(len(captured), 1)
+        self.assertFalse(captured[0]["ok"])
+        self.assertTrue(any("执行异常" in (d.get("result") or "")
+                            for d in captured[0]["detail"]))
+        self.assertTrue(lock.acquire(blocking=False), "动作锁未释放")
+
 
 class KeypadTests(unittest.TestCase):
     def test_complete_attempts_and_success_reset(self):

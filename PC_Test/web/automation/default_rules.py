@@ -2,11 +2,16 @@
 
 光照为原始 ADC 数值；门口超声波独立于室内 motion。
 温度和光照使用回差，周期复查确保人员进入时立即响应当前环境。
+
+手动优先（``g:手动优先_x``）只对**有周期性自动规则、可能覆盖手动结果**的设备有意义
+（灯/风扇/窗：``light_dark``/``temp_*``/``away_close_all``/``window_normal``）。门与
+空调没有任何 interval 自动规则去覆盖手动操作，因此**不再维护**它们的手动优先变量与
+mark/clear 预设（R2）：原先只写不读，是「写了会生效」的误导性承诺。
 """
 
 import copy
 
-PRESETS_VERSION = 9
+PRESETS_VERSION = 10
 
 DEFAULT_RULES = [{'preset': 'access_open_door',
   'name': '门禁通过：开门并在10秒后关门',
@@ -55,10 +60,8 @@ DEFAULT_RULES = [{'preset': 'access_open_door',
   'enabled': True,
   'trigger': {'kind': 'event', 'event': 'ir', 'command': '0x47'},
   'conditions': [{'sensor': 'door_status', 'op': '==', 'value': 'open'}],
-  'actions': [{'device': 'state', 'name': 'g:手动优先_门', 'op': 'set', 'value': True},
-              {'device': 'door', 'status': 'close'}],
-  'else_actions': [{'device': 'state', 'name': 'g:手动优先_门', 'op': 'set', 'value': True},
-                   {'device': 'door', 'status': 'open'}],
+  'actions': [{'device': 'door', 'status': 'close'}],
+  'else_actions': [{'device': 'door', 'status': 'open'}],
   'match': 'all',
   'cooldown': 1},
  {'preset': 'ir_remote_window_toggle',
@@ -72,18 +75,6 @@ DEFAULT_RULES = [{'preset': 'access_open_door',
                    {'device': 'window', 'status': 'open'}],
   'match': 'all',
   'cooldown': 1},
- {'preset': 'manual_mark_door',
-  'name': '手动操作门：手动优先续期',
-  'enabled': True,
-  'trigger': {'kind': 'event', 'event': 'manual_control', 'device': 'door'},
-  'actions': [{'device': 'state', 'name': 'g:手动优先_门', 'op': 'set', 'value': True}],
-  'cooldown': 0},
- {'preset': 'manual_clear_door',
-  'name': '手动优先到期：解除门让位',
-  'enabled': True,
-  'trigger': {'kind': 'sensor', 'sensor': 'g:手动优先_门', 'op': '==', 'value': True, 'hold_sec': 30},
-  'actions': [{'device': 'state', 'name': 'g:手动优先_门', 'op': 'set', 'value': False}],
-  'cooldown': 5},
  {'preset': 'manual_mark_window',
   'name': '手动操作窗：手动优先续期',
   'enabled': True,
@@ -119,18 +110,6 @@ DEFAULT_RULES = [{'preset': 'access_open_door',
   'enabled': True,
   'trigger': {'kind': 'sensor', 'sensor': 'g:手动优先_风扇', 'op': '==', 'value': True, 'hold_sec': 30},
   'actions': [{'device': 'state', 'name': 'g:手动优先_风扇', 'op': 'set', 'value': False}],
-  'cooldown': 5},
- {'preset': 'manual_mark_ac',
-  'name': '手动操作空调：手动优先续期',
-  'enabled': True,
-  'trigger': {'kind': 'event', 'event': 'manual_control', 'device': 'ac'},
-  'actions': [{'device': 'state', 'name': 'g:手动优先_空调', 'op': 'set', 'value': True}],
-  'cooldown': 0},
- {'preset': 'manual_clear_ac',
-  'name': '手动优先到期：解除空调让位',
-  'enabled': True,
-  'trigger': {'kind': 'sensor', 'sensor': 'g:手动优先_空调', 'op': '==', 'value': True, 'hold_sec': 30},
-  'actions': [{'device': 'state', 'name': 'g:手动优先_空调', 'op': 'set', 'value': False}],
   'cooldown': 5},
  {'preset': 'temp_hot',
   'name': '有人：高于26°C开风扇',

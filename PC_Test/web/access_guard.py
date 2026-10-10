@@ -98,6 +98,9 @@ class AccessGuard:
             return
         event = dict(base)
         event.update({k: v for k, v in fields.items() if v not in (None, "")})
+        # R15：补一个毫秒级时间戳，让自动化引擎的事件去重（按 `event@ts`）对门禁事件
+        # 也生效——此前门禁事件不带 ts，只能靠 access_guard 自己的 8s 去抖兜底。
+        event.setdefault("ts", time.time())
         try:
             sink(event)
         except Exception as e:                        # noqa: BLE001
