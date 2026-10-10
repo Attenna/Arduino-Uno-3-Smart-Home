@@ -50,6 +50,12 @@ CROSS_MODEL_CEILING = 0.30
 # 单次录入的图像体积上限（MB）
 ENROLL_IMAGE_MAX_MB = 4.0
 
+# YOLOv8-face 检测输入尺寸（imgsz）：必须能被 stride 32 整除，过小漏检、过大拖慢。
+# 只认 web_config.yaml（data/face/face_config.json 是运行期产物，不作配置来源）。
+DETECTION_IMAGE_SIZE_DEFAULT = 640
+DETECTION_IMAGE_SIZE_MIN, DETECTION_IMAGE_SIZE_MAX = 160, 1280
+DETECTION_IMAGE_SIZE_STRIDE = 32
+
 
 def identity_name(name: str) -> str:
     """人员姓名 → 人脸库目录名，也就是识别用的 face_id。
@@ -88,6 +94,29 @@ class FaceEngine:
 
     # ==================== 配置 ====================
 
+    def _detection_image_size(self) -> int:
+        """检测输入尺寸：只认 yaml，非法值告警并回退默认（#24）。
+
+        YOLO 的 stride 是 32，imgsz 不是 32 的倍数会被内部补齐，口径就不透明了；
+        故把「32 的倍数 + 160~1280」作为合法范围，越界/非整数一律回退 640，
+        避免一处笔误把检测拖垮或把脸全漏掉。
+        """
+        raw = self.web_cfg.get("image_size", DETECTION_IMAGE_SIZE_DEFAULT)
+        try:
+            size = int(raw)
+        except (TypeError, ValueError):
+            logger.warning("face.image_size=%r 不是整数，回退 %d",
+                           raw, DETECTION_IMAGE_SIZE_DEFAULT)
+            return DETECTION_IMAGE_SIZE_DEFAULT
+        if (size % DETECTION_IMAGE_SIZE_STRIDE or
+                not DETECTION_IMAGE_SIZE_MIN <= size <= DETECTION_IMAGE_SIZE_MAX):
+            logger.warning(
+                "face.image_size=%d 非法（需 %d 的倍数且 %d~%d），回退 %d",
+                size, DETECTION_IMAGE_SIZE_STRIDE, DETECTION_IMAGE_SIZE_MIN,
+                DETECTION_IMAGE_SIZE_MAX, DETECTION_IMAGE_SIZE_DEFAULT)
+            return DETECTION_IMAGE_SIZE_DEFAULT
+        return size
+
     def _default_config(self) -> dict:
         recog = dict(self.web_cfg.get("recognition", {}))
         return {
@@ -95,7 +124,7 @@ class FaceEngine:
             "model_format": "pt",
             "confidence_threshold": self.web_cfg.get("confidence_threshold", 0.4),
             "iou_threshold": self.web_cfg.get("iou_threshold", 0.45),
-            "image_size": 640,
+            "image_size": self._detection_image_size(),
             "device": None,
             "camera_device": 0,
             "camera_width": 640,
@@ -124,6 +153,9 @@ class FaceEngine:
                     saved = json.load(f)
                 cfg = self._default_config()
                 cfg.update(saved)
+                # 检测 imgsz 只认 yaml：face_config.json 是运行期写的、可能带着
+                # 别的机器的取值，不作数（与 max_faces 同款口径，#24）。
+                cfg["image_size"] = self._detection_image_size()
                 return cfg
             except Exception as e:
                 logger.warning("人脸配置加载失败: %s，使用默认配置", e)

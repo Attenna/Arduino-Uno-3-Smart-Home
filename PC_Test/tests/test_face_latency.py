@@ -282,5 +282,32 @@ class MotionEdgeWakeTests(unittest.TestCase):
         self.assertLess(time.monotonic() - started, 1.0)
 
 
+class DetectionImageSizeTests(unittest.TestCase):
+    """检测输入尺寸（imgsz）可配置且校验合法范围（issue #24）。"""
+
+    def _engine(self, **face_cfg):
+        cfg = Path(tempfile.mkdtemp()) / "face_config.json"
+        cfg.write_text('{"simulation_mode": true}', encoding="utf-8")
+        return FaceEngine(config_path=cfg, web_cfg={"face": face_cfg})
+
+    def test_defaults_to_640(self):
+        self.assertEqual(self._engine().config["image_size"], 640)
+
+    def test_yaml_value_is_used(self):
+        self.assertEqual(self._engine(image_size=416).config["image_size"], 416)
+
+    def test_invalid_values_fall_back_to_640(self):
+        for bad in ("abc", 100, 700, 5000, None, 0, 1600):
+            with self.subTest(value=bad):
+                self.assertEqual(self._engine(image_size=bad).config["image_size"], 640)
+
+    def test_runtime_json_cannot_override_yaml(self):
+        cfg = Path(tempfile.mkdtemp()) / "face_config.json"
+        cfg.write_text(json.dumps({"simulation_mode": True, "image_size": 999}),
+                       encoding="utf-8")
+        engine = FaceEngine(config_path=cfg, web_cfg={"face": {"image_size": 320}})
+        self.assertEqual(engine.config["image_size"], 320)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -47,6 +47,9 @@ face:
   model_path: "models/face/yolov8n-face.pt"
   confidence_threshold: 0.4
   iou_threshold: 0.45
+  # 检测输入尺寸（YOLO imgsz）：必须是 32 的倍数、且在 160~1280 之内，越界会告警并
+  # 回退 640。越小推理越快、越大越能检出小脸；只认本行（face_config.json 不作数）。
+  image_size: 640
   max_faces: 5
   simulation_mode: false
   recognition:
