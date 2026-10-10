@@ -13,6 +13,25 @@ import copy
 
 PRESETS_VERSION = 10
 
+# ── 「门控维护预设」（#77）──
+# 这些预设的唯一职责就是维护**被其它规则读取**的基础门控变量：
+#   presence_motion    → g:有人在家=True  / g:全屋模式=auto
+#   presence_timeout   → g:有人在家=False / g:全屋模式=away
+#   manual_mark_*      → g:手动优先_x=True
+#   manual_clear_*     → g:手动优先_x=False
+# 一旦它们被停用，依赖方（light_dark / light_off / temp_* / away_close_all /
+# window_normal 等）不会报错，只会静默失效——实测 presence_motion 被停用后
+# g:有人在家 永远为 False，光照联动被双重锁死。页面据此对「已停用」给醒目提示。
+# ir_remote_* 虽然也顺带写 g:手动优先_x，但主职是红外切换、面板侧另有 manual_mark_*
+# 兜底，故不列入，避免误报。
+GATING_PRESETS = (
+    "presence_motion", "presence_timeout",
+    "manual_mark_window", "manual_clear_window",
+    "manual_mark_light", "manual_clear_light",
+    "manual_mark_fan", "manual_clear_fan",
+)
+
+
 DEFAULT_RULES = [{'preset': 'access_open_door',
   'name': '门禁通过：开门并在10秒后关门',
   'enabled': True,

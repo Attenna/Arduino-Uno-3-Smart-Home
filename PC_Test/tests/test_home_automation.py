@@ -731,3 +731,38 @@ class SleepBlockTests(unittest.TestCase):
         restarted.load()
         restarted.bridge.control_door.assert_not_called()
         self.assertEqual(restarted._running, {})
+
+
+class GatingPresetTests(unittest.TestCase):
+    """issue #77：门控维护预设名单的完整性——不漂移、不误报。"""
+
+    def test_listed_presets_exist_and_include_the_culprits(self):
+        from web.automation.default_rules import DEFAULT_RULES, GATING_PRESETS
+        presets = {r.get("preset") for r in DEFAULT_RULES}
+        self.assertTrue(GATING_PRESETS)
+        # 名单里的每个预设都要真实存在，否则改名后名单会静默失效
+        for pid in GATING_PRESETS:
+            self.assertIn(pid, presets, f"门控名单里的 {pid} 已不在默认规则里")
+        # #77 的两个当事者必须在名单里
+        self.assertIn("presence_motion", GATING_PRESETS)
+        self.assertIn("manual_clear_light", GATING_PRESETS)
+
+    def test_listed_presets_write_gating_state(self):
+        from web.automation.default_rules import DEFAULT_RULES, GATING_PRESETS
+        by_preset = {r["preset"]: r for r in DEFAULT_RULES if r.get("preset")}
+        for pid in GATING_PRESETS:
+            names = [a.get("name")
+                     for key in ("actions", "else_actions")
+                     for a in by_preset[pid].get(key) or []
+                     if a.get("device") == "state"]
+            self.assertTrue(
+                any(str(n) in ("g:有人在家", "g:全屋模式")
+                    or str(n).startswith("g:手动优先_") for n in names),
+                f"{pid} 被列为门控预设，却没写任何门控变量")
+
+    def test_incidental_writers_are_not_flagged(self):
+        from web.automation.default_rules import GATING_PRESETS
+        # 红外切换只是顺带写 g:手动优先_x，主职不是维护门控；不写门控变量的更不该上报
+        for pid in ("ir_remote_light_toggle", "ir_remote_fan_toggle",
+                    "ir_remote_window_toggle", "temp_hot", "light_dark", "smoke_buzzer"):
+            self.assertNotIn(pid, GATING_PRESETS)

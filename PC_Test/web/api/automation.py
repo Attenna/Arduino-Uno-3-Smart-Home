@@ -5,6 +5,7 @@ from flask import Blueprint, jsonify, request
 
 from .. import extensions
 from ..automation.capabilities import capabilities_payload
+from ..automation.default_rules import GATING_PRESETS
 from ..automation.schema import ValidationError
 
 bp = Blueprint("automation", __name__)
@@ -102,6 +103,8 @@ def get_rules():
     engine = extensions.automation
     payload = {"rules": engine.rules if engine else []}
     if engine is not None:
+        # 「门控维护预设」名单：前端据此判断哪些门控预设当前被停用并给醒目提示（#77）
+        payload["gating_presets"] = list(GATING_PRESETS)
         # 启动时做过旧规则迁移 → 随首个拉取带出（只给一次，前端 toast 提示）
         info = engine.consume_migration_info()
         if info and (info.get("migrated") or info.get("dropped")

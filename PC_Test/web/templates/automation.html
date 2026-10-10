@@ -101,6 +101,9 @@
         .badge.off { background: rgba(255,23,68,.12); color: var(--accent-red); }
         .badge.evt { background: rgba(255,145,0,.15); color: var(--accent-orange); }
         .badge.disabled { background: rgba(139,164,184,.15); color: var(--text-secondary); }
+        .gating-warn { margin: 10px 0 6px; padding: 10px 14px; border-radius: 10px;
+                       background: rgba(255,23,68,.10); border: 1px solid var(--accent-red);
+                       color: var(--text-primary); font-size: 13px; line-height: 1.7; }
         .mode-hint { font-size: 12px; color: var(--text-secondary); line-height: 1.7; }
         .auto-log { width: 100%; font-size: 12px; border-collapse: collapse; }
         .auto-log th, .auto-log td { padding: 6px 8px; border-bottom: 1px solid var(--border-color);
@@ -249,6 +252,6 @@
     </main>
 
     <script src="{{ url_for('static', filename='js/lang.js') }}?v=20261004a"></script>
-    <script src="{{ url_for('static', filename='js/automation.js') }}?v=20261011-sleep"></script>
+    <script src="{{ url_for('static', filename='js/automation.js') }}?v=20261011-gating"></script>
 </body>
 </html>
