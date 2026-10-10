@@ -194,7 +194,11 @@ class AutomationEngine:
     _REMOVED_PRESETS = ("ir_fan_toggle", "ir_fan_cycle", "ir_light_cycle_2", "ir_light_cycle_3",
                         "touch_toggle", "touch_to_manual", "touch_to_auto",
                         "door_in", "door_out", "dwell_alarm", "light_mid",
-                        "access_auto_close")
+                        "access_auto_close",
+                        # v10（R2）：门/空调没有周期性自动规则去覆盖手动操作，
+                        # 「手动优先」只写不读，删除这 4 条误导性预设。
+                        "manual_mark_door", "manual_clear_door",
+                        "manual_mark_ac", "manual_clear_ac")
     # v5：门禁鉴权事件由「只有人脸」的 face_granted 换成统一的 access_granted
     # （带 method=face/rfid/keypad）。旧事件名不再有任何广播方，因此自定义规则
     # 里的 face_granted 触发就地换成等价写法，行为不变（只有人脸通过时才触发）。
@@ -1113,6 +1117,14 @@ class AutomationEngine:
                 return
             self._log(rule, fired=True, conditions_hold=hold, reason=reason,
                       ok=ok_all, detail=detail)
+        except Exception as e:                       # noqa: BLE001
+            # R14：任一动作的意外异常此前会直接冒泡出线程，规则既没记「部分成功」
+            # 也不落执行日志。这里兜底成一次失败的执行记录，异常本身仍写入日志。
+            ok_all = False
+            detail.append({"action": None, "ok": False, "result": f"执行异常: {e}"})
+            logger.exception("[自动化] 规则「%s」动作执行异常", rule["name"])
+            self._log(rule, fired=True, conditions_hold=hold, reason=reason,
+                      ok=False, detail=detail)
         finally:
             with self._lock:
                 self._running.pop(rule["id"], None)

@@ -87,6 +87,14 @@ class AccessGuardEventTests(unittest.TestCase):
         """按写入先后排序（接口默认按 id 倒序）。"""
         return list(reversed(self.events()))
 
+    def test_broadcast_stamps_event_timestamp(self):
+        # R15：门禁事件补 ts，自动化引擎才能按 event@ts 去重（此前只能靠 8s 去抖）。
+        seen = []
+        self.guard.event_sink = seen.append
+        self.guard.broadcast({"event": "access_granted"}, method="face")
+        self.assertEqual(len(seen), 1)
+        self.assertIsInstance(seen[0].get("ts"), float)
+
     def test_every_round_leaves_a_row_but_debounce_drops_the_repeat_action(self):
         for _ in range(3):
             self.guard.handle_face_result("alice-face", device_source="face_watcher")

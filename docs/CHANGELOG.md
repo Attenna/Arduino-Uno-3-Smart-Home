@@ -2,6 +2,34 @@
 
 记录对系统行为 / 接口有影响的变更。新条目置于顶部。
 
+## 2026-10-10 · 积木自动化风险清单收尾（#74）
+
+分支：`fix/74-automation-risks-closeout`。Issue：#74「Blocks 积木自动化潜在风险清单」。
+高危/中危 R1–R10 已由 PR #72 修复，本条目收尾剩余项。
+
+### 变更
+- **R2 门/空调「手动优先」只写不读**：删除 `manual_mark_door`/`manual_clear_door`/
+  `manual_mark_ac`/`manual_clear_ac` 4 条无效预设（加入 `_REMOVED_PRESETS`，`PRESETS_VERSION` 9→10），
+  并从 `ir_remote_door_toggle` 去掉对 `g:手动优先_门` 的写入。门/空调没有任何 interval 自动规则
+  会覆盖手动操作，因此该变量本就不该被承诺「让位」。灯/风扇/窗的手动优先保持不变。
+- **R13 `automation_logs` 无保留策略**：在 `run_history_maintenance` 中随原始遥测一并清理
+  超过 `HISTORY_RETENTION_DAYS`（7 天）的执行日志，避免 `detail_json` 长期膨胀。
+- **R14 动作循环无整体异常兜底**：`_run_actions` 新增兜底 `except`，任一动作抛异常时记一条
+  「执行异常」失败执行日志并照常释放动作锁，不再让规则线程静默中断。
+- **R15 无 ts 事件无法去重**：`AccessGuard.broadcast` 为门禁事件补 `ts`，使引擎按 `event@ts`
+  去重对门禁事件同样生效。
+
+### 未纳入（在本 Issue 内说明理由）
+- **R11 锁内 DB/IO**：改动需重构 `_evaluate_sensor_rule`/`_fire` 的锁边界，属行为敏感区且
+  低优先级，本轮不做；待有真机验收窗口时单独处理。
+- **R12 出站 SSRF 残余（DNS rebinding）**：涉及「解析后校验实际 IP」的策略选择（解析失败
+  时放行还是拒绝），需明确后再改。
+- **R16**：当前 `load()` 已对 `dropped/warnings/invalid` 落盘刷新版本号，实际已修复。
+
+### 验收
+- 新增单测：`test_home_automation`（R2/R14）、`test_sensor_pipeline`（R13）、
+  `test_face_event_persistence`（R15）；全量 278 项，仅 `test_hardening` 2 项本机环境既有失败。
+
 ## 2026-10-10 · OLED 复位冷却（#58）
 
 分支：`fix/58-oled-reset-cooldown`。Issue：#58「make OLED updates resilient to Module B resets」。

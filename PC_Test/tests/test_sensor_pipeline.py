@@ -170,6 +170,20 @@ class RetentionTests(unittest.TestCase):
         self.assertEqual(rows[0]['temperature'], 23)
         self.assertEqual(rows[0]['samples'], 1)
 
+    def test_old_automation_logs_are_purged(self):
+        # R13：automation_logs 只增不删会膨胀，随历史维护一起清理过期执行日志。
+        old = (datetime.now(timezone.utc) - timedelta(days=8)).strftime('%Y-%m-%d %H:%M:%S')
+        with self.db.connection() as c:
+            c.execute("INSERT INTO automation_logs(timestamp,rule_id,rule_name,triggered,"
+                      "conditions_hold,reason,success,detail_json) VALUES(?,?,?,?,?,?,?,?)",
+                      (old, "old", "旧日志", 1, 1, "r", 1, "[]"))
+        self.db.add_automation_log("new", "新日志", 1, 1, "r", 1)
+        self.db.run_history_maintenance()
+        with self.db.connection() as c:
+            ids = [row["rule_id"] for row in
+                   c.execute("SELECT rule_id FROM automation_logs").fetchall()]
+        self.assertEqual(ids, ["new"])
+
 
 class BridgeIngestStatsTests(unittest.TestCase):
     class FakeDB:
