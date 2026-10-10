@@ -61,6 +61,15 @@ function appendHoldInput(block) {
         .appendField('秒');
 }
 
+// 「等待事件」积木共用的超时输入：必填，1~3600 秒（与后端 DELAY_MAX_SECONDS 同口径）。
+// 等待必须有上界，避免规则动作线程被无限占用（#100）。
+function appendWaitTimeout(block) {
+    block.appendDummyInput()
+        .appendField('最长')
+        .appendField(new Blockly.FieldNumber(60, 1, 3600, 1), 'TIMEOUT')
+        .appendField('秒（超时则本次结束）');
+}
+
 function defineBlocks() {
     // ── 规则容器（Scratch 式短标签：当 / 如果 / 那么 / 否则）──
     Blockly.Blocks['rule_block'] = {
@@ -423,6 +432,48 @@ function defineBlocks() {
             this.setPreviousStatement(true, 'ACT');
             this.setNextStatement(true, 'ACT');
             this.setColour(120);
+        },
+    };
+    // ── 动作：等待事件（等到条件成立再继续；#100）──
+    // 源与比较符和「条件」块完全一致（可选传感器或 g: 全局状态），按源类型分三种块。
+    // 超时必填：等待不得让规则动作线程无限挂起。
+    Blockly.Blocks['act_wait_num'] = {
+        init: function () {
+            this.appendDummyInput().appendField('⏳ 等到')
+                .appendField(new Blockly.FieldDropdown(numSourceOptions), 'SRC')
+                .appendField(new Blockly.FieldDropdown(opOptions), 'OP')
+                .appendField(new Blockly.FieldNumber(30, -1000, 100000, 1), 'VAL')
+                .appendField('成立');
+            appendWaitTimeout(this);
+            this.setPreviousStatement(true, 'ACT');
+            this.setNextStatement(true, 'ACT');
+            this.setColour(120);
+            this.setTooltip('等到条件成立后继续；超过「最长」秒仍未成立则本次执行失败，不会无限挂起');
+        },
+    };
+    Blockly.Blocks['act_wait_bool'] = {
+        init: function () {
+            this.appendDummyInput().appendField('⏳ 等到')
+                .appendField(new Blockly.FieldDropdown(boolSourceOptions), 'SRC')
+                .appendField(new Blockly.FieldDropdown([['是', 'true'], ['否', 'false']]), 'STATE')
+                .appendField('成立');
+            appendWaitTimeout(this);
+            this.setPreviousStatement(true, 'ACT');
+            this.setNextStatement(true, 'ACT');
+            this.setColour(120);
+            this.setTooltip('等到布尔条件成立后继续；超过「最长」秒仍未成立则本次执行失败');
+        },
+    };
+    Blockly.Blocks['act_wait_status'] = {
+        init: function () {
+            this.appendDummyInput().appendField('⏳ 等到')
+                .appendField(new Blockly.FieldDropdown(statusOptions), 'PRED')
+                .appendField('成立');
+            appendWaitTimeout(this);
+            this.setPreviousStatement(true, 'ACT');
+            this.setNextStatement(true, 'ACT');
+            this.setColour(120);
+            this.setTooltip('等到「设备状态 / 选项类全局状态」成立后继续；超过「最长」秒仍未成立则本次执行失败');
         },
     };
     Blockly.Blocks['act_oled'] = {
@@ -871,6 +922,15 @@ function buildToolbox() {
         <block type="act_oled"></block>
         <block type="act_oled_line"></block>
         <block type="act_delay"></block>
+        <block type="act_wait_num">
+          <field name="SRC">${num[0][1]}</field><field name="OP">&gt;</field>
+          <field name="VAL">30</field><field name="TIMEOUT">60</field>
+        </block>
+        <block type="act_wait_bool">
+          <field name="SRC">${bool[0][1]}</field><field name="STATE">true</field>
+          <field name="TIMEOUT">60</field>
+        </block>
+        <block type="act_wait_status"><field name="TIMEOUT">60</field></block>
         <sep gap="14"></sep>
         <block type="act_state_bool">
           <field name="NAME">${stBool[0][1]}</field><field name="VALUE">true</field>
@@ -995,6 +1055,20 @@ function summarizeAction(a) {
             if (a.mode === 'off') return '蜂鸣器 停';
             return `蜂鸣 ${a.count} 声`;
         case 'delay':  return `等待 ${a.seconds}s`;
+        case 'wait': {
+            const s = CAPS.sources.find(x => x.id === a.sensor);
+            const label = s ? s.label : a.sensor;
+            let desc;
+            if (s && s.kind === 'enum') {
+                desc = `${label} = ${(s.choice_labels || {})[a.value] || a.value}`;
+            } else if (s && s.kind === 'bool') {
+                desc = `${label} = ${(a.value === true || a.value === 'true') ? '是' : '否'}`;
+            } else {
+                const op = (CAPS.comparators.find(c => c.id === a.op) || {}).label || a.op;
+                desc = `${label} ${op} ${a.value}${(s && s.unit) ? s.unit : ''}`;
+            }
+            return `等到 ${desc}（≤${a.timeout_sec}s）`;
+        }
         case 'oled':
             if (a.clear) return 'OLED 清屏';
             return (a.line === undefined || a.line === null)
@@ -1775,6 +1849,21 @@ function actionToJson(b) {
         }
         case 'act_delay':  return { device: 'delay',
                                     seconds: Number(b.getFieldValue('SECONDS')) };
+        case 'act_wait_num':
+            return { device: 'wait', sensor: b.getFieldValue('SRC'),
+                     op: b.getFieldValue('OP'),
+                     value: Number(b.getFieldValue('VAL')),
+                     timeout_sec: Number(b.getFieldValue('TIMEOUT')) };
+        case 'act_wait_bool':
+            return { device: 'wait', sensor: b.getFieldValue('SRC'), op: '==',
+                     value: b.getFieldValue('STATE') === 'true',
+                     timeout_sec: Number(b.getFieldValue('TIMEOUT')) };
+        case 'act_wait_status': {
+            const [sensor, value] = splitPred(b.getFieldValue('PRED'));
+            if (!sensor || value === '') return null;
+            return { device: 'wait', sensor, op: '==', value,
+                     timeout_sec: Number(b.getFieldValue('TIMEOUT')) };
+        }
         case 'act_oled':
             if (b.getFieldValue('CLEAR') === 'TRUE') return { device: 'oled', clear: true };
             return { device: 'oled', text: b.getFieldValue('TEXT') };
@@ -2003,6 +2092,24 @@ function fillAction(a) {
             break;
         }
         case 'delay': b = createTyped('act_delay'); b.setFieldValue(String(a.seconds === undefined ? 3 : a.seconds), 'SECONDS'); break;
+        case 'wait': {
+            const kind = sourceKind(a.sensor);
+            if (kind === 'bool') {
+                b = createTyped('act_wait_bool');
+                b.setFieldValue(a.sensor, 'SRC');
+                b.setFieldValue(a.value === true || a.value === 'true' ? 'true' : 'false', 'STATE');
+            } else if (kind === 'enum') {
+                b = createTyped('act_wait_status');
+                b.setFieldValue(`${a.sensor}:${a.value}`, 'PRED');
+            } else {
+                b = createTyped('act_wait_num');
+                b.setFieldValue(a.sensor, 'SRC');
+                b.setFieldValue(a.op || '>', 'OP');
+                b.setFieldValue(String(a.value), 'VAL');
+            }
+            b.setFieldValue(String(a.timeout_sec === undefined ? 60 : a.timeout_sec), 'TIMEOUT');
+            break;
+        }
         case 'oled':
             if (a.clear) {
                 b = createTyped('act_oled');

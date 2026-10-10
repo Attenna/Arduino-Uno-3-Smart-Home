@@ -70,6 +70,10 @@ def _is_state_source(sensor) -> bool:
 SAFETY_RETRY = 2
 SAFETY_RETRY_DELAY = 1.0
 
+# 「等待事件」动作的轮询步长（秒）。用小步长 ``cancelled.wait()`` 而不是长 sleep，
+# 既能及时发现条件成立，也能在规则被更新/服务停止时立刻退出（#100）。
+WAIT_POLL_SECONDS = 0.2
+
 
 def _is_safety_action(action: dict) -> bool:
     """关门 / 关窗 / 蜂鸣（非 off）——失败值得重试的动作。"""
@@ -1151,6 +1155,39 @@ class AutomationEngine:
                 return True, f"{msg}（重试第 {attempt} 次成功）"
         return False, f"{msg}（已重试 {SAFETY_RETRY} 次仍失败）"
 
+    def _source_label(self, sensor) -> str:
+        """数据源的可读名：静态白名单用 label，``g:`` 变量用其显示名，兜底用 id。"""
+        spec = CONDITION_SOURCES.get(sensor)
+        if spec:
+            return spec.get("label", sensor)
+        var = self.global_state.get(sensor) or {}
+        return var.get("label") or str(sensor)
+
+    def _wait_for_condition(self, action: dict) -> tuple[bool, str]:
+        """等待条件成立，超时（``timeout_sec``）仍未成立即失败（#100）。
+
+        复用触发/条件块的求值语义（``_context`` + ``_compare``），所以源与比较符的
+        写法与「条件块」完全一致。轮询用 ``cancelled.wait(小步长)`` 而不是长 sleep：
+        规则被新触发、被停用、规则集保存或服务停止时能立即退出（与延时同语义）。
+        ``timeout_sec`` 是必填上界，保证等待绝不会让规则动作线程无限挂起（#20 验收 3）。
+        """
+        sensor, op, want = action["sensor"], action["op"], action["value"]
+        timeout = float(action["timeout_sec"])
+        desc = f"{self._source_label(sensor)} {op} {want}"
+        cancelled = getattr(self._execution, "cancelled", None)
+        deadline = time.monotonic() + timeout
+        while True:
+            if cancelled is not None and cancelled.is_set():
+                return False, "等待已取消"
+            if self._compare(self._context().get(sensor), op, want):
+                return True, f"等待成立: {desc}"
+            if time.monotonic() >= deadline:
+                return False, f"等待超时: {desc}（{timeout:g}s 内未成立）"
+            if cancelled is not None:
+                cancelled.wait(WAIT_POLL_SECONDS)
+            else:
+                time.sleep(WAIT_POLL_SECONDS)
+
     def _perform(self, action: dict, rule: dict | None = None) -> tuple[bool, str]:
         device = action["device"]
         if device == "camera":
@@ -1171,6 +1208,9 @@ class AutomationEngine:
             else:
                 time.sleep(float(action["seconds"]))
             return True, f"等待 {action['seconds']:g}s"
+        if device == "wait":
+            # 「等待事件」：轮询条件直到成立或超时，绝不无限挂起（见 _wait_for_condition）
+            return self._wait_for_condition(action)
         if device == "state":
             # 全局状态写入：纯状态、不碰硬件，所以放在 bridge 在线检查之前
             # （桥离线也要能记账，否则规则里的变量会永久卡住）。
