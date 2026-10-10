@@ -65,6 +65,9 @@ DEFAULTS: dict = {
         "model_path": str(FACE_MODEL_PATH),
         "confidence_threshold": 0.4,
         "iou_threshold": 0.45,
+        # YOLOv8-face 检测输入尺寸（imgsz）：需为 stride 32 的倍数，160~1280。
+        # 只认本 yaml（data/face/face_config.json 是运行期产物，不作配置来源）。
+        "image_size": 640,
         "max_faces": 5,
         # 无模型/未装 ultralytics 时自动回退模拟模式，保证前端可演示
         "simulation_mode": True,

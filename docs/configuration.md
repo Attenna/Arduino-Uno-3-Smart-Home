@@ -55,6 +55,7 @@
 | `model_path` | `models/face/yolov8n-face.pt` | YOLOv8-face 检测模型 |
 | `confidence_threshold` | `0.4` | 人脸置信度阈值 |
 | `iou_threshold` | `0.45` | NMS IoU 阈值 |
+| `image_size` | `640` | 检测输入尺寸（YOLO `imgsz`）：必须是 32 的倍数且在 160~1280 内，非法值告警并回退 640；只认 yaml，`face_config.json` 不作数 |
 | `max_faces` | `5` | 单帧最多人脸数 |
 | `simulation_mode` | `false` | `true` = 返回模拟人脸（无模型演示） |
 | `recognition.enabled` | `true` | 是否启用人脸身份识别 |
