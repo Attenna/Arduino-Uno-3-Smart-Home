@@ -76,6 +76,13 @@
 #define RFID_SS_PIN         10
 #define RFID_RST_PIN        9
 // D11=MOSI, D12=MISO, D13=SCK（SPI 硬件固定）
+// 读卡鲁棒性（issue #87）：实测克隆 RC522「已检出卡但 UID 读取失败」的比例很高
+// （55 次检出里 49 次 PICC_ReadCardSerial() 失败），而旧实现失败一次就 PCD_Reset
+// 再放弃，把"再读一次就成功"的刷卡整条丢掉，用户看到的就是"贴卡无反应"。
+#define RFID_READ_ATTEMPTS      3       // 一次「检出有卡」内最多连续读取次数
+#define RFID_RETRY_GAP_MS       4       // 两次读取之间的间隔（毫秒）
+#define RFID_RESET_AFTER_FAILS  5       // 连续失败这么多次才复位读卡器自愈
+#define RFID_ANTENNA_GAIN       0x04    // 38dB；0x07(48dB) 最大档近距离易饱和
 
 // ---- 周期上报 ----
 #define REPORT_INTERVAL_MS  1000
