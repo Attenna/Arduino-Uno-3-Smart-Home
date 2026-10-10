@@ -165,11 +165,11 @@ Module A RC522 ──串口 rfid 事件（录入会话优先取卡）───�
                                                                                  │ access_granted / access_denied{method: face|rfid|keypad}
                                                                                  ▼
                                     积木规则 access_open_door ──▶ web 硬件桥(MCP) ──▶ Module B 开门
-                                                                         └─ 延时关门 access_auto_close
+                                                                         └─ 10 秒后关门（同一条预设的后两个动作）
 ```
 
 > 后端只做「凭证 → 人员」的白名单判定与通行日志，开门/延时关门/被拒报警全由积木规则
-> 决定（预设 `access_open_door` / `access_auto_close` / `access_denied_buzzer`），
+> 决定（预设 `access_open_door` 含「开门 + 10 秒后关门」/ `access_denied_buzzer`），
 > 事件按 `method`（face / rfid / keypad）可分别筛选；在 /automation 页可改可停用。
 >
 > 识别的**生产者**是 `web/face_watcher.py`：摄像头只出流、模型只在 web 进程里，

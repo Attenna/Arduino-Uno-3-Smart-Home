@@ -391,7 +391,7 @@ class HomeController:
 
         复用 A 板 event 通道（recent_events），web 侧 _ingest_event →
         automation.on_event({"event":"access","status":"granted","method":"keypad"})
-        → 积木规则（预设 access_open_door / access_auto_close）开门并延时关门。
+        → 积木规则（预设 access_open_door，含 10 秒后关门）开门并延时关门。
         全屋模式状态机已拆除，进门后的「切自动」也由规则读写 g:全屋模式 完成。
         """
         with self._snapshot_lock:

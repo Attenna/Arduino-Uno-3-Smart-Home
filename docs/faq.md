@@ -151,8 +151,8 @@ python scripts/enroll_faces.py
 2. **鉴权有没有放行、放行后有没有规则** —— 通行日志新增的「原因」列说明白名单这一侧：
    `凭证未登记` / `人员已停用` / `人脸库有此身份，名单里没有对应人员` /
    `多个人员共用该凭证`。都通过了才轮到积木：到 /automation 确认「门禁通过 → 开门」
-   （预设 `access_open_door`）还在且启用，硬件桥在线。同理「延时关门」是
-   `access_auto_close`，「被拒响蜂鸣」是 `access_denied_buzzer`（默认停用）。
+   （预设 `access_open_door`，已含「10 秒后关门」）还在且启用，硬件桥在线。「被拒响
+   蜂鸣」是 `access_denied_buzzer`（默认停用）。
 
 `GET /api/access/diagnostics` 把三方（名单 / 人脸库 / 哨兵）一次列全，页面上的体检条
 就是它渲染的：孤儿身份、没有注册照的生效人员、共用人脸ID、演示残留别名、刚被去抖

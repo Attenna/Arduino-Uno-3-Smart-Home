@@ -2,7 +2,7 @@
 
 这里只负责「谁有什么凭证」和「把凭证录进来」。开门、延时关门、迎客、被拒报警
 都不在本模块：鉴权结果统一广播成 ``access_granted`` / ``access_denied`` 事件，
-由 /automation 页的积木规则决定动作（内置预设 access_open_door / access_auto_close /
+由 /automation 页的积木规则决定动作（内置预设 access_open_door 含「10 秒后关门」/
 access_denied_buzzer，用户可改可停用）。
 
 录入两条链路：

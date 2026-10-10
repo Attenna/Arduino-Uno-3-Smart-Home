@@ -108,8 +108,8 @@ def face_notify():
     """香橙派/边缘设备推送人脸识别结果：记事件 → 白名单鉴权 → 广播门禁事件。
 
     开门不在这里。通过后广播 ``access_granted``（method=face），由积木规则
-    （内置 ``access_open_door`` / ``access_auto_close``）决定开不开门、几点关门 ——
-    想「只鉴权不开门」，在 /automation 页停用那两条规则即可。
+    （内置 ``access_open_door``，含 10 秒后关门）决定开不开门、几点关门 ——
+    想「只鉴权不开门」，在 /automation 页停用那条规则即可。
     """
     data = request.json or {}
     face_id = data.get("face_id", "")

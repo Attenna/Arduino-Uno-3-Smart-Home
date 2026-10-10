@@ -5,7 +5,7 @@
     本模块   —— 凭证 → 人员 的白名单判定、通行日志、广播通用门禁事件
                 ``access_granted`` / ``access_denied``；
     积木规则 —— 通过后开不开门、延时关门、要不要迎客，被拒时响不响蜂鸣器
-                （内置预设 access_open_door / access_auto_close / access_denied_buzzer，
+                （内置预设 access_open_door 含「10 秒后关门」与 access_denied_buzzer，
                 在 /automation 页可改可停用）。
 
 A 板的 ``rfid`` 事件在本模块被两处消费：页面上按过「录入房卡」的会话优先把这张卡
