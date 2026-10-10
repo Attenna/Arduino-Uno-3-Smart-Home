@@ -3,7 +3,7 @@ from datetime import datetime
 import unittest
 from unittest.mock import Mock
 
-from asrpro_bridge import Bridge, Gateway, Lines
+from asrpro_bridge import Bridge, Gateway, Lines, find_asrpro_port, resolve_port
 
 
 class BridgeTests(unittest.TestCase):
@@ -64,6 +64,40 @@ class BridgeTests(unittest.TestCase):
         for token in ["", "short"]:
             with self.assertRaises(ValueError):
                 Gateway("http://127.0.0.1:5000", token)
+
+
+class HotPlugTests(unittest.TestCase):
+    """CH340 discovery keeps the bridge working across unplug/replug."""
+
+    class Info:
+        def __init__(self, device, vid, pid):
+            self.device, self.vid, self.pid = device, vid, pid
+
+    def test_discovers_only_the_asrpro_adapter(self):
+        ports = [self.Info("/dev/ttyACM0", 0x2341, 0x0043),
+                 self.Info("/dev/ttyUSB0", 0x1A86, 0x7522),
+                 self.Info("/dev/ttyACM1", 0x2341, 0x0043)]
+        self.assertEqual(find_asrpro_port(ports), "/dev/ttyUSB0")
+
+    def test_arduino_boards_are_never_selected(self):
+        self.assertIsNone(find_asrpro_port([]))
+        self.assertIsNone(find_asrpro_port([self.Info("/dev/ttyACM0", 0x2341, 0x0043)]))
+
+    def test_configured_path_wins_while_present(self):
+        ports = [self.Info("/dev/ttyUSB1", 0x1A86, 0x7522)]
+        self.assertEqual(
+            resolve_port("/dev/serial/by-id/asrpro", ports, exists=lambda path: True),
+            "/dev/serial/by-id/asrpro")
+
+    def test_missing_configured_path_falls_back_to_discovery(self):
+        ports = [self.Info("/dev/ttyUSB1", 0x1A86, 0x7522)]
+        self.assertEqual(
+            resolve_port("/dev/serial/by-id/asrpro", ports, exists=lambda path: False),
+            "/dev/ttyUSB1")
+
+    def test_unset_port_uses_discovery(self):
+        ports = [self.Info("/dev/ttyUSB0", 0x1A86, 0x7522)]
+        self.assertEqual(resolve_port(None, ports), "/dev/ttyUSB0")
 
 
 if __name__ == "__main__":
