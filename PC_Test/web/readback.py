@@ -9,7 +9,11 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-# 命令下发值 ←→ B 板硬件回读值 的对照表
+from . import light_state
+
+# 命令下发值 ←→ B 板硬件回读值 的对照表。
+# 注意灯光这一行**不能拿命令亮度直接比**：B 板回报的是缩放后的峰值电平（见
+# light_state.expected_readback_pct），比对时先折算成「期望回读值」再比（#30）。
 READBACK_PAIRS = (
     ("fan", "fan_speed", "rb_fan_speed", "风扇"),
     ("door", "door_status", "rb_door_status", "门"),
@@ -51,7 +55,18 @@ def output_mismatch(status: dict, fresh_s: float = RB_FRESH_S,
         cmd, rb = status.get(cmd_key), status.get(rb_key)
         if cmd is None or rb is None:
             continue
-        if device in ("door", "window"):
+        if device == "light":
+            # 回读是缩放后的峰值电平，先按当前亮法折算成「期望回读值」再比，
+            # 否则暗色（峰值 < 255）会被误判成「命令未生效」（#30）。
+            expected = light_state.expected_readback_pct(
+                cmd, light_state.from_status(status))
+            if expected is None:
+                continue
+            try:
+                same = int(rb) == expected
+            except (TypeError, ValueError):
+                continue
+        elif device in ("door", "window"):
             same = str(cmd) == str(rb)
         else:
             try:
