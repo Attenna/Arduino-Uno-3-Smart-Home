@@ -20,6 +20,7 @@ private:
     byte _uidLen;
     bool _hasCard;
     char _uidHex[32];
+    byte _consecFails;         // 连续读取失败次数：到阈值才复位读卡器
 
     void makeHex();
 };

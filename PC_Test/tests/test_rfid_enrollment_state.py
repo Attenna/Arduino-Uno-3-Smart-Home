@@ -29,7 +29,10 @@ class RfidEnrollmentStateTests(unittest.TestCase):
         with patch("web.access_guard.time.time", return_value=session["expires_at"] + 0.1):
             status = self.guard.card_session(session["id"])
         self.assertEqual(status["state"], "expired")
-        self.assertIn("未收到有效 RFID 事件", status["error"])
+        # 超时也要给出可操作的原因：RC522 常见「检出卡但读失败」，提示重贴/换卡
+        # 比只说"没收到事件"有用（issue #87）。
+        self.assertIn("未读到卡", status["error"])
+        self.assertIn("重", status["error"])
 
     def test_bad_reader_event_fails_pending_session_immediately(self):
         session = self.guard.start_card_session(self.person["id"], self.person["name"])
