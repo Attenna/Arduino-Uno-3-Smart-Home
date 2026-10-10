@@ -21,7 +21,7 @@ import math
 from . import webhook
 from .capabilities import (
     ACCESS_METHOD_IDS, ACTION_DEVICES, COMPARATORS, CONDITION_SOURCES,
-    EVENT_TRIGGERS,
+    DELAY_MAX_SECONDS, EVENT_TRIGGERS,
 )
 from .global_state import is_var_id
 # RFID 卡号归一化（"AA BB CC DD"）与上报值全等比对，避免大小写/分隔符导致匹配失败
@@ -246,8 +246,8 @@ def validate_action(action: dict, where: str = "动作块",
         return {"device": "camera", "action": "snapshot"}
     if device == "delay":
         seconds = _as_number(action.get("seconds", 1), where)
-        if not 0 < seconds <= 300:
-            raise ValidationError("延时需在 1~300 秒之间")
+        if not 0 < seconds <= DELAY_MAX_SECONDS:
+            raise ValidationError(f"延时需在 1~{DELAY_MAX_SECONDS} 秒之间")
         clean["seconds"] = seconds
         return clean
     if device == "state":

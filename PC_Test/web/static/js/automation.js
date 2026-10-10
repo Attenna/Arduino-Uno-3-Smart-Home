@@ -417,7 +417,7 @@ function defineBlocks() {
     Blockly.Blocks['act_delay'] = {
         init: function () {
             this.appendDummyInput().appendField('⏳ 等')
-                .appendField(new Blockly.FieldNumber(3, 1, 300, 1), 'SECONDS')
+                .appendField(new Blockly.FieldNumber(3, 1, 3600, 1), 'SECONDS')
                 .appendField('秒');
             this.setPreviousStatement(true, 'ACT');
             this.setNextStatement(true, 'ACT');

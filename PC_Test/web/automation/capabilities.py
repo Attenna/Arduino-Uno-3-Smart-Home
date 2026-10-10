@@ -162,6 +162,10 @@ _assert_event_payload_contract()
 
 
 # 执行器动作块
+# 「等待（延时）」的上限（秒）：schema 校验与页面数字输入共用这一处定义（#20）。
+# 等待只占用该规则自己的动作线程，且不持久化；上限放宽到 1 小时已覆盖
+# 「开门后 10 分钟自动关门」这类玩法，同时给线程挂起留了明确上界。
+DELAY_MAX_SECONDS = 3600
 ACTION_DEVICES = {
     "camera": {"label": "门口拍照存储", "params": {}},
     "door": {"label": "门", "params": {"status": {"choices": ["open", "close"],
@@ -192,7 +196,7 @@ ACTION_DEVICES = {
         "clear": {"type": "bool", "label": "清屏"}}},
     # 全屋模式状态机动作（home_mode）已拆除：模式/档位由 g:全屋模式 等全局状态
     # 加预设规则表达，见模块 docstring。
-    "delay": {"label": "等待（延时）", "params": {"seconds": {"range": [1, 300], "unit": "秒"}}},
+    "delay": {"label": "等待（延时）", "params": {"seconds": {"range": [1, DELAY_MAX_SECONDS], "unit": "秒"}}},
     # 全局状态写入（自由命名变量，见 global_state.py）。name 的可选项是运行期的，
     # 由 capabilities_payload() 在打包时注入（这里的空壳只为让校验放行 device 名）。
     "state": {"label": "设置全局状态", "params": {

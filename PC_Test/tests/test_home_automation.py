@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from keypad_code import KeypadCode
+from web.automation.capabilities import DELAY_MAX_SECONDS
 from web.automation.default_rules import PRESETS_VERSION
 from web.automation.engine import SAFETY_RETRY, AutomationEngine
 from web.automation.schema import (ValidationError, validate_action,
@@ -639,3 +640,94 @@ class AccessPathCloseoutTests(unittest.TestCase):
             self.assertEqual(response.status_code, 200)
             hardware.assert_called_once_with("control_door", "open")
             self.assertEqual(db.get_current_status()["door_status"], "open")
+
+
+class SleepBlockTests(unittest.TestCase):
+    """issue #20：等待（延时）上限放宽到 1 小时，且语义明确。
+
+    - 校验：1~``DELAY_MAX_SECONDS`` 秒可用，越界/非数字被拒；
+    - 取消：等待期间同规则被取消（停用 / 保存规则集 / 服务停止）会立即中断；
+    - 重启：等待是内存里的运行态、不落盘，重启不补执行任何延时动作。
+    """
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.bridge = Mock(online=True)
+        for name in ("control_door", "control_window", "control_fan", "control_light"):
+            getattr(self.bridge, name).return_value = (True, "ok")
+        self.db = Mock()
+        self.db.get_current_status.return_value = dict(
+            door_status="closed", window_status="normal", fan_speed=0,
+            light_status="off", light_brightness=0)
+        self.engine = AutomationEngine(self.bridge, self.db,
+                                       Path(self.temp.name) / "rules.json")
+
+    def test_delay_seconds_validation_bounds(self):
+        def seconds(value):
+            return validate_action({"device": "delay", "seconds": value})["seconds"]
+
+        self.assertEqual(seconds(1), 1)
+        self.assertEqual(seconds(DELAY_MAX_SECONDS), DELAY_MAX_SECONDS)
+        self.assertGreater(DELAY_MAX_SECONDS, 300, "上限应已放宽到超过旧的 300 秒")
+        for bad in (0, -1, DELAY_MAX_SECONDS + 1, "abc"):
+            with self.assertRaises(ValidationError):
+                seconds(bad)
+
+    def test_long_delay_is_cancelled_promptly(self):
+        rule = dict(id="d", name="延时后关门",
+                    actions=[{"device": "delay", "seconds": 600},
+                             {"device": "door", "status": "close"}])
+        self.engine.rules = [rule]
+        lock = threading.Lock()
+        lock.acquire()
+        done = threading.Event()
+        logs = []
+
+        def run():
+            try:
+                self.engine._run_actions(rule, rule["actions"], True, "测试", lock)
+            finally:
+                done.set()
+
+        self.engine._log = lambda *a, **k: logs.append(k)
+        threading.Thread(target=run, daemon=True).start()
+        for _ in range(100):                        # 等它真正进入等待
+            if self.engine._running.get(rule["id"]):
+                break
+            time.sleep(0.02)
+        started = time.monotonic()
+        self.engine._running[rule["id"]].set()      # 等价于停用/保存/停止
+        self.assertTrue(done.wait(2), "取消后延时线程应立即结束，不再睡满 600 秒")
+        self.assertLess(time.monotonic() - started, 2)
+        self.bridge.control_door.assert_not_called()
+        self.assertTrue(logs, "取消后应留下一条执行日志")
+        last = logs[0]["detail"][-1]
+        self.assertFalse(last.get("ok"))
+        self.assertIn("取消", str(last.get("result") or ""))
+        self.assertFalse(lock.locked(), "动作锁应已释放")
+
+    def test_waiting_is_not_persisted_and_restart_never_replays_it(self):
+        rule = dict(id="d", name="延时后关门", enabled=True,
+                    trigger={"kind": "event", "event": "access_granted"},
+                    conditions=[],
+                    actions=[{"device": "door", "status": "open"},
+                             {"device": "delay", "seconds": 600},
+                             {"device": "door", "status": "close"}],
+                    else_actions=[], cooldown=0)
+        self.engine.save_rules([rule])
+
+        # 落盘的只有规则配置：没有「剩余秒数 / 截止时刻 / 待执行」这类调度状态
+        flat = json.dumps(json.loads(self.engine.rules_path.read_text()),
+                          ensure_ascii=False)
+        for key in ("pending", "remaining", "deadline", "scheduled", "fire_at"):
+            self.assertNotIn(key, flat)
+
+        # 模拟重启：新引擎从同一份规则文件加载，不补执行任何等待中的动作
+        bridge = Mock(online=True)
+        bridge.control_door.return_value = (True, "ok")
+        restarted = AutomationEngine(bridge, self.db, self.engine.rules_path)
+        self.addCleanup(restarted.stop)
+        restarted.load()
+        restarted.bridge.control_door.assert_not_called()
+        self.assertEqual(restarted._running, {})
