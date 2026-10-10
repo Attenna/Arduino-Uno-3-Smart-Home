@@ -1,5 +1,6 @@
 import contextlib
 import json
+import os
 import tempfile
 import threading
 import time
@@ -558,3 +559,83 @@ class SecurityTests(unittest.TestCase):
         with client.session_transaction() as session: session["user"]="test-admin"
         self.assertEqual(client.get("/security").status_code,200)
         self.assertEqual(client.get("/api/security/images/bad").status_code,404)
+
+
+class AccessPathCloseoutTests(unittest.TestCase):
+    """issue #19 收尾：门禁行为由 Blocks 规则决定。
+
+    - 删光全部规则（含内置预设）后，触摸 / 门禁通过这类「自动化行为」不再产生任何
+      开门动作，且被删预设不会在重启时被 seed_presets 重新注入；
+    - 面板这类「用户显式指令」仍直达硬件，行为不受规则集影响。
+    """
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.bridge = Mock(online=True)
+        for name in ("control_door", "control_window", "control_fan", "control_light"):
+            getattr(self.bridge, name).return_value = (True, "ok")
+        self.db = Mock()
+        self.db.get_current_status.return_value = dict(
+            door_status="closed", window_status="normal", fan_speed=0,
+            light_status="off", light_brightness=0)
+        self.engine = AutomationEngine(self.bridge, self.db,
+                                       Path(self.temp.name) / "rules.json")
+        self.engine.load()
+        self.addCleanup(self.engine.stop)
+
+    def test_default_rules_fire_then_deletion_stops_automation_door(self):
+        # 基线：内置预设里，触摸与门禁通过各有一条会开门的规则
+        door_presets = {r.get("preset") for r in self.engine.rules
+                        if any(a.get("device") == "door"
+                               for a in r.get("actions") or [])}
+        self.assertTrue({"touch_open_close", "access_open_door"} <= door_presets)
+        with patch.object(self.engine, "_fire") as fire:
+            self.engine.on_event({"event": "touch", "state": True, "ts": 1})
+            self.engine.on_event({"event": "access", "status": "granted",
+                                  "method": "keypad", "ts": 2})
+            self.assertEqual({c.args[0]["preset"] for c in fire.call_args_list},
+                             {"touch_open_close", "access_open_door"})
+
+        # 用户删光全部规则后，同两个自动化触发既不开火也不再下发开门动作
+        self.engine.save_rules([])
+        with patch.object(self.engine, "_fire") as fire:
+            self.engine.on_event({"event": "touch", "state": True, "ts": 3})
+            self.engine.on_event({"event": "access", "status": "granted",
+                                  "method": "keypad", "ts": 4})
+            fire.assert_not_called()
+        self.bridge.control_door.assert_not_called()
+
+        # 重启不得把删掉的预设塞回来（按下 presets_seen 记名）
+        self.engine.load()
+        self.assertEqual(self.engine.rules, [])
+
+    def test_explicit_panel_door_command_ignores_rule_set(self):
+        """面板按钮是「用户显式指令」：规则被删光也照常直达硬件。"""
+        from werkzeug.security import generate_password_hash
+        from web import extensions as ext_module
+        from web.app import create_app
+        from web.api import devices
+        from web.database import SmartHomeDB
+
+        env = {"SMART_HOME_ADMIN_USER": "test-admin",
+               "SMART_HOME_ADMIN_PASSWORD_HASH": generate_password_hash("x"),
+               "SMART_HOME_SESSION_SECRET": "s" * 48,
+               "SMART_HOME_SERVICE_TOKEN": "t" * 48}
+        with patch.dict(os.environ, env), tempfile.TemporaryDirectory() as directory:
+            app = create_app({"serial": {"enabled": False}}, start_hardware=False)
+            app.testing = True
+            client = app.test_client()
+            with client.session_transaction() as session:
+                session["user"] = "test-admin"
+            db = SmartHomeDB(str(Path(directory) / "smart_home.db"))
+            hardware = Mock(return_value=(True, "ok"))
+            # automation 置空：只验证「显式指令不经过规则集」，不牵动其它用例的引擎
+            with patch.object(ext_module, "automation", None), \
+                    patch.object(devices, "db", db), \
+                    patch.object(devices, "_hw_call", hardware):
+                response = client.post("/api/door", json={"status": "open"},
+                                       headers={"Origin": "http://localhost"})
+            self.assertEqual(response.status_code, 200)
+            hardware.assert_called_once_with("control_door", "open")
+            self.assertEqual(db.get_current_status()["door_status"], "open")

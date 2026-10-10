@@ -5,7 +5,7 @@
 
     PIR(motion) 有人 → 取摄像头最新一帧 → FaceEngine.recognize_jpeg
         → 认出身份 → AccessGuard.handle_face_result() → access_granted / access_denied
-        → 积木规则（access_open_door / access_auto_close / access_denied_buzzer）决定开不开门
+        → 积木规则（access_open_door / access_denied_buzzer）决定开不开门
 
 默认只在 PIR 报「有人」之后的保持窗口里抓帧：派上只有一个 CPU 核，常驻跑 YOLO
 会把语音和传感器轮询一起拖死；没收到过 motion（纯看板 / 没接 A 板）时退化为常转，
