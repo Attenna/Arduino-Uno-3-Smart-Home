@@ -98,6 +98,45 @@ class ApiTests(unittest.TestCase):
             self.assertEqual(wake_response.json["state"], "ACK")
             self.assertEqual(wake_response.json["state_label"], "提示音中")
 
+    def test_voice_events_has_no_hop_by_hop_header(self):
+        """#88：SSE 代理不得设置 hop-by-hop 头。
+
+        规范（PEP 3333）禁止 WSGI 应用设置 Connection 等逐跳头，waitress 会在
+        start_response 处 assert 失败，导致 /api/voice/events 每次连接都 500。
+        这里断言响应头里不再出现 Connection；上游不可达时仍要 200 + 一条提示帧。
+        """
+        self.login()
+        with patch.object(voice.voice_client, "open_event_stream",
+                          side_effect=OSError("voice 未运行")):
+            response = self.client.get("/api/voice/events")
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.headers["Content-Type"].startswith("text/event-stream"))
+        self.assertIsNone(response.headers.get("Connection"))
+        body = response.get_data(as_text=True)
+        self.assertIn("data:", body)
+        self.assertIn("语音助手不可达", body)
+
+    def test_voice_events_proxies_upstream_frames(self):
+        """#88 的另一半：正常路径同样不能带逐跳头，且上游帧要原样透传。"""
+        class Upstream:
+            def __init__(self, chunks):
+                self._chunks = list(chunks)
+
+            def __iter__(self):
+                return iter(self._chunks)
+
+            def close(self):
+                pass
+
+        self.login()
+        frame = 'data: {"type":"user","text":"开灯"}\n\n'
+        with patch.object(voice.voice_client, "open_event_stream",
+                          return_value=Upstream([frame.encode("utf-8")])):
+            response = self.client.get("/api/voice/events")
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.headers.get("Connection"))
+        self.assertIn('"type":"user"', response.get_data(as_text=True))
+
     def test_ac_resends_unchanged_state(self):
         self.login()
         with patch.object(devices, "_ac_state_from_db", return_value=midea_ac.AcState()), \

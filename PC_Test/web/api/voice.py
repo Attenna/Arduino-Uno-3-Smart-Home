@@ -98,8 +98,10 @@ def voice_events():
         finally:
             resp.close()
 
+    # 不要在这里加 Connection / Keep-Alive 等 hop-by-hop 头：PEP 3333 禁止 WSGI 应用设置，
+    # waitress 会在 start_response 直接 assert 失败，本端点每次连接都 500（#88）。
+    # 连接是否保持由服务器自行决定，应用只声明内容相关的响应头。
     return Response(passthrough(),
                     mimetype="text/event-stream",
                     headers={"Cache-Control": "no-cache",
-                             "X-Accel-Buffering": "no",
-                             "Connection": "keep-alive"})
+                             "X-Accel-Buffering": "no"})
