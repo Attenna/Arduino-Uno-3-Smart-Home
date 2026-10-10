@@ -2,6 +2,33 @@
 
 记录对系统行为 / 接口有影响的变更。新条目置于顶部。
 
+## 2026-10-11 · 语音实况 SSE 代理去掉逐跳头（#88）
+
+分支：`fix/88-sse-hop-by-hop-header`。Issue：#88「SSE 代理设置 hop-by-hop Connection 头
+导致 waitress 断言失败、语音实况流 500」。
+
+### 变更
+- `PC_Test/web/api/voice.py` 的 `/api/voice/events` 代理不再设置 `Connection: keep-alive`。
+  PEP 3333 规定 `Connection` 属于 hop-by-hop 头，禁止 WSGI 应用设置；waitress 在
+  `start_response` 处直接 `assert` 失败，导致该端点每次连接都 **500**——面板「语音」页的
+  对话实况流不可用，且每次建立/重连都在 web 日志留下一条完整 traceback。
+- 连接是否保持交给服务器自行决定，应用只保留内容相关的 `Cache-Control: no-cache` 与
+  `X-Accel-Buffering: no`。
+- `voice_assistant.py` 中的同名头是标准库 `http.server`（非 WSGI）实现，在那里合法，
+  本次**未改动**。
+
+### 影响与迁移
+- 仅 web 容器内一处响应头改动；不改上游协议、数据库、Docker 编排与前端脚本。
+- 语音页实况流恢复可用；上游（语音助手）不可达时仍返回 200 + 一条 system 提示帧，
+  由前端 `EventSource` 自动重连。
+
+### 验收
+- 单测：`test_hardening.ApiTests` 新增 `test_voice_events_has_no_hop_by_hop_header`
+  （上游不可达 → 200 + `data:` 帧 + 响应无 `Connection` 头）与
+  `test_voice_events_proxies_upstream_frames`（正常路径透传上游帧且同样无逐跳头）。
+- 真机：`curl -N http://127.0.0.1:5000/api/voice/events` 返回 200 且持续输出 `data:` 帧；
+  `docker logs smart-home-web-1` 不再出现 `hop-by-hop` AssertionError。
+
 ## 2026-10-10 · 门禁控制路径收口与文档分类（#19）
 
 分支：`refactor/19-access-paths-closeout`（PR #92）；用户手册与二次开发指南补充见
