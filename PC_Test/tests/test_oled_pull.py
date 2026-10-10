@@ -101,5 +101,36 @@ class OledRequestDispatchTests(unittest.TestCase):
         self.assertEqual(self.ser.writes, [])
 
 
+class OledResetCooldownTests(unittest.TestCase):
+    """B 板复位后的 OLED 冷却：复位抖动期间不回轮播数据帧（issue #58）。"""
+
+    def setUp(self):
+        self.home = server.HomeController()   # 无串口句柄、不启线程
+        self.ser = _FakeSer()
+        self.home.ser_b = self.ser
+        self.home._snapshot = {"temperature": 25.3, "light": 479}
+
+    def test_no_reset_seen_is_not_held(self):
+        self.assertFalse(self.home._oled_hold_active())
+        self.home._dispatch_b_frame({"type": "oled_req", "id": 1}, "")
+        self.assertEqual(len(self.ser.writes), 1)
+
+    def test_recent_reset_suspends_the_frame(self):
+        self.home._b_last_reset_ts = time.time()
+        self.home._dispatch_b_frame({"type": "oled_req", "id": 2}, "")
+        self.assertEqual(self.ser.writes, [])
+
+    def test_frame_resumes_after_the_cooldown(self):
+        self.home._b_last_reset_ts = time.time() - (server._OLED_RESET_COOLDOWN_S + 1)
+        self.home._dispatch_b_frame({"type": "oled_req", "id": 3}, "")
+        self.assertEqual(len(self.ser.writes), 1)
+
+    def test_another_reset_restarts_the_cooldown(self):
+        self.home._b_last_reset_ts = time.time() - (server._OLED_RESET_COOLDOWN_S + 1)
+        self.home._dispatch_b_frame({"type": "ready"}, "")   # 又复位了一次
+        self.home._dispatch_b_frame({"type": "oled_req", "id": 4}, "")
+        self.assertEqual(self.ser.writes, [])
+
+
 if __name__ == "__main__":
     unittest.main()
