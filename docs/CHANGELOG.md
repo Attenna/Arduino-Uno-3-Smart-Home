@@ -2,6 +2,27 @@
 
 记录对系统行为 / 接口有影响的变更。新条目置于顶部。
 
+## 2026-10-10 · OLED 复位冷却（#58）
+
+分支：`fix/58-oled-reset-cooldown`。Issue：#58「make OLED updates resilient to Module B resets」。
+
+### 背景
+- V2.12 起 OLED 轮播已下移 B 板固件，香橙派侧不再逐行写屏，「逐行刷新导致 B 板复位」的根因已从架构上消除（见下一条 2026-10-09 条目）。
+- 剩下的安全兜底：B 板复位抖动期间，别再继续把轮播数据帧灌进去。
+
+### 变更
+- MCP `_push_oled_frame`：B 板每次 `ready`（上电/复位，含 MCP 开串口的 DTR 复位）后进入 `_OLED_RESET_COOLDOWN_S = 20s` 冷却；冷却期内**丢弃 `oled_req` 回帧**（B 每 15s 重试，冷却结束自动恢复），并限频打印一条日志。
+- `_b_last_reset_ts=0`（本进程还没见过 ready，老固件/未上电）时不拦，保持既有行为。
+- 该冷却同时充当启动宽限。
+
+### 影响与迁移
+- 仅上位机（MCP）改动，不改固件、不改串口线协议、不改数据库与 Docker。B 板复位后屏上数据最长延迟一个冷却周期（~20s）恢复。
+- 用户关闭 OLED 的状态仍照旧持久化，不受影响。
+
+### 验收
+- 单测：`test_oled_pull.py` 新增 `OledResetCooldownTests`（4 项）；全量 274 项，仅 `test_hardening` 2 项本机环境既有失败。
+- 部署后真机观察项：稳态窗口内 B 板复位计数不再增长；复位后 ~20s 屏上数据恢复。
+
 ## 2026-10-09 · OLED 多页轮播下移 B 板固件（B 主动拉取）
 
 分支：`feat/oled-b-pull-carousel`

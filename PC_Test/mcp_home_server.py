@@ -150,6 +150,12 @@ _B_STALL_NUDGE_AFTER = 0.25     # 首次等待宽限（秒），超时即补发
 _B_STALL_NUDGE_CMD = {"cmd": "system", "action": "status"}   # 只读，不动执行器
 _B_RX_MAX_BYTES = 8192          # 接收重组缓冲上限：拼不出完整帧就丢弃重新同步
 
+# OLED 复位冷却（#58）：B 板每次上电/复位（含 MCP 开串口时的 DTR 复位）都会发 ready
+# 帧；此后一段时间内**暂停回应 OLED 数据帧**（B 每 15s 拉一次，冷却期内不回，下一拍
+# 自然重试），等链路稳定再恢复。目的是别在复位抖动期间继续灌轮播数据，避免「复位→
+# 写入→再复位」互相叠加。同时充当启动宽限。
+_OLED_RESET_COOLDOWN_S = 20.0
+
 
 class HomeController:
     """独占 A/B 串口；A 板后台读线程缓存状态；B 板同步发命令。"""
@@ -225,6 +231,8 @@ class HomeController:
         self._b_last_alert_ts = 0.0
         self._b_last_state: dict = {}
         self._b_last_state_ts = 0.0
+        # OLED 复位冷却日志限频：冷却期内反复丢帧只打一条（见 _push_oled_frame）
+        self._oled_hold_logged_at = 0.0
         # 最近一条下发命令的完整反馈（命令/参数/成败/耗时/固件回读状态），
         # 供 get_serial_health 暴露给中间层日志与排障。
         self._b_last_cmd: dict = {}
@@ -720,14 +728,35 @@ class HomeController:
                 f"{tenths('humidity')},{light},"
                 f"{bits[0]},{bits[1]},{bits[2]},{bits[3]}\n").encode("ascii")
 
+    def _oled_hold_active(self, now: float | None = None) -> bool:
+        """B 板刚复位是否还在 OLED 冷却期（#58）。
+
+        `_b_last_reset_ts` 为 0 表示本进程还没见过 ready 帧（老固件/还没上电），
+        此时不拦——保持既有行为，避免把没有复位信号的情况也当复位处理。
+        """
+        last = self._b_last_reset_ts
+        if not last:
+            return False
+        return (now if now is not None else time.time()) - last < _OLED_RESET_COOLDOWN_S
+
     def _push_oled_frame(self, req_id: int) -> None:
         """回应 B 板的 OLED 数据拉取（B 每 15s 一次 oled_req）。
 
         用非阻塞方式取 `_b_lock`：若此刻正有命令在等响应（持锁），**直接丢帧**——
         B 板 15s 后自然重试下一拍。绝不阻塞读线程，也全程不碰 `_b_resp_lock`，
         与 `_send_b` 无死锁环。先组帧（取快照锁）再取 b 锁，避免锁嵌套。
+
+        B 板刚复位后的冷却期内同样不回帧（`_oled_hold_active`），等链路稳定再恢复，
+        避免复位抖动期间继续灌轮播数据。
         """
         if self.ser_b is None:
+            return
+        if self._oled_hold_active():
+            now = time.time()
+            if now - self._oled_hold_logged_at >= _OLED_RESET_COOLDOWN_S:
+                self._oled_hold_logged_at = now
+                print(f"[B] B 板刚复位，OLED 数据帧暂停 {_OLED_RESET_COOLDOWN_S:.0f}s 等链路稳定",
+                      file=sys.stderr, flush=True)
             return
         frame = self._compose_oled_frame(req_id)
         if not self._b_lock.acquire(blocking=False):
