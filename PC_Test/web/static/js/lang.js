@@ -1236,7 +1236,6 @@ const I18N = {
             'login.submit': 'Sign in',
             'login.failed': 'Sign-in failed, check your account or password',
             'login.invite': 'Join the family via an admin invitation',
-        }
 
             // ===== Upstream additions (ported) =====
             'temp.updated': 'Updated {0}',
@@ -1371,6 +1370,7 @@ const I18N = {
             'chart.light_level': 'Light Level (ADC)',
             'chart.light_level_axis': 'ADC (bright ↑ / dark ↓)',
             'chart.light_level_history': 'Light Level History',
+        },
     },
 
     t(key, ...args) {

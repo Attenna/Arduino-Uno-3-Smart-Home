@@ -11,7 +11,8 @@
     <!-- Blockly 全量自托管（内网/校园网无外网也可用）-->
     <script src="{{ url_for('static', filename='vendor/blockly/blockly.min.js') }}?v=20261001a"></script>
     <script>
-        if (typeof Blockly !== 'undefined') {
+        // 仅中文模式加载中文语言包；英文模式下 Blockly 内置文案默认即英文
+        if (typeof Blockly !== 'undefined' && (localStorage.getItem('smart_home_lang') || 'zh') === 'zh') {
             document.write('<script src="{{ url_for('static', filename='vendor/blockly/zh-hans.js') }}?v=20261001a"><\/script>');
         }
     </script>
