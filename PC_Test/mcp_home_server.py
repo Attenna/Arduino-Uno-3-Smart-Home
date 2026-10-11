@@ -467,7 +467,8 @@ class HomeController:
                       f"{cmd.get('cmd')}/{cmd.get('action')}",
                       file=sys.stderr, flush=True)
                 result = self._send_b_one(cmd, expect=expect, nudge=False)
-            if result.startswith("error: B 板响应超时"):
+            timed_out = result.startswith("error: B 板响应超时")
+            if timed_out and not readonly:
                 self._b_cmd_timeouts += 1
                 if allow_reopen and self._b_cmd_timeouts >= _B_CMD_FAILS_TO_REOPEN:
                     self._b_cmd_timeouts = 0
@@ -475,8 +476,12 @@ class HomeController:
                           file=sys.stderr, flush=True)
                     self._reopen_b()
                     result = self._send_b_one(cmd, expect=expect)   # 重试重新分配 id
-            else:
+            elif not timed_out:
                 self._b_cmd_timeouts = 0
+            # 只读命令（自检/测距/状态）超时**不计入**"连续超时→重开"：重开会经 DTR
+            # 复位 B 板，而复位期间下发必丢 → 下一次只读又超时 → 自重开循环（实测 1 分钟
+            # 内 boot 145→152，且复位把计数器灌水）。链路真的断了由心跳
+            # （allow_reopen=False，自带门限）与设备命令路径负责重开。
             self._note_b_cmd(cmd, result, time.monotonic() - t0)
             return result
 

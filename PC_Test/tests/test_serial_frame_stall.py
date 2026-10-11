@@ -93,6 +93,22 @@ class ReadonlyFrameStallTests(unittest.TestCase):
         self.assertTrue(any("status" in w for w in writes),
                         f"设备命令应仍走 system/status 补发: {writes}")
 
+    def test_readonly_timeout_is_not_counted_toward_reopen(self):
+        """只读超时不得推进「连续超时→重开」：重开会经 DTR 复位 B 板，复位期间下发必丢，
+        会把一次只读失败滚成自重开循环（实测 1 分钟内 boot 145→152）。"""
+        home = self.home
+        home.ser_b = _ScriptedSerial([])          # 永远不回帧
+        home._b_cmd_timeouts = mcp._B_CMD_FAILS_TO_REOPEN - 1
+        before = home._b_cmd_timeouts
+
+        result = home._send_b({"cmd": "system", "action": "selftest"},
+                              expect=("selftest",))
+
+        self.assertTrue(result.startswith("error"), result)
+        self.assertEqual(home._b_cmd_timeouts, before,
+                         "只读超时推进了重开门限")
+        self.assertEqual(home._b_reopen_count, 0, "只读超时触发了重开")
+
 
 if __name__ == "__main__":
     unittest.main()
