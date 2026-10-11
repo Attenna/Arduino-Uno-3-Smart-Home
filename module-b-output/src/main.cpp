@@ -11,6 +11,7 @@
 #include <avr/wdt.h>
 #include "Config.h"
 #include "core/CommandDispatcher.h"
+#include "core/RamDiag.h"
 #include "Protocol.h"
 
 CommandDispatcher dispatcher;
@@ -40,6 +41,10 @@ void setup() {
     digitalWrite(FAN_INA, LOW);
     digitalWrite(FAN_INB, LOW);
 
+    // 栈高水位诊断（issue #105）：排在两条引脚封锁之后（保住"先锁静态电平"的约定）、
+    // dispatcher.begin() 之前——涂色越早，之后所有深层调用都在哨兵区内可测。
+    RamDiag::begin();
+
     dispatcher.begin();
     protocol.begin(dispatcher);
     protocol.sendReady();
@@ -54,4 +59,5 @@ void loop() {
     protocol.handleSerial();  // 处理下行命令
     wdt_reset();              // 一批串口/OLED 命令处理后重新起算看门狗窗口
     dispatcher.update();      // 舵机释放 / 蜂鸣 / 数码管刷新
+    RamDiag::update();        // 栈高水位采样 + 增长时落盘（内部 500ms 限频）
 }
