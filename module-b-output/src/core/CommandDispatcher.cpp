@@ -1,5 +1,6 @@
 #include "CommandDispatcher.h"
 #include "../Config.h"
+#include "RamDiag.h"
 
 namespace {
 
@@ -278,4 +279,21 @@ void CommandDispatcher::printSelfTest() {
     Serial.print(F(",\"buzzer\":\""));
     Serial.print(_buzzer.isActive() ? F("on") : F("off"));
     Serial.print('"');
+
+    // 内存诊断（issue #105）：hw = 本运行期栈最高用到多少字节；free = 当前栈顶到
+    // 堆顶的余量；prv_hw/boot 与 ready 帧同源。用来把「舵机供电欠压」与「栈溢出
+    // 跑飞」分开——两者现象一样，但前者 hw 会明显偏低、后者会逼近余量上限。
+    Serial.print(F(",\"ram\":{\"hw\":"));
+    Serial.print(RamDiag::stackHighWater());
+    Serial.print(F(",\"win\":"));
+    Serial.print(RamDiag::stackWindow());
+    Serial.print(F(",\"margin\":"));
+    Serial.print(RamDiag::stackMargin());
+    Serial.print(F(",\"free\":"));
+    Serial.print(RamDiag::freeRam());
+    Serial.print(F(",\"prv_hw\":"));
+    Serial.print(RamDiag::prevStackHighWater());
+    Serial.print(F(",\"boot\":"));
+    Serial.print(RamDiag::bootCount());
+    Serial.print(F("}"));
 }
