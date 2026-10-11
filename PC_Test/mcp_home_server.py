@@ -150,6 +150,14 @@ _B_STALL_NUDGE_AFTER = 0.25     # 首次等待宽限（秒），超时即补发
 _B_STALL_NUDGE_CMD = {"cmd": "system", "action": "status"}   # 只读，不动执行器
 _B_RX_MAX_BYTES = 8192          # 接收重组缓冲上限：拼不出完整帧就丢弃重新同步
 
+# 只读期望（自检 / 测距 / 状态）：**不要用 system/status 去顶断流**。补发的那一帧自己
+# 内嵌 `"state":{...}`（V2.9+），与上一帧的余量交错后会被重组器当成"一帧"抠出来
+# （实测日志刷屏 `[B] 未知帧: {"door":...}`），真帧反而永远匹配不上 → 自检恒超时 →
+# 连续超时重开串口 → DTR 再复位 B 板一次（给复位计数灌水，见 issue #106）。
+# 只读帧改成**原样重发同一条命令**顶开：自检/测距/状态都不动执行器，重发无副作用，
+# 也不会把别的帧插进来。
+_B_READONLY_EXPECTS = ("selftest", "distance", "state")
+
 # OLED 复位冷却（#58）：B 板每次上电/复位（含 MCP 开串口时的 DTR 复位）都会发 ready
 # 帧；此后一段时间内**暂停回应 OLED 数据帧**（B 每 15s 拉一次，冷却期内不回，下一拍
 # 自然重试），等链路稳定再恢复。目的是别在复位抖动期间继续灌轮播数据，避免「复位→
@@ -449,7 +457,16 @@ class HomeController:
             return result
         with self._b_lock:
             t0 = time.monotonic()
-            result = self._send_b_one(cmd, expect=expect)
+            # 只读帧（自检/测距/状态）比 ~146 字节的断流阈值长：改为**原样重发同一条
+            # 只读命令**顶开断流，而不是补发 system/status（后者会与上一帧余量交错成
+            # 「未知帧」残片，见 _B_READONLY_EXPECTS 的注释，issue #106）。重发无副作用。
+            readonly = any(exp in _B_READONLY_EXPECTS for exp in expect)
+            result = self._send_b_one(cmd, expect=expect, nudge=not readonly)
+            if readonly and result.startswith("error: B 板响应超时"):
+                print(f"[B] 只读命令未回帧，原样重发一次顶开断流: "
+                      f"{cmd.get('cmd')}/{cmd.get('action')}",
+                      file=sys.stderr, flush=True)
+                result = self._send_b_one(cmd, expect=expect, nudge=False)
             if result.startswith("error: B 板响应超时"):
                 self._b_cmd_timeouts += 1
                 if allow_reopen and self._b_cmd_timeouts >= _B_CMD_FAILS_TO_REOPEN:
@@ -495,7 +512,7 @@ class HomeController:
                   file=sys.stderr, flush=True)
 
     def _send_b_one(self, cmd: dict, expect: tuple = ("response",),
-                    timeout: float = _B_CMD_TIMEOUT) -> str:
+                    timeout: float = _B_CMD_TIMEOUT, nudge: bool = True) -> str:
         """给命令分配单调 id、序列化并下发一次（调用方需持有 _b_lock）。
 
         带 id 是为了让响应可被归属：迟到/串味的响应 id 对不上就直接丢弃，不会被
@@ -504,7 +521,8 @@ class HomeController:
         cmd_id = self._b_next_id
         self._b_next_id += 1
         line = json.dumps(dict(cmd, id=cmd_id), ensure_ascii=False) + "\n"
-        return self._send_b_once(line, cmd_id, expect=expect, timeout=timeout)
+        return self._send_b_once(line, cmd_id, expect=expect, timeout=timeout,
+                                 nudge=nudge)
 
     def _send_b_once(self, line: str, cmd_id: int = -1,
                      expect: tuple = ("response",),
