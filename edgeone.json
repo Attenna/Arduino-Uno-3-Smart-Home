@@ -1,0 +1,14 @@
+{
+  "outputDirectory": ".",
+  "rewrites": [
+    { "source": "/dashboard", "destination": "/index.html" },
+    { "source": "/rooms", "destination": "/index.html" },
+    { "source": "/history", "destination": "/index.html" },
+    { "source": "/access", "destination": "/index.html" },
+    { "source": "/hardware", "destination": "/index.html" },
+    { "source": "/automation", "destination": "/index.html" },
+    { "source": "/voice", "destination": "/index.html" },
+    { "source": "/settings", "destination": "/index.html" },
+    { "source": "/login", "destination": "/index.html" }
+  ]
+}
