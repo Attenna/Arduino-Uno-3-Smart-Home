@@ -3682,7 +3682,78 @@ body.nav-collapsed .topbar .topbar-title small { opacity: 0; max-height: 0; }
     .tab-item.active { color: var(--accent-cyan); font-weight: 650; }
     .tab-item:active { transform: scale(0.94); }
 
-    /* 为底部标签栏留出空间，并把通知上移到标签栏之上 */
+    /* 为底部标签栏留出空间 */
     .main-content { padding-bottom: 86px; }
-    .notification { top: auto; bottom: 88px; }
+}
+
+/* ==================== iOS / iPhone 风格层 IV ====================
+ * 收尾细节：iOS 分段控件（设置页标签）· iOS Sheet（抽屉）· 顶部通知横幅 ·
+ * 触感反馈 · 空/加载态 · 细滚动条。
+ */
+
+/* -- 1) 设置页标签栏：窄屏改为 iOS 分段控件（灰轨道 + 白色选中块）-- */
+@media (max-width: 1180px) {
+    .settings-nav {
+        display: inline-flex;
+        flex-wrap: wrap;
+        gap: 3px;
+        padding: 3px;
+        border: none;
+        border-radius: 12px;
+        background: var(--fill-gray);
+        box-shadow: none;
+    }
+    .settings-nav-item {
+        border-radius: 9px;
+        padding: 8px 15px;
+        font-size: 13.5px;
+        color: var(--text-secondary);
+        background: transparent;
+    }
+    .settings-nav-item:hover { background: transparent; color: var(--text-primary); }
+    .settings-nav-item.active {
+        background: #fff;
+        color: var(--accent-cyan);
+        font-weight: 600;
+        box-shadow: 0 1px 3px rgba(60, 45, 25, 0.14);
+    }
+}
+
+/* -- 2) 抽屉：iOS Sheet（左侧大圆角 + 毛玻璃遮罩）-- */
+.drawer { border-radius: 20px 0 0 20px; border: none; overflow: hidden; }
+.drawer-backdrop {
+    background: rgba(28, 22, 14, 0.26);
+    -webkit-backdrop-filter: blur(6px);
+    backdrop-filter: blur(6px);
+}
+.drawer-head { padding: 20px 22px; border-bottom: 1px solid var(--border-color); }
+
+/* -- 3) 通知：iOS 顶部居中横幅 -- */
+.notification {
+    left: 50%; right: auto; top: 16px; bottom: auto;
+    transform: translate(-50%, calc(-100% - 28px));
+    border-radius: 16px;
+}
+.notification.show { transform: translate(-50%, 0); }
+@media (max-width: 768px) { .notification { top: 12px; } }
+
+/* -- 4) 触感反馈：分段项与档位按钮按下内缩 -- */
+.room-tab:active,
+.settings-nav-item:active,
+.level-btn:active { transform: scale(0.96); }
+
+/* -- 5) 空态 / 加载态 -- */
+.loading { padding: 34px 20px; font-size: 13.5px; color: var(--text-muted); }
+
+/* -- 6) 滚动条：iOS 细滚动条（内缩胶囊）-- */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb {
+    background: rgba(60, 50, 40, 0.18);
+    border: 3px solid transparent;
+    background-clip: padding-box;
+    border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: rgba(60, 50, 40, 0.32);
+    background-clip: padding-box;
 }
