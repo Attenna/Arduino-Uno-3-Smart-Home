@@ -26,87 +26,99 @@
 
         /* ==================== 规则卡片（iOS 快捷指令风）==================== */
         .rule-grid { display: grid; gap: 10px; }
-        .rule-card { display: flex; align-items: center; gap: 12px; padding: 12px 14px;
-                     border: 1px solid var(--border-color); border-radius: 12px;
-                     background: var(--bg-secondary); cursor: pointer; transition: .15s; }
-        .rule-card:hover { border-color: rgba(169, 116, 63,.45); background: rgba(169, 116, 63,.05); }
-        .rule-card.disabled { opacity: .5; }
-        .rc-icon { width: 42px; height: 42px; flex: 0 0 42px; border-radius: 10px;
+        .rule-card { display: flex; align-items: center; gap: 12px; padding: 14px 16px;
+                     border: none; border-radius: 16px;
+                     background: var(--bg-card); box-shadow: var(--shadow);
+                     cursor: pointer; transition: var(--transition); }
+        .rule-card:hover { box-shadow: var(--shadow-hover); transform: translateY(-1px); }
+        .rule-card:active { transform: scale(0.99); }
+        .rule-card.disabled { opacity: .5; box-shadow: none; }
+        .rc-icon { width: 44px; height: 44px; flex: 0 0 44px; border-radius: 13px;
                    display: flex; align-items: center; justify-content: center; font-size: 20px;
-                   background: rgba(154,122,160,.16); }
-        .rc-icon.evt { background: rgba(176, 106, 44,.16); }
-        .rc-icon.time { background: rgba(169, 116, 63,.16); }
+                   background: rgba(154,122,160,.14); }
+        .rc-icon.evt { background: rgba(176, 106, 44,.14); }
+        .rc-icon.time { background: rgba(169, 116, 63,.14); }
         .rc-main { flex: 1 1 auto; min-width: 0; }
-        .rc-name { font-weight: 600; font-size: 14px; white-space: nowrap;
+        .rc-name { font-weight: 600; font-size: 14.5px; letter-spacing: -0.01em; white-space: nowrap;
                    overflow: hidden; text-overflow: ellipsis; }
         .rc-sub { font-size: 12.5px; color: var(--text-secondary); margin-top: 2px;
                   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         /* 条件与动作全部摊开显示，不再压成「等 N 项」；条目多到撑高卡片时行内滚动 */
         .rc-flow { display: flex; flex-wrap: wrap; align-items: center; gap: 4px;
                    margin-top: 6px; max-height: 92px; overflow-y: auto; }
-        .chip { font-size: 11.5px; line-height: 1.6; padding: 0 8px; border-radius: 999px;
-                border: 1px solid var(--border-color); color: var(--text-primary);
-                background: rgba(169, 116, 63,.06); white-space: nowrap; }
-        .chip.cond { background: rgba(154,122,160,.16); border-color: rgba(154,122,160,.4); }
-        .chip.act { background: rgba(79, 107, 72,.13); border-color: rgba(79, 107, 72,.32); }
+        .chip { font-size: 11.5px; line-height: 1.7; padding: 0 9px; border-radius: 999px;
+                border: none; color: var(--text-primary);
+                background: rgba(169, 116, 63,.12); white-space: nowrap; }
+        .chip.cond { background: rgba(154,122,160,.16); }
+        .chip.act { background: rgba(79, 107, 72,.14); }
         .chip.act.none { background: transparent; color: var(--text-muted); }
-        .chip.label, .chip.arrow { background: transparent; border-color: transparent;
+        .chip.label, .chip.arrow { background: transparent;
                                    color: var(--text-secondary); padding: 0 2px; }
         .rc-meta { font-size: 11.5px; color: var(--text-muted); margin-top: 5px;
                    display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
         .rc-actions { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; }
-        .icon-btn { width: 32px; height: 32px; border-radius: 8px; border: 1px solid transparent;
+        .icon-btn { width: 34px; height: 34px; border-radius: 50%; border: none;
                     background: transparent; color: var(--text-secondary); font-size: 15px;
-                    cursor: pointer; display: flex; align-items: center; justify-content: center; }
-        .icon-btn:hover { background: rgba(169, 116, 63,.10); color: var(--accent-cyan); }
+                    cursor: pointer; display: flex; align-items: center; justify-content: center;
+                    transition: var(--transition); }
+        .icon-btn:hover { background: var(--fill-gray); color: var(--accent-cyan); }
+        .icon-btn:active { transform: scale(0.94); }
         .rc-name-input { font: inherit; font-weight: 600; font-size: 14px; width: 100%;
-                         background: var(--bg-card); color: var(--text-primary);
-                         border: 1px solid var(--accent-cyan); border-radius: 6px; padding: 2px 6px; }
-        .empty-rules { color: var(--text-secondary); font-size: 13px; padding: 28px; text-align: center; }
+                         background: var(--fill-gray); color: var(--text-primary);
+                         border: 1px solid var(--accent-cyan); border-radius: 10px; padding: 6px 10px;
+                         box-shadow: 0 0 0 3.5px rgba(169, 116, 63,.16); outline: none; }
+        .empty-rules { color: var(--text-secondary); font-size: 13px; padding: 36px; text-align: center; }
 
-        /* 卡片 ⋮ 菜单 */
-        .card-menu { position: fixed; z-index: 60; min-width: 172px; padding: 6px;
-                     background: var(--bg-card); border: 1px solid var(--border-color);
-                     border-radius: 10px; box-shadow: 0 12px 32px rgba(84, 62, 40,.22); }
-        .card-menu button { display: flex; width: 100%; align-items: center; gap: 8px;
-                            padding: 8px 10px; border: 0; border-radius: 7px; background: transparent;
-                            color: var(--text-primary); font-size: 13.5px; text-align: left; cursor: pointer; }
-        .card-menu button:hover { background: rgba(169, 116, 63,.14); }
+        /* 卡片 ⋮ 菜单：iOS 上下文菜单（毛玻璃 + 大圆角） */
+        .card-menu { position: fixed; z-index: 60; min-width: 200px; padding: 6px;
+                     background: rgba(255, 255, 255, .86);
+                     -webkit-backdrop-filter: blur(24px) saturate(180%);
+                     backdrop-filter: blur(24px) saturate(180%);
+                     border: 1px solid var(--border-color);
+                     border-radius: 14px; box-shadow: 0 16px 44px rgba(60, 45, 25,.22); }
+        .card-menu button { display: flex; width: 100%; align-items: center; gap: 10px;
+                            padding: 9px 12px; border: 0; border-radius: 9px; background: transparent;
+                            color: var(--text-primary); font-size: 14px; text-align: left; cursor: pointer;
+                            transition: var(--transition); }
+        .card-menu button:hover { background: var(--tint-fill); }
+        .card-menu button:active { transform: scale(0.98); }
         .card-menu button:disabled { opacity: .4; cursor: default; }
         .card-menu button.danger { color: var(--accent-red); }
-        .card-menu .sep { height: 1px; margin: 5px 6px; background: var(--border-color); }
+        .card-menu .sep { height: 1px; margin: 5px 10px; background: var(--border-color); }
 
         /* ==================== 单条规则编辑器 ==================== */
         .editor-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
         .editor-name { flex: 1 1 200px; min-width: 140px; font-size: 14px; font-weight: 600;
-                       padding: 7px 10px; border-radius: 8px; border: 1px solid var(--border-color);
-                       background: var(--bg-secondary); color: var(--text-primary); }
+                       padding: 9px 12px; border-radius: 11px; border: 1px solid var(--border-color);
+                       background: var(--fill-gray); color: var(--text-primary); }
         .editor-toggle { display: flex; align-items: center; gap: 6px; font-size: 13px; }
         #blocklyArea { width: 100%; height: calc(100vh - 215px); min-height: 440px;
-                       border-radius: var(--radius-sm); overflow: hidden;
-                       border: 1px solid var(--border-color); background: var(--bg-secondary); position: relative; }
+                       border-radius: 16px; overflow: hidden;
+                       border: 1px solid var(--border-color); background: var(--bg-card); position: relative; }
         #blocklyDiv { position: absolute; inset: 0; }
         /* 工具箱：窄分类栏 */
         .blocklyToolboxDiv { width: 96px !important; }
         .blocklyToolboxContents { padding: 4px 0; }
-        .blocklyTreeRow { border-radius: 8px; margin: 2px 6px; min-height: 34px; padding: 4px 6px; }
-        .blocklyTreeRow:not(.blocklyTreeSelected):hover { background: rgba(169, 116, 63,.06); }
+        .blocklyTreeRow { border-radius: 10px; margin: 2px 6px; min-height: 36px; padding: 4px 6px; }
+        .blocklyTreeRow:not(.blocklyTreeSelected):hover { background: var(--tint-fill); }
         .blocklyTreeLabel { font-size: 13px; }
         .blocklyMainBackground { stroke: none !important; }
-        .fit-btn { position: absolute; top: 10px; right: 10px; z-index: 20; width: 34px; height: 34px;
-                   border-radius: 8px; border: 1px solid var(--border-color);
-                   background: var(--bg-card); color: var(--text-primary); font-size: 16px;
+        .fit-btn { position: absolute; top: 12px; right: 12px; z-index: 20; width: 36px; height: 36px;
+                   border-radius: 50%; border: none;
+                   background: rgba(255, 255, 255, .86); color: var(--text-primary); font-size: 16px;
+                   box-shadow: var(--shadow);
+                   -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
                    cursor: pointer; display: flex; align-items: center; justify-content: center; }
-        .fit-btn:hover { background: rgba(169, 116, 63,.18); color: var(--accent-cyan); }
+        .fit-btn:hover { background: #fff; color: var(--accent-cyan); }
 
         /* ==================== 侧栏 ==================== */
-        .badge { font-size: 11px; padding: 2px 8px; border-radius: 999px; }
+        .badge { font-size: 11px; padding: 3px 9px; border-radius: 999px; font-weight: 600; }
         .badge.on { background: rgba(79, 107, 72,.15); color: var(--accent-green); }
         .badge.off { background: rgba(181, 84, 74,.12); color: var(--accent-red); }
         .badge.evt { background: rgba(176, 106, 44,.15); color: var(--accent-orange); }
         .badge.disabled { background: rgba(124, 114, 100,.15); color: var(--text-secondary); }
-        .gating-warn { margin: 10px 0 6px; padding: 10px 14px; border-radius: 10px;
-                       background: rgba(181, 84, 74,.10); border: 1px solid var(--accent-red);
+        .gating-warn { margin: 10px 0 6px; padding: 12px 16px; border-radius: 14px;
+                       background: rgba(181, 84, 74,.10); border: none;
                        color: var(--text-primary); font-size: 13px; line-height: 1.7; }
         .mode-hint { font-size: 12px; color: var(--text-secondary); line-height: 1.7; }
         .auto-log { width: 100%; font-size: 12px; border-collapse: collapse; }
@@ -118,7 +130,7 @@
         .missing-box { position: absolute; inset: 20px; z-index: 5; display: flex; align-items: center;
                        justify-content: center; background: var(--bg-card);
                        border: 1px dashed var(--accent-orange); color: var(--accent-orange);
-                       border-radius: var(--radius-sm); text-align: center; padding: 20px; }
+                       border-radius: 16px; text-align: center; padding: 20px; }
 
         /* ==================== 全局状态条目（列表页里与规则并列的一种卡片） ==================== */
         .grid-section { font-size: 12px; letter-spacing: .5px; color: var(--text-secondary);
@@ -126,8 +138,8 @@
         .state-card { cursor: pointer; }
         .rc-icon.state { background: rgba(79, 107, 72,.16); }
         .badge.state { background: rgba(79, 107, 72,.15); color: var(--accent-green); }
-        .gs-type { font-size: 10.5px; font-weight: 400; color: var(--text-muted);
-                   border: 1px solid var(--border-color); border-radius: 999px; padding: 0 6px;
+        .gs-type { font-size: 10.5px; font-weight: 500; color: var(--text-muted);
+                   background: var(--fill-gray); border: none; border-radius: 999px; padding: 1px 7px;
                    margin-left: 6px; }
         .gs-value { font-size: 13px; color: var(--accent-cyan); font-weight: 600; }
         @media (max-width: 1100px) { .auto-layout { grid-template-columns: 1fr; } }
