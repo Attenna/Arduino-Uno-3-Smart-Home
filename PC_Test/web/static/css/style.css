@@ -3587,3 +3587,102 @@ html[lang="zh-CN"] h2 {
     .topbar-title { font-size: 23px; }
     .main-content { padding: 20px 20px 40px; }
 }
+
+/* ==================== iOS / iPhone 风格层 III ====================
+ * 对齐 iOS 的三项结构性规范：分组 inset 列表（分隔线内缩）· 大标题滚动收起 ·
+ * 移动端底部标签栏（Tab Bar）。
+ */
+
+/* -- 1) 大标题滚动收起（样式，配合 base.html 的 scroll 监听切换 .nav-collapsed）--
+   注意：html[lang="en"] 层（权重 0,2,0）也定了 .topbar-title 字号，
+   这里用 .topbar .topbar-title 提升权重，保证中英文都拿到同一套 iOS 大标题规格。 */
+.topbar { transition: height 0.28s cubic-bezier(0.32, 0.72, 0, 1); }
+.topbar .topbar-title { font-size: 30px; font-weight: 700; letter-spacing: -0.028em; transition: font-size 0.24s cubic-bezier(0.32, 0.72, 0, 1); }
+.topbar .topbar-title small {
+    font-size: 13.5px;
+    overflow: hidden;
+    max-height: 22px;
+    transition: opacity 0.2s ease, max-height 0.24s cubic-bezier(0.32, 0.72, 0, 1);
+}
+body.nav-collapsed .topbar { height: 62px; }
+body.nav-collapsed .topbar .topbar-title { font-size: 17px; letter-spacing: -0.01em; }
+body.nav-collapsed .topbar .topbar-title small { opacity: 0; max-height: 0; }
+
+/* -- 2) 分组 inset 列表：分隔线内缩到内容左边距（iOS 列表观感）-- */
+.card-header { position: relative; border-bottom: none; }
+.card-header::after {
+    content: "";
+    position: absolute;
+    left: 24px; right: 0; bottom: 0;
+    height: 1px;
+    background: var(--border-color);
+}
+.card-footer { position: relative; border-top: none; }
+.card-footer::before {
+    content: "";
+    position: absolute;
+    left: 24px; right: 0; top: 0;
+    height: 1px;
+    background: var(--border-color);
+}
+.data-table td { position: relative; border-bottom: none; }
+.data-table td::after {
+    content: "";
+    position: absolute;
+    left: 18px; right: 0; bottom: 0;
+    height: 1px;
+    background: var(--border-color);
+}
+.data-table tbody tr:last-child td::after { display: none; }
+.event-item { position: relative; border-bottom: none; }
+.event-item::after {
+    content: "";
+    position: absolute;
+    left: 8px; right: 0; bottom: 0;
+    height: 1px;
+    background: var(--border-color);
+}
+.event-item:last-child::after { display: none; }
+
+/* -- 3) iOS 分组标题（section caption）-- */
+.grid-section { font-size: 13px; font-weight: 600; letter-spacing: 0.01em; color: var(--text-muted); }
+
+/* -- 4) 移动端底部标签栏（iOS Tab Bar）-- */
+.ios-tabbar { display: none; }
+@media (max-width: 768px) {
+    .topbar .topbar-title { font-size: 24px; }
+    .ios-tabbar {
+        display: flex;
+        position: fixed;
+        left: 0; right: 0; bottom: 0;
+        z-index: 65;
+        padding: 6px 4px calc(6px + env(safe-area-inset-bottom, 0px));
+        background: rgba(252, 250, 246, 0.82);
+        -webkit-backdrop-filter: blur(22px) saturate(180%);
+        backdrop-filter: blur(22px) saturate(180%);
+        border-top: 1px solid var(--border-color);
+    }
+    .tab-item {
+        flex: 1 1 0;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 3px;
+        padding: 4px 2px;
+        border-radius: 10px;
+        color: var(--text-secondary);
+        text-decoration: none;
+        font-size: 10.5px;
+        font-weight: 500;
+        transition: var(--transition);
+    }
+    .tab-item svg { width: 24px; height: 24px; }
+    .tab-item span { max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .tab-item.active { color: var(--accent-cyan); font-weight: 650; }
+    .tab-item:active { transform: scale(0.94); }
+
+    /* 为底部标签栏留出空间，并把通知上移到标签栏之上 */
+    .main-content { padding-bottom: 86px; }
+    .notification { top: auto; bottom: 88px; }
+}
