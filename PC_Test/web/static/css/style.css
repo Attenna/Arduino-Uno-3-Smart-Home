@@ -6,16 +6,17 @@
 }
 
 :root {
-    /* 暖居主题（对齐演示页审美）：奶油米白底 + 纯白卡片 + 焦糖棕强调（状态色保留：鼠尾草绿正常 / 砖红告警） */
-    --bg-primary: #f6f2ea;
-    --bg-secondary: #fffdfa;
+    /* 暖居主题（iOS 化）：暖灰「系统分组底」+ 纯白卡片 + 焦糖棕强调
+       （状态色保留：鼠尾草绿正常 / 砖红告警；对比度较原暖调略收紧，贴近 iOS 层级） */
+    --bg-primary: #f1eee8;
+    --bg-secondary: #ffffff;
     --bg-card: #ffffff;
-    --bg-card-hover: #f5efe6;
-    --bg-sidebar: #faf7f1;
-    --border-color: #e9e1d5;
-    --text-primary: #3b332a;
-    --text-secondary: #7c7264;
-    --text-muted: #a89e8d;
+    --bg-card-hover: #f6f3ed;
+    --bg-sidebar: rgba(250, 248, 243, 0.72);
+    --border-color: rgba(60, 50, 40, 0.08);
+    --text-primary: #1c1a17;
+    --text-secondary: #6b6355;
+    --text-muted: #9a9184;
     --accent-blue: #476044;
     --accent-cyan: #a9743f;
     --accent-green: #4f6b48;
@@ -23,20 +24,31 @@
     --accent-red: #b5544a;
     --accent-yellow: #c08a4a;
     --accent-purple: #9a7aa0;
-    --shadow: 0 4px 16px rgba(120, 95, 60, 0.10);
-    --radius: 18px;
-    --radius-sm: 10px;
-    --transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    /* iOS 控件填充：焦糖 tint 选中态 / 中性灰填充 */
+    --tint-fill: rgba(169, 116, 63, 0.12);
+    --tint-fill-strong: rgba(169, 116, 63, 0.2);
+    --fill-gray: rgba(120, 105, 90, 0.09);
+    --fill-gray-strong: rgba(120, 105, 90, 0.17);
+    /* 双层柔和投影（贴近 iOS 卡片纵深） */
+    --shadow: 0 1px 2px rgba(60, 45, 25, 0.05), 0 10px 26px rgba(60, 45, 25, 0.06);
+    --shadow-hover: 0 2px 5px rgba(60, 45, 25, 0.06), 0 16px 34px rgba(60, 45, 25, 0.10);
+    --radius: 22px;
+    --radius-sm: 12px;
+    --transition: all 0.28s cubic-bezier(0.32, 0.72, 0, 1);
     --font-mono: 'Courier New', monospace;   /* 英文模式由 html[lang="en"] 覆盖为 IBM Plex Mono */
 }
 
 body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    /* 优先系统 San Francisco / 苹方，贴近 iOS 原生字形 */
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI',
+                 'PingFang SC', 'HarmonyOS Sans SC', 'Microsoft YaHei UI', 'Microsoft YaHei', sans-serif;
     background: var(--bg-primary);
-    background-image: radial-gradient(1200px 600px at 50% -10%, #fffefb 0%, rgba(246, 242, 234, 0) 70%);
+    background-image: none;
     color: var(--text-primary);
     min-height: 100vh;
     line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
 }
 
 /* ==================== 导航栏 ==================== */
@@ -3284,3 +3296,227 @@ html[lang="zh-CN"] h2 {
 .btn-accent { border-color: var(--accent-cyan); color: var(--accent-cyan); }
 .btn-accent:disabled { opacity: .45; cursor: not-allowed; }
 .btn-active { border-color: var(--accent-green); color: var(--accent-green); }
+
+/* ==================== iOS / iPhone 风格层 ====================
+ * 在完全不改动类名与页面结构的前提下，用 iOS 的视觉语言重绘核心组件：
+ *   系统分组底 · 连续大圆角 · 发丝分隔线 · 半透明毛玻璃材质 · tint 填充控件 · 大标题层级。
+ * 本层位于样式表末尾，按「同权重后置覆盖」生效，全站页面自动继承。
+ */
+
+/* ---- 主内容区留白与节奏 ---- */
+.main-content { padding: 26px 28px 44px; }
+
+/* ---- 侧边栏：毛玻璃材质（iOS 侧栏观感）---- */
+.sidebar {
+    background: var(--bg-sidebar);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    backdrop-filter: blur(20px) saturate(180%);
+    border-right: 1px solid var(--border-color);
+    padding: 18px 12px;
+}
+.side-brand { font-size: 18px; font-weight: 700; letter-spacing: -0.01em; padding: 6px 10px 18px; }
+.side-nav { gap: 2px; }
+.side-link { padding: 11px 12px; border-radius: 12px; font-size: 14px; }
+.side-link.active {
+    background: var(--accent-cyan);
+    color: #fff;
+    box-shadow: 0 4px 14px rgba(169, 116, 63, 0.28);
+}
+
+/* ---- 顶栏：毛玻璃 + iOS 大标题 ---- */
+.topbar {
+    height: 80px;
+    background: rgba(252, 250, 246, 0.72);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    backdrop-filter: blur(20px) saturate(180%);
+    border-bottom: 1px solid var(--border-color);
+}
+.topbar-title { font-size: 27px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.15; }
+.topbar-title small { font-size: 13px; font-weight: 400; color: var(--text-muted); margin-top: 3px; }
+.topbar-right { gap: 12px; }
+.time-display { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--text-secondary); }
+.sidebar-toggle { border: none; background: var(--fill-gray); border-radius: 12px; width: 40px; height: 40px; }
+
+/* 语言切换：iOS 胶囊按钮 */
+.lang-switch {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 7px 14px; border-radius: 999px; border: none;
+    background: var(--fill-gray); color: var(--accent-cyan);
+    font-weight: 600; font-size: 13px; cursor: pointer;
+    transition: var(--transition);
+}
+.lang-switch:hover { background: var(--fill-gray-strong); }
+.lang-switch svg { width: 17px; height: 17px; }
+
+/* ---- 卡片：去描边 + 柔和双层投影 + 连续圆角 ---- */
+.card {
+    border: none;
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+}
+.card:hover { border-color: transparent; box-shadow: var(--shadow-hover); transform: translateY(-1px); }
+.card-header { padding: 18px 22px; border-bottom: 1px solid var(--border-color); }
+.card-header h3 { font-size: 17px; font-weight: 650; letter-spacing: -0.01em; }
+.card-body { padding: 22px; }
+.card-footer { padding: 12px 22px; border-top: 1px solid var(--border-color); }
+.card-icon { width: 20px; height: 20px; }
+
+/* ---- 按钮：iOS 填充式（次级灰填充 / 主要 tint 填充）---- */
+.btn {
+    border: none;
+    background: var(--fill-gray);
+    color: var(--accent-cyan);
+    border-radius: 12px;
+    padding: 10px 18px;
+    min-height: 40px;
+    font-size: 13.5px;
+    font-weight: 600;
+}
+.btn:hover { background: var(--fill-gray-strong); color: var(--accent-cyan); border: none; }
+.btn:active { transform: scale(0.96); }
+.btn-sm { padding: 7px 13px; min-height: 32px; font-size: 12.5px; border-radius: 10px; }
+.btn-danger { background: rgba(181, 84, 74, 0.1); color: var(--accent-red); }
+.btn-danger:hover { background: rgba(181, 84, 74, 0.18); color: var(--accent-red); border: none; }
+.btn-primary { background: var(--accent-cyan); color: #fff; }
+.btn-primary:hover { background: #96612f; color: #fff; border: none; }
+.btn-primary:active { transform: scale(0.96); }
+.btn-toggle { border-radius: 999px; padding: 8px 18px; }
+.btn-accent { background: var(--tint-fill); }
+.btn-active { background: rgba(79, 107, 72, 0.12); }
+
+/* ---- 表单控件：iOS 浅灰填充 + 聚焦 tint 环 ---- */
+.input-field, .select-input, .entity-select, .access-test select, .color-picker {
+    border: 1px solid var(--border-color);
+    background: var(--fill-gray);
+    border-radius: 11px;
+    padding: 10px 13px;
+    font-size: 14px;
+    color: var(--text-primary);
+    transition: var(--transition);
+}
+.input-field:focus, .select-input:focus, .entity-select:focus {
+    border-color: var(--accent-cyan);
+    background: #fff;
+    box-shadow: 0 0 0 3.5px rgba(169, 116, 63, 0.16);
+}
+.input-readonly { background: var(--bg-primary); opacity: 0.75; }
+
+/* ---- 开关：iOS Switch ---- */
+.editor-toggle input[type="checkbox"] { width: 47px; height: 29px; background: var(--fill-gray-strong); }
+.editor-toggle input[type="checkbox"]::after {
+    width: 25px; height: 25px; top: 2px; left: 2px;
+    box-shadow: 0 2px 5px rgba(40, 30, 15, 0.22);
+}
+.editor-toggle input[type="checkbox"]:checked::after { transform: translateX(18px); }
+
+/* ---- 滑块：iOS 白色圆点 ---- */
+.slider { height: 4px; border-radius: 2px; background: var(--fill-gray-strong); }
+.slider::-webkit-slider-thumb {
+    width: 22px; height: 22px; background: #fff;
+    box-shadow: 0 1px 4px rgba(60, 45, 25, 0.3), 0 0 0 0.5px rgba(60, 45, 25, 0.06);
+}
+.slider::-webkit-slider-thumb:hover { transform: scale(1.06); }
+.slider::-moz-range-thumb {
+    width: 22px; height: 22px; border: none; background: #fff; border-radius: 50%;
+    box-shadow: 0 1px 4px rgba(60, 45, 25, 0.3);
+}
+
+/* ---- 分段控件：房间筛选 / 档位选择器（iOS Segmented Control）---- */
+.room-filter {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 3px;
+    padding: 3px;
+    border-radius: 12px;
+    background: var(--fill-gray);
+    margin-bottom: 18px;
+}
+.room-tab {
+    border: none;
+    background: transparent;
+    border-radius: 9px;
+    padding: 8px 16px;
+    font-size: 13.5px;
+    font-weight: 500;
+    color: var(--text-secondary);
+}
+.room-tab:hover { border: none; color: var(--text-primary); }
+.room-tab.active {
+    background: #fff;
+    color: var(--accent-cyan);
+    font-weight: 600;
+    box-shadow: 0 1px 3px rgba(60, 45, 25, 0.14);
+}
+.level-selector { background: var(--fill-gray); border-radius: 12px; padding: 3px; gap: 3px; }
+.level-selector .level-btn { border: none; background: transparent; border-radius: 9px; font-weight: 500; }
+.level-selector .level-btn.active {
+    background: #fff;
+    color: var(--accent-cyan);
+    border: none;
+    box-shadow: 0 1px 3px rgba(60, 45, 25, 0.14);
+}
+.level-selector .level-btn.active:hover { background: #fff; border: none; }
+
+/* ---- 设备卡片（房间页）：iOS 磁贴 ---- */
+.device-card { border: none; box-shadow: var(--shadow); padding: 16px; }
+.device-card:hover { border: none; box-shadow: var(--shadow-hover); transform: translateY(-1px); }
+.device-card.warn { border: none; box-shadow: 0 0 0 1.5px rgba(181, 84, 74, 0.3), var(--shadow); }
+.dc-icon { border-radius: 12px; width: 40px; height: 40px; }
+.dc-name { font-size: 14px; letter-spacing: -0.01em; }
+
+/* ---- 首页：模式条 / 环境胶囊 / 房间示意 ---- */
+.mode-bar { border: none; box-shadow: var(--shadow); padding: 18px 22px; }
+.mode-pill { border: none; }
+.env-chip { background: var(--fill-gray); border: 1px solid transparent; border-radius: 14px; }
+.env-chip.alert { background: rgba(181, 84, 74, 0.1); border-color: rgba(181, 84, 74, 0.28); }
+.room-stage { border: 1px solid var(--border-color); }
+
+/* ---- 设置页：iOS 列表样式 ---- */
+.settings-nav { border: none; box-shadow: var(--shadow); padding: 8px; }
+.settings-nav-item { border-radius: 10px; padding: 11px 14px; }
+.settings-link-card {
+    border: none;
+    background: var(--bg-card);
+    box-shadow: var(--shadow);
+    border-radius: 16px;
+}
+.settings-link-card:hover {
+    border: none;
+    background: var(--bg-card);
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-hover);
+}
+.slc-icon { border-radius: 12px; }
+.settings-nav { top: 96px; }
+
+/* ---- 表格 / 列表：发丝分隔线 ---- */
+.table-wrapper { border-radius: 14px; }
+.data-table th { background: var(--bg-card); border-bottom: 1px solid var(--border-color); }
+.data-table td { padding: 12px 16px; border-bottom: 1px solid var(--border-color); }
+.data-table tbody tr:hover { background: var(--bg-card-hover); }
+.data-table tbody tr:last-child td { border-bottom: none; }
+.event-item { padding: 12px 6px; border-bottom: 1px solid var(--border-color); }
+
+/* ---- 通知横幅 ---- */
+.notification {
+    border-radius: 14px;
+    padding: 13px 18px;
+    box-shadow: 0 12px 34px rgba(60, 45, 25, 0.18);
+    -webkit-backdrop-filter: blur(18px);
+    backdrop-filter: blur(18px);
+}
+.notification.success { background: rgba(79, 107, 72, 0.16); border: 1px solid rgba(79, 107, 72, 0.4); }
+.notification.error { background: rgba(181, 84, 74, 0.16); border: 1px solid rgba(181, 84, 74, 0.4); }
+.notification.info { background: rgba(71, 96, 68, 0.16); border: 1px solid rgba(71, 96, 68, 0.4); }
+
+/* ---- 抽屉 / 浮层 ---- */
+.drawer { border-left: none; box-shadow: -20px 0 50px rgba(60, 45, 25, 0.18); }
+.drawer-close { border: none; background: var(--fill-gray); border-radius: 50%; width: 34px; height: 34px; }
+
+/* ---- 徽标 / 统计数字 ---- */
+.card-badge, .mode-badge, .mode-pill { font-weight: 600; }
+.stat-value { font-variant-numeric: tabular-nums; }
+
+/* ---- 登录页：柔化背景 ---- */
+.login-visual { background: linear-gradient(160deg, #fbf6ec 0%, #f4e3c4 55%, #eccf9e 100%); }
+.login-card { box-shadow: -20px 0 50px rgba(60, 45, 25, 0.06); }
