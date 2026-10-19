@@ -3798,3 +3798,17 @@ body.dev-mode .status-item.dev-note { display: flex; }
     color: var(--text-muted);
     margin-bottom: 7px;
 }
+
+/* ==================== 顶栏高度令牌化 ====================
+ * 顶栏高度在 iOS 层已由 72px 改为 84px（收起 62px），但 .settings-nav / .rule-detail
+ * 的 sticky 偏移仍写死 92/96px，会与顶栏对不齐（收起时偏差更大）。
+ * 把顶栏高度提为变量，sticky 面板据此计算，展开/收起都对齐。
+ */
+:root { --topbar-h: 84px; --topbar-h-sm: 62px; }
+@media (max-width: 768px) { :root { --topbar-h: 72px; } }
+.topbar { height: var(--topbar-h); }
+body.nav-collapsed .topbar { height: var(--topbar-h-sm); }
+.settings-nav { top: calc(var(--topbar-h) + 14px); }
+body.nav-collapsed .settings-nav { top: calc(var(--topbar-h-sm) + 14px); }
+.rule-detail { top: calc(var(--topbar-h) + 10px); }
+body.nav-collapsed .rule-detail { top: calc(var(--topbar-h-sm) + 10px); }

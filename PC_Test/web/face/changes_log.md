@@ -8,6 +8,39 @@
 分类条目和每条变更的要点；涉及模型、预处理或阈值时，还必须写明是否需要重建人脸库、
 是否需要调整部署配置。尚未发布的改动使用“未发布”，发布或部署时再替换成实际日期。
 
+## v1.1.11（未发布）
+
+修复 iOS 改版引入的 sticky 偏移错位。本次**仅样式层改动**
+（`web/static/css/style.css`、`web/templates/base.html` 样式版本号）。
+
+### 缺陷修复
+
+- 顶栏高度在 iOS 层由 72px 上调为 84px（收起 62px），但 `.settings-nav` 与
+  `.rule-detail` 的 `position: sticky` 偏移仍写死 92/96px，导致这两个面板与顶栏对不齐
+  （顶栏收起时偏差更大）。现将顶栏高度提为 CSS 变量 `--topbar-h` / `--topbar-h-sm`，
+  sticky 偏移改用 `calc()` 跟随，展开/收起都对齐；窄屏下 `--topbar-h` 自动回落 72px。
+
+### 排查结论（无新增缺陷）
+
+- `python -m unittest discover -s PC_Test/tests -v`：157 项，13 error / 0 failure；
+  13 项均为本环境缺 `mcp` / `numpy` 等可选依赖的导入失败，**非代码缺陷**。
+- 逐页运行时检查（首页 / 房间 / 自动化 / 设置 / 门禁 / 记录 / 语音 / 硬件）：除下述
+  上游既有问题外无新增 JS 报错，各页渲染正常。
+
+### 已知的上游既有问题（本次不改，属独立问题）
+
+- `main.js` 的 `pagehide` 回调调用 `postLightDebounced.cancel()`，但 `postLightDebounced`
+  是普通函数（真正被 `debounce()` 包装、带 `.cancel` 的是 `sendLightDebounced`），
+  因此每次加载都会抛 `TypeError: postLightDebounced.cancel is not a function`。
+  经比对，该写法与上游 `origin/main` **完全一致**，非本次改动引入。按仓库约定
+  「一个问题一个分支」，应另开独立任务分支修复，故不并入本次 UI 改动。
+
+### 兼容
+
+- 仅样式改动，无功能影响；无需重建人脸库、无需调整部署配置。
+- 门禁页的识别哨兵体检条、人脸录入、房卡录入、链路自测、三态显示与 ArcFace 相似度等
+  **功能与口径均未改动**。
+
 ## v1.1.10（未发布）
 
 修正首页「常用设备」板块指代不明的问题。本次**仅前端文案/结构与样式改动**
