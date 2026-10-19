@@ -3757,3 +3757,17 @@ body.nav-collapsed .topbar .topbar-title small { opacity: 0; max-height: 0; }
     background: rgba(60, 50, 40, 0.32);
     background-clip: padding-box;
 }
+
+/* ==================== iOS / iPhone 风格层 V：客户端视图 ====================
+ * 面向客户时隐藏内部实现与诊断文案（硬件回读一致性、串口链路健康度、传感器数据新鲜度、
+ * 固件/后端实现说明等）。这些文案对使用者无意义，且暴露实现细节。
+ * 维护时在任意页面 URL 加 ?dev=1（或手动给 <body> 加 dev-mode 类）即可恢复显示。
+ */
+.mismatch-indicator,
+.serial-health,
+.sensor-freshness,
+.dev-note { display: none; }
+body.dev-mode .mismatch-indicator,
+body.dev-mode .serial-health,
+body.dev-mode .sensor-freshness,
+body.dev-mode .dev-note { display: revert; }

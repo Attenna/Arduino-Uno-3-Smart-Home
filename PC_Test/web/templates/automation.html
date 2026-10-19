@@ -148,7 +148,7 @@
 
 {% block content %}
     <p><button class="btn" onclick="createDoorwayRule()">📷 新建门口测距拍照规则</button>
-    默认小于 50 cm 持续 2 秒，可在积木中修改距离和时间，保存后生效。
+    <span class="dev-note">默认小于 50 cm 持续 2 秒，可在积木中修改距离和时间，保存后生效。</span>
     <a href="/security">查看照片记录</a></p>
 
     <!-- 卡片 ⋮ 菜单（全局唯一，按需定位） -->
@@ -166,7 +166,7 @@
                 <button class="btn" onclick="restorePresets()">♻️ 恢复内置</button>
                 <button class="btn mini-btn" onclick="refreshPreview()">🔄</button>
             </div>
-            <div class="card-body mode-hint" style="padding-top:0">
+            <div class="card-body mode-hint dev-note" style="padding-top:0">
                 📌 全局状态是积木用的命名变量：条目卡片只显示当前值，值由规则里的「设置全局状态」积木维护；
                 「允许自动开风扇」默认「否」＝风扇只能手动开，要放开就改这条状态定义。
             </div>
@@ -178,7 +178,7 @@
                 <div class="card">
                     <div class="card-header"><h3>🖥️ OLED 轮播</h3></div>
                     <div class="card-body" style="display:flex;flex-direction:column;gap:10px">
-                        <div style="font-size:13px;color:var(--text-secondary)">
+                        <div class="dev-note" style="font-size:13px;color:var(--text-secondary)">
                             屏上 3 页（Environment / Devices / Safety）现由 <b>B 板固件每 15 秒</b>
                             主动拉取传感器数据并本地渲染，香橙派不再逐行推送。此处设置仅存档，不再驱动屏幕。
                         </div>
@@ -190,7 +190,7 @@
                             <input type="number" id="oledInterval" value="15" min="15" max="3600" step="1"
                                    style="width:70px"> 秒切页
                         </label>
-                        <span style="font-size:12px;color:var(--text-secondary)">仅英文/数字，每行 16 字符；为保护 B 板，最短 15 秒切页</span>
+                        <span class="dev-note" style="font-size:12px;color:var(--text-secondary)">仅英文/数字，每行 16 字符；为保护 B 板，最短 15 秒切页</span>
                         <button class="btn btn-primary" onclick="saveOledConfig()">💾 保存设置</button>
                         <span id="oledStatus" style="font-size:12px;color:var(--text-secondary)"></span>
                     </div>

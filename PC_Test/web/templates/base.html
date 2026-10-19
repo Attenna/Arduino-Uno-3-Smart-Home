@@ -16,7 +16,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400..700&family=IBM+Plex+Mono:wght@400;500;600&family=Noto+Serif+SC:wght@500;600;700&family=Plus+Jakarta+Sans:wght@400..800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=20261018-ios5">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=20261019-client1">
     {% block head %}{% endblock %}
 </head>
 <body>
@@ -143,6 +143,10 @@
             window.addEventListener('scroll', apply, { passive: true });
             apply();
         })();
+        // 客户端视图：默认隐藏内部诊断/实现说明文案；URL 加 ?dev=1 临时查看（见 style.css 的 .dev-note）
+        if (/[?&]dev=1(?:&|$)/.test(location.search)) {
+            document.body.classList.add('dev-mode');
+        }
         // 语言切换兜底：各页 main.js 若定义了同名函数会覆盖本实现
         if (typeof window.toggleDashboardLang !== 'function') {
             window.toggleDashboardLang = function () {
