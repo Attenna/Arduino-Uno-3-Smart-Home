@@ -3771,3 +3771,16 @@ body.dev-mode .mismatch-indicator,
 body.dev-mode .serial-health,
 body.dev-mode .sensor-freshness,
 body.dev-mode .dev-note { display: revert; }
+
+/* 设置页：隐藏「硬件与连接」「设备映射概览」两个设备配置分区（导航项与分区一并隐藏，
+   避免点进去是空白页）。恢复方式同 ?dev=1，分区可见性仍需遵守原来的 active 语义。 */
+.settings-nav-item[data-sec="conn"],
+.settings-nav-item[data-sec="devmap"],
+.settings-section[data-sec="conn"],
+.settings-section[data-sec="devmap"] { display: none; }
+body.dev-mode .settings-nav-item[data-sec="conn"],
+body.dev-mode .settings-nav-item[data-sec="devmap"] { display: block; }
+body.dev-mode .settings-section.active[data-sec="conn"],
+body.dev-mode .settings-section.active[data-sec="devmap"] { display: block; }
+/* 「关于系统」里的硬件规格行同样是设备配置信息；该行原本是 flex，恢复时需还原为 flex */
+body.dev-mode .status-item.dev-note { display: flex; }
