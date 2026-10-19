@@ -3784,3 +3784,17 @@ body.dev-mode .settings-section.active[data-sec="conn"],
 body.dev-mode .settings-section.active[data-sec="devmap"] { display: block; }
 /* 「关于系统」里的硬件规格行同样是设备配置信息；该行原本是 flex，恢复时需还原为 flex */
 body.dev-mode .status-item.dev-note { display: flex; }
+
+/* ==================== 首页「快捷控制」分组 ====================
+ * 原先三排按钮挤在一张卡里、没有分组标签，用户看不出「低速」「关闭」是控什么。
+ * 这里按设备（灯光 / 风扇 / 门窗）分组并加小标签，使指代明确。
+ */
+.ctrl-group + .ctrl-group { margin-top: 14px; }
+.ctrl-group-label {
+    display: block;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    color: var(--text-muted);
+    margin-bottom: 7px;
+}

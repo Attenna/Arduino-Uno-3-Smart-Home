@@ -78,24 +78,33 @@
         <div class="card">
             <div class="card-header">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="card-icon"><path d="M4 12h16M12 4v16"/></svg>
-                <h3 data-i18n="home.devices">常用设备</h3>
+                <h3 data-i18n="home.devices">快捷控制</h3>
             </div>
             <div class="card-body">
-                <div class="btn-group btn-group-tight" style="margin-bottom:10px">
-                    <button class="btn btn-sm" onclick="setLight('on',100)" data-i18n="light.full">全亮</button>
-                    <button class="btn btn-sm" onclick="setLight('on',50)" data-i18n="light.half">半亮</button>
-                    <button class="btn btn-sm" onclick="setLight('on',25)" data-i18n="light.night">夜灯</button>
-                    <button class="btn btn-sm" onclick="setLight('off',0)" data-i18n="light.off">关闭</button>
+                <div class="ctrl-group">
+                    <span class="ctrl-group-label" data-i18n="home.grp.light">灯光</span>
+                    <div class="btn-group btn-group-tight">
+                        <button class="btn btn-sm" onclick="setLight('on',100)" data-i18n="light.full">全亮</button>
+                        <button class="btn btn-sm" onclick="setLight('on',50)" data-i18n="light.half">半亮</button>
+                        <button class="btn btn-sm" onclick="setLight('on',25)" data-i18n="light.night">夜灯</button>
+                        <button class="btn btn-sm" onclick="setLight('off',0)" data-i18n="light.off">关闭</button>
+                    </div>
                 </div>
-                <div class="btn-group btn-group-tight" style="margin-bottom:10px">
-                    <button class="btn btn-sm" onclick="setFan(30)" data-i18n="fan.low">低速</button>
-                    <button class="btn btn-sm" onclick="setFan(60)" data-i18n="fan.medium">中速</button>
-                    <button class="btn btn-sm" onclick="setFan(100)" data-i18n="fan.high">高速</button>
-                    <button class="btn btn-sm" onclick="setFan(0)" data-i18n="fan.off">关闭</button>
+                <div class="ctrl-group">
+                    <span class="ctrl-group-label" data-i18n="home.grp.fan">风扇</span>
+                    <div class="btn-group btn-group-tight">
+                        <button class="btn btn-sm" onclick="setFan(30)" data-i18n="fan.low">低速</button>
+                        <button class="btn btn-sm" onclick="setFan(60)" data-i18n="fan.medium">中速</button>
+                        <button class="btn btn-sm" onclick="setFan(100)" data-i18n="fan.high">高速</button>
+                        <button class="btn btn-sm" onclick="setFan(0)" data-i18n="fan.off">关闭</button>
+                    </div>
                 </div>
-                <div class="btn-group btn-group-tight">
-                    <button class="btn btn-sm" onclick="guardDoor()" data-i18n="door.front">前门</button>
-                    <button class="btn btn-sm" onclick="guardWindow()" data-i18n="door.window">客厅窗户</button>
+                <div class="ctrl-group">
+                    <span class="ctrl-group-label" data-i18n="home.grp.window_door">门窗</span>
+                    <div class="btn-group btn-group-tight">
+                        <button class="btn btn-sm" onclick="guardDoor()" data-i18n="door.front">前门</button>
+                        <button class="btn btn-sm" onclick="guardWindow()" data-i18n="door.window">客厅窗户</button>
+                    </div>
                 </div>
             </div>
         </div>
