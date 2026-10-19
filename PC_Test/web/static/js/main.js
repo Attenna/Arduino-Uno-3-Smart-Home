@@ -17,6 +17,10 @@ let lastKnownLight = null;   // { status: 'on'|'off', brightness: Number }
 // 每次下发都带完整亮法，所以拖亮度不会被清成白光、改颜色不会丢亮度（#27）。
 let lightStyle = { mode: 'white' };
 
+// 空调最后一次成功下发的状态（来自 /api/status 回显），供"合并式"操作补齐
+let acState = { power: false, mode: 'auto', temperature: 26, fan: 'auto',
+                swing_ud: false, swing_lr: false };
+
 // 页面实例标识 + 单调命令序号：服务端据此识别「迟到的旧命令」并丢弃，
 // 防止弱网下请求乱序到达（例如先关后开两请求颠倒 → 风扇关了又自己开）。
 // 每个标签页/每次加载都是新实例，互不影响；序号只在本实例内比较。
@@ -417,6 +421,19 @@ function updateDashboard(data) {
     if (data.statistics) {
         updateStats(data.statistics);
     }
+
+    // 空调（美的红外）：回写最近状态，供「房间与设备」页"合并式"操作补齐
+    acState = {
+        power: data.ac_status === 'on',
+        mode: data.ac_mode || 'auto',
+        temperature: Number(data.ac_temperature) || 26,
+        fan: data.ac_fan || 'auto',
+        swing_ud: !!data.ac_swing_ud,
+        swing_lr: !!data.ac_swing_lr,
+    };
+
+    // 广播一次状态，供首页房间示意、房间与设备页等增量模块复用同一份数据（不再单独轮询）
+    document.dispatchEvent(new CustomEvent('status:update', { detail: data }));
 }
 
 // ==================== 硬件回读一致性指示器 ====================
@@ -653,6 +670,35 @@ const postFanDebounced = debounce(async (speed) => {
 function setFan(speed) {
     postFanDebounced(Number(speed) || 0);
 }
+
+// 兼容旧调用：首页「常用设备」、房间与设备页用 setLight(status, brightness) 表达
+// 「开关 + 亮度」，内部收敛到上游的 setLightBrightness / turnLightOff。
+function setLight(status, brightness) {
+    brightness = Number(brightness) || 0;
+    if (status === 'off' || brightness <= 0) { turnLightOff(); return; }
+    setLightBrightness(brightness);
+}
+
+// ==================== 空调（美的红外）====================
+// 空调每条指令都会带上完整状态（红外一帧就含开关/模式/温度/风速），
+// 所以这里只传变化项，由后端按库里当前值补齐后整帧下发。
+
+async function setAC(partial) {
+    const body = { ...partial };
+    // 未开机时改模式/温度/风速 → 自动带开机，避免"设置被忽略"这种哑路径
+    if (body.power === undefined && !acState.power) body.power = true;
+    const result = await apiPost('/api/ac', body);
+    if (result) {
+        showNotification(getMessage(result));
+        loadStatus();
+    }
+}
+
+function toggleAC() { setAC({ power: !acState.power }); }
+function setACMode(mode) { setAC({ mode }); }
+function setACTemp(value) { setAC({ temperature: Number(value) }); }
+function setACFan(fan) { setAC({ fan }); }
+function toggleACOption(key) { setAC({ [key]: !acState[key] }); }
 
 // 离开页面时取消未发出的执行器指令（风扇/灯光）。防抖窗口内的调用若在切页后
 // 才落地，就等于「用户已经不在这个页面，硬件却动了」——这正是"进别的页面风扇

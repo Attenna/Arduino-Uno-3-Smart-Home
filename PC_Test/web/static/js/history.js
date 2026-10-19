@@ -60,13 +60,13 @@ function initHistoryChart() {
             datasets: [{
                 label: '温度',
                 data: [],
-                borderColor: '#00e5ff',
-                backgroundColor: 'rgba(0, 229, 255, 0.1)',
+                borderColor: '#a9743f',
+                backgroundColor: 'rgba(169, 116, 63, 0.1)',
                 borderWidth: 2,
                 fill: true,
                 tension: 0.4,
                 pointRadius: 2,
-                pointBackgroundColor: '#00e5ff'
+                pointBackgroundColor: '#a9743f'
             }]
         },
         options: {
@@ -75,17 +75,17 @@ function initHistoryChart() {
             plugins: {
                 legend: {
                     labels: {
-                        color: '#8ba4b8',
+                        color: '#7d7264',
                         font: { size: 12 },
                         usePointStyle: true
                     }
                 },
                 tooltip: {
-                    backgroundColor: 'rgba(15, 25, 35, 0.9)',
-                    borderColor: '#2a4a5e',
+                    backgroundColor: 'rgba(255, 251, 238, 0.97)',
+                    borderColor: '#eedcb0',
                     borderWidth: 1,
-                    titleColor: '#e8f0f8',
-                    bodyColor: '#8ba4b8',
+                    titleColor: '#39362f',
+                    bodyColor: '#7d7264',
                     padding: 12,
                     callbacks: {
                         // 光照视图在提示里补「亮/暗」，让每个数据点都自带标注
@@ -101,12 +101,12 @@ function initHistoryChart() {
             },
             scales: {
                 x: {
-                    ticks: { color: '#5a7a8e', maxTicksLimit: 12, font: { size: 10 } },
-                    grid: { color: 'rgba(42, 74, 94, 0.3)' }
+                    ticks: { color: '#b0a390', maxTicksLimit: 12, font: { size: 10 } },
+                    grid: { color: 'rgba(184, 165, 138, 0.25)' }
                 },
                 y: {
-                    ticks: { color: '#5a7a8e', font: { size: 10 } },
-                    grid: { color: 'rgba(42, 74, 94, 0.3)' }
+                    ticks: { color: '#b0a390', font: { size: 10 } },
+                    grid: { color: 'rgba(184, 165, 138, 0.25)' }
                 }
             }
         }
@@ -146,23 +146,23 @@ async function loadHistory() {
     let data = [];
     let title = '';
     let chartLabel = '';
-    let chartColor = '#00e5ff';
-    let chartBgColor = 'rgba(0, 229, 255, 0.1)';
+    let chartColor = '#a9743f';
+    let chartBgColor = 'rgba(169, 116, 63, 0.1)';
     
     switch (dataType) {
         case 'temperature':
             data = await apiGet(`/api/temperature?hours=${hours}`);
             title = t('chart.temp_history');
             chartLabel = t('chart.temp');
-            chartColor = '#00e5ff';
-            chartBgColor = 'rgba(0, 229, 255, 0.1)';
+            chartColor = '#a9743f';
+            chartBgColor = 'rgba(169, 116, 63, 0.1)';
             break;
         case 'humidity':
             data = await apiGet(`/api/temperature?hours=${hours}`);
             title = t('chart.humidity_history');
             chartLabel = t('chart.humidity');
-            chartColor = '#00b4d8';
-            chartBgColor = 'rgba(0, 180, 216, 0.1)';
+            chartColor = '#476044';
+            chartBgColor = 'rgba(71, 96, 68, 0.1)';
             break;
         case 'light_level':
             data = await apiGet(`/api/light-level/history?hours=${hours}`);
@@ -175,15 +175,15 @@ async function loadHistory() {
             data = await apiGet(`/api/door_window/history?hours=${hours}`);
             title = t('chart.door_history');
             chartLabel = t('chart.door_status');
-            chartColor = '#00e676';
-            chartBgColor = 'rgba(0, 230, 118, 0.1)';
+            chartColor = '#4f6b48';
+            chartBgColor = 'rgba(79, 107, 72, 0.1)';
             break;
         case 'light':
             data = await apiGet(`/api/light/history?hours=${hours}`);
             title = t('chart.light_history');
             chartLabel = t('chart.light_brightness');
-            chartColor = '#ffea00';
-            chartBgColor = 'rgba(255, 234, 0, 0.1)';
+            chartColor = '#c08a4a';
+            chartBgColor = 'rgba(169, 116, 63, 0.1)';
             break;
     }
     

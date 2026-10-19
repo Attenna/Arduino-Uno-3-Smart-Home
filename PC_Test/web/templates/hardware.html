@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title data-i18n="system.title">智能家居控制系统</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=20261006b">
     <script src="{{ url_for('static', filename='vendor/chart/chart.umd.min.js') }}"></script>
 </head>
 <body>
@@ -19,11 +19,13 @@
         </div>
         <div class="nav-links">
             <a href="/" class="nav-link"><span data-i18n="nav.dashboard">仪表盘</span></a>
+            <a href="/rooms" class="nav-link"><span data-i18n="nav.rooms">房间与设备</span></a>
             <a href="/history" class="nav-link"><span data-i18n="nav.history">历史数据</span></a>
             <a href="/access" class="nav-link"><span data-i18n="nav.access">门禁管理</span></a>
             <a href="/hardware" class="nav-link active"><span data-i18n="nav.hardware">硬件管理</span></a>
             <a href="/voice" class="nav-link"><span data-i18n="nav.voice">语音助手</span></a>
             <a href="/automation" class="nav-link"><span data-i18n="nav.automation">自动化</span></a>
+            <a href="/settings" class="nav-link"><span data-i18n="nav.settings">家庭设置</span></a>
         </div>
         <div class="nav-status">
             <span class="status-dot online"></span>
@@ -47,7 +49,7 @@
         <div class="card">
             <div class="card-header">
                 <h3 data-i18n="ha.config_title">Home Assistant 连接配置</h3>
-                <span class="ha-status-badge" id="haStatus">未连接</span>
+                <span class="ha-status-badge" id="haStatus" data-i18n="ha.status_offline">未连接</span>
             </div>
             <div class="card-body">
                 <div class="form-row">
@@ -164,7 +166,7 @@
         </div>
     </main>
 
-    <script src="{{ url_for('static', filename='js/lang.js') }}?v=20261003e"></script>
-    <script src="{{ url_for('static', filename='js/hardware.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/lang.js') }}?v=20261004c"></script>
+    <script src="{{ url_for('static', filename='js/hardware.js') }}?v=20261002m"></script>
 </body>
 </html>
