@@ -659,7 +659,7 @@ function setFan(speed) {
 // 自己启动"最像的一条路径。pagehide 比 unload 可靠（移动端后台/页面恢复都触发）。
 window.addEventListener('pagehide', () => {
     postFanDebounced.cancel();
-    postLightDebounced.cancel();
+    sendLightDebounced.cancel();
 });
 
 // 远程控制面板：light_on/off、fan_on/off、door_open/close、ac_on/off
