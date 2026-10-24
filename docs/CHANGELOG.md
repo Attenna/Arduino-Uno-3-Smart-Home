@@ -2,6 +2,40 @@
 
 记录对系统行为 / 接口有影响的变更。新条目置于顶部。
 
+## 2026-10-20 · 修复：离开页面时取消灯光指令的调用对象写错
+
+分支：`fix/light-debounce-cancel`。无对应 Issue（在做 Web UI 改版的回归排查时发现）。
+
+### 现象与根因
+仪表盘页面加载/离开时，浏览器控制台必然报
+`TypeError: postLightDebounced.cancel is not a function`。
+
+`PC_Test/web/static/js/main.js` 的 `pagehide` 回调本意是「离开页面时取消尚未发出的
+风扇/灯光指令」（防抖窗口内的调用若在切页后才落地，就会出现「人已经切走、硬件却动了」）。
+回调里写的是 `postLightDebounced.cancel()`，但：
+
+- `postLightDebounced` 是**普通函数**（内部转调防抖的 `sendLightDebounced`），身上没有 `.cancel`；
+- 真正被 `debounce()` 包装、带 `.cancel` 的是 `sendLightDebounced`。
+
+于是该行必然抛异常，且**灯光的待发指令实际并未被取消**（与注释声明的意图不符）。
+
+### 变更
+- `PC_Test/web/static/js/main.js`：`pagehide` 回调里 `postLightDebounced.cancel()` 改为
+  `sendLightDebounced.cancel()`。修复后回调恢复本意：真正取消待发出的灯光指令，且不再抛异常。
+
+### 影响与迁移
+- 仅一个 JS 标识符；不改接口、数据结构、串口协议、Docker 编排，无需迁移。
+- 行为差异只在「离开页面」这一瞬间：修复前灯光待发指令不会被取消（可能延迟落地），
+  修复后按注释描述被取消。风扇侧 `postFanDebounced.cancel()` 本就是防抖函数，未改动。
+
+### 验收
+- 静态：`main.js` 内不再有对普通函数调用 `.cancel`；`sendLightDebounced` 确为
+  `debounce()` 包装（`const sendLightDebounced = debounce(...)`）。
+- 单测：`python -m unittest discover -s PC_Test/tests -v` → 157 项、**0 failure**
+  （13 个 error 为本机缺 `mcp` / `numpy` 等可选依赖的导入失败，与本次改动无关）。
+- 运行时：修复分支以 `--no-serial` 启动，登录正常、`/` 正常返回；
+  `/static/js/main.js` 已含 `sendLightDebounced.cancel()`、不含 `postLightDebounced.cancel()`。
+
 ## 2026-10-11 · 修复：含 g: 全局状态条件的规则无法通过页面保存（#102）
 
 分支：`fix/102-global-state-source-validation`。Issue：#102。
