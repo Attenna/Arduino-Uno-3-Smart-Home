@@ -2,50 +2,12 @@
 // 通过 web 同源代理调用语音助手 HTTP 口（/api/voice/*），不跨端口直连。
 
 let voiceTimer = null;
-let liveES = null;
-
-const LIVE_STATE = {
-    IDLE: '待唤醒', ACK: '提示音中', COMMAND: '聆听指令',
-    THINKING: '处理中', FOLLOWUP: '可追问',
-};
-const STATE_DETAIL = {
-    IDLE: '等待唤醒词，或点击“唤醒并说话”。',
-    ACK: '正在处理唤醒提示，此时尚未监听。',
-    COMMAND: '麦克风正在监听，请开始说话。',
-    THINKING: '正在识别或调用模型，麦克风已关闭。',
-    FOLLOWUP: '回答已经结束，可直接继续追问。',
-};
-
-function paintVoiceState(state, label, info = null) {
-    const resolved = label || LIVE_STATE[state] || state || '离线';
-    const badge = document.getElementById('voiceStateBadge');
-    const text = document.getElementById('voiceStateText');
-    const detail = document.getElementById('voiceStateDetail');
-    if (badge) {
-        badge.textContent = resolved;
-        badge.className = 'card-badge'
-            + (state ? (state === 'IDLE' ? '' : ' warning') : ' danger');
-    }
-    if (text) text.textContent = resolved;
-    if (detail) detail.textContent = STATE_DETAIL[state] || '语音服务当前不可用。';
-    document.querySelectorAll('#voiceStateFlow [data-state]').forEach((step) => {
-        step.classList.toggle('active', step.dataset.state === state);
-    });
-    if (info) {
-        const runtime = document.getElementById('voiceRuntimeInfo');
-        if (runtime) {
-            runtime.textContent = [info.audio_output, info.context]
-                .filter(Boolean).join(' · ');
-        }
-    }
-}
 
 document.addEventListener('DOMContentLoaded', () => {
     updateClock();
     setInterval(updateClock, 1000);
     refreshVoiceStatus();
     voiceTimer = setInterval(refreshVoiceStatus, 3000);
-    connectLive();
 });
 
 function updateClock() {
@@ -74,6 +36,18 @@ function setVoiceError(msg) {
     }
 }
 
+// 后端 state_label 为中文，前端按当前语言本地化（离线/待唤醒/聆听指令中…）
+function voiceStateLabel(data) {
+    if (!data.online) return t('voice.state_offline');
+    const map = {
+        IDLE: 'voice.state_idle',
+        COMMAND: 'voice.state_command',
+        THINKING: 'voice.state_thinking',
+        FOLLOWUP: 'voice.state_followup',
+    };
+    return t(map[data.state] || 'voice.state_unknown');
+}
+
 // ==================== 状态轮询 ====================
 async function refreshVoiceStatus() {
     let data = null;
@@ -85,10 +59,18 @@ async function refreshVoiceStatus() {
     }
     const dot = document.getElementById('voiceDot');
     const nav = document.getElementById('voiceNavText');
+    const badge = document.getElementById('voiceStateBadge');
+    const text = document.getElementById('voiceStateText');
+    const label = voiceStateLabel(data);
+
     if (dot) dot.className = 'status-dot' + (data.online ? ' online' : '');
     if (nav) nav.textContent = data.online ? t('voice.online') : t('voice.offline');
-    paintVoiceState(data.online ? data.state : null,
-        data.online ? data.state_label : '离线', data.info || null);
+    if (badge) {
+        badge.textContent = label;
+        badge.className = 'card-badge'
+            + (data.online ? (data.state === 'IDLE' ? '' : ' warning') : ' danger');
+    }
+    if (text) text.textContent = label;
     setVoiceError(data.online ? '' : (data.error || ''));
 }
 
@@ -139,112 +121,4 @@ async function sayVoice() {
         showNotification(String(e), 'error');
     }
     refreshVoiceStatus();
-}
-
-// ==================== 对话实况（SSE，同源 /api/voice/events）====================
-let liveCurBot = null;   // 当前正在流式追加的助手气泡节点
-
-function liveBadge(text, cls) {
-    const b = document.getElementById('liveBadge');
-    if (!b) return;
-    b.textContent = text;
-    b.className = 'card-badge' + (cls ? ' ' + cls : '');
-}
-
-function addLive(cls, text) {
-    const log = document.getElementById('liveLog');
-    const partial = document.getElementById('livePartial');
-    if (!log) return null;
-    const d = document.createElement('div');
-    d.className = cls;
-    d.textContent = text;
-    log.insertBefore(d, partial);   // 始终插在识别中占位行之前
-    log.scrollTop = log.scrollHeight;
-    return d;
-}
-
-function setLivePartial(text) {
-    const p = document.getElementById('livePartial');
-    if (!p) return;
-    p.textContent = text || '';
-    p.style.display = text ? 'block' : 'none';
-}
-
-// 处理一条事件（hello.history 里的历史事件也走这里，实现补发/重连对齐）
-function renderLive(e) {
-    switch (e.type) {
-        case 'partial':
-            setLivePartial(e.text);
-            break;
-        case 'speech_start':
-            setLivePartial('已检测到讲话，正在等待你说完…');
-            break;
-        case 'user':
-            setLivePartial('');
-            liveCurBot = null;
-            addLive('lv-user', e.text);
-            break;
-        case 'delta':
-            setLivePartial('');
-            if (!liveCurBot) liveCurBot = addLive('lv-bot', '');
-            liveCurBot.textContent += e.text;
-            document.getElementById('liveLog').scrollTop =
-                document.getElementById('liveLog').scrollHeight;
-            break;
-        case 'turn_end':
-            liveCurBot = null;
-            if (e.cancelled) addLive('lv-sys', '上一轮已取消，不会写入上下文。');
-            break;
-        case 'tool': {
-            const args = JSON.stringify(e.arguments || {});
-            const head = (e.ok ? '✓ ' : '✗ ') + e.name + ' ' + args;
-            addLive('lv-tool ' + (e.ok ? 'ok' : 'err'),
-                e.result ? head + '\n   → ' + e.result : head);
-            break;
-        }
-        case 'system':
-            addLive('lv-sys', e.text);
-            break;
-        default:
-            break;
-    }
-}
-
-// state 事件：既刷新实况徽标，也同步主状态徽标/导航点（与轮询一致）
-function applyLiveState(state) {
-    const label = LIVE_STATE[state] || state || '离线';
-    paintVoiceState(state, label);
-}
-
-function handleLive(e) {
-    if (e.type === 'hello') {
-        liveBadge(t('voice.live_conn'), '');
-        paintVoiceState(e.state, LIVE_STATE[e.state], e.info || null);
-        for (const h of (e.history || [])) renderLive(h);
-        return;
-    }
-    if (e.type === 'state') {
-        applyLiveState(e.state);
-        return;
-    }
-    renderLive(e);
-}
-
-function connectLive() {
-    if (liveES) { try { liveES.close(); } catch (e) {} liveES = null; }
-    if (typeof EventSource === 'undefined') {
-        liveBadge(t('voice.live_na'), 'danger');
-        return;
-    }
-    liveES = new EventSource('/api/voice/events');
-    liveES.onopen = () => liveBadge(t('voice.live_conn'), 'success');
-    liveES.onmessage = (m) => {
-        let e = null;
-        try { e = JSON.parse(m.data); } catch (err) { return; }
-        handleLive(e);
-    };
-    liveES.onerror = () => {
-        liveBadge(t('voice.live_reconnect'), 'warning');
-        // EventSource 会自动重连；这里只标注状态，交给浏览器重试
-    };
 }
