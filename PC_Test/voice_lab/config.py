@@ -91,6 +91,24 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "command_timeout": 8.0,
         "max_utterance_seconds": 15.0,
     },
+    "wake": {
+        "enabled": False,
+        "kws": {
+            "model_dir": "models/sherpa/kws",
+            "keywords_file": "models/sherpa/kws/keywords.txt",
+            "keywords_score": 1.5,
+            "keywords_threshold": 0.25,
+            "num_threads": 2,
+        },
+        "ack": "chirp",
+        "chirp_freq": 880,
+        "chirp_ms": 120,
+        "command_timeout": 8.0,
+        "followup_timeout": 8.0,
+        "max_utterance_seconds": 15.0,
+        # True barge-in needs AEC; keep false for the half-duplex demo.
+        "barge_in": False,
+    },
     "server": {"host": "127.0.0.1", "port": 8110},
     "audio": {
         "sample_rate": 16000,
@@ -98,6 +116,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "record_seconds": 6.0,
         "silence_seconds": 0.8,
         "energy_threshold": 0.012,
+        "min_speech_seconds": 0.2,
     },
 }
 
@@ -126,8 +145,8 @@ def load_config(path: Optional[str] = None, overrides: Optional[dict] = None) ->
     if overrides:
         _merge(cfg, overrides)
     # Resolve file-system paths against PC_Test so the CLI works from any cwd.
-    for key in ("model_dir", "download_root", "model_path", "cache_dir"):
-        for section in ("asr", "llm", "tts"):
+    for key in ("model_dir", "download_root", "model_path", "cache_dir", "keywords_file"):
+        for section in ("asr", "llm", "tts", "wake"):
             sub = cfg.get(section, {})
             if isinstance(sub.get(key), str):
                 sub[key] = _resolve(sub[key])

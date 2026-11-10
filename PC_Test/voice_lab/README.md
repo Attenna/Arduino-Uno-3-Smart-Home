@@ -62,6 +62,8 @@
    延迟指标记录「首音」而不是「整段合成完」。
 5. **工具执行在内存里**：`MockHome` 与真实网关语义一致（灯/风扇/门/空调/场景/传感器），
    但没有串口依赖，单元测试可完全离线。
+6. **连续模式是半双工**：KWS 唤醒 + VAD 端点 + 状态机；SPEAKING 关麦防自听，
+   手动打断停 TTS；真 AEC 未实现，边界写在 README/报告里。
 
 ## 2. 目录
 
@@ -73,6 +75,7 @@ PC_Test/voice_lab/
 ├─ tts.py               # edge-tts / Sherpa VITS / CosyVoice2 + 流式播放
 ├─ tools.py             # 6 个工具 schema + MockHome
 ├─ dialog.py            # 一轮对话编排 + 延迟分解
+├─ conversation.py      # KWS 唤醒 + VAD + 半双工状态机
 ├─ app.py               # CLI + Flask Web 演示
 ├─ cases.py             # 31 个评测用例（27 单轮 + 4 多轮）
 ├─ make_dataset.py      # edge-tts 生成可复现 ASR 测试集
@@ -130,6 +133,10 @@ python -m voice_lab.app --mic
 python -m voice_lab.app --serve --warmup
 # 浏览器打开 http://127.0.0.1:8110/
 
+# 连续语音：Hey Bota 唤醒 + VAD 端点 + 半双工状态机
+python -m voice_lab.app --wake --warmup
+python -m voice_lab.app --serve --warmup --wake   # Web 上点“连续语音”
+
 # 纯 LLM（不用规则快路径）
 python -m voice_lab.app --llm llama_cpp --text "我有点热，帮我把空调调低一点"
 
@@ -140,6 +147,37 @@ python -m voice_lab.app --tts edge --no-play --text "打开风扇"
 # 自检（不加载模型）
 python -m voice_lab.app --self-check
 ```
+
+### 4.1 连续语音模式（KWS + VAD + 半双工）
+
+不启用 `--wake` 时仍是“按一下录一句”。启用后：
+
+```text
+IDLE ──Hey Bota/回车/HTTP──▶ WAKING ──滴声──▶ LISTENING
+                                                │ VAD 端点
+                                                ▼
+                                            THINKING
+                                                │ 第一句 TTS
+                                                ▼
+                                            SPEAKING
+                                                │ TTS 播完
+                                                ▼
+                                            FOLLOWUP ──超时──▶ IDLE
+                                                │ 检测到追问
+                                                └──────────▶ LISTENING
+```
+
+- **唤醒词**：Sherpa-ONNX KWS，默认 `Hey Bota`（`models/sherpa/kws`）；也可用回车、
+  `POST /api/conversation/wake` 或网页“唤醒”按钮。
+- **VAD**：能量阈值 + 最短语音 + 尾静音（默认 0.8 s）+ 最长句保护（15 s），
+  带 300 ms 前置缓冲，端点后自动提交。
+- **半双工**：`THINKING/SPEAKING` 期间**主动忽略麦克风**，所以 TTS 不会被识别成用户；
+  `FOLLOWUP` 只有 TTS 播完后才重新开麦，避免自问自答。
+- **打断**：`SPEAKING/THINKING` 时按 `i`（CLI）、网页“打断”或
+  `POST /api/conversation/interrupt` 会 `engine.cancel()`：停 TTS、回到 LISTENING。
+- **AEC 边界**：浏览器录音已启用 `echoCancellation:true`；服务端麦克风只做半双工，
+  **没有实现真正的 WebRTC/Speex AEC**。要边播边听/自然打断，需要 AEC + 双工状态机，
+  本次不假装实现，见 `docs/voice-lab.md`。
 
 ## 5. 评测
 
@@ -186,6 +224,11 @@ python -m voice_lab.eval --all --asr-backends sherpa,whisper
 | GET | `/api/info` | 后端、模型是否就绪、设备状态、历史轮数 |
 | POST | `/api/text` | `{"text":"...","speak":true}`，返回完整 `TurnResult` |
 | POST | `/api/audio` | multipart `file`（WebM/Opus、WAV、MP3），返回 ASR + 对话 |
+| GET | `/api/conversation/state` | 连续模式状态、最近事件、最后一次结果 |
+| POST | `/api/conversation/start` | 启动服务端麦克风的连续模式 |
+| POST | `/api/conversation/wake` | 手动唤醒（等价于 Hey Bota） |
+| POST | `/api/conversation/interrupt` | 打断当前 THINKING/SPEAKING，回到 LISTENING |
+| POST | `/api/conversation/stop` | 停止连续模式 |
 | POST | `/api/reset` | 重置 mock 设备与对话历史 |
 | GET | `/api/health` | 健康检查 |
 
@@ -202,7 +245,9 @@ python -m voice_lab.eval --all --asr-backends sherpa,whisper
 - **CosyVoice2 适配器未做真实 API 验证**：仓库当前没有可用的 SiliconFlow Key；
   配好 `tts.cosyvoice.api_key` 后可用，接口按 OpenAI `/audio/speech` 风格实现。
 - **测试集是 TTS 合成音**，不是真人录音；CER 绝对值会偏乐观，适合做引擎之间的相对比较。
-- 不涉及唤醒词、回声消除、远场麦克风阵列；这些属于产品化问题，不是本次实验目标。
+- **半双工已实现，真 AEC 未实现**：`SPEAKING` 期间关麦，避免自听；手动打断可用。
+  真正的“边播边听/自然 barge-in”需要 WebRTC/Speex AEC + 双工状态机，属于后续工作。
+- 唤醒词是声学 KWS（`Hey Bota`），不是任意语音唤醒；远场/噪声下的唤醒率未做系统评测。
 
 ## 8. 与现有语音助手的关系
 

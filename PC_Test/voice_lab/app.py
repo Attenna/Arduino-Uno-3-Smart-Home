@@ -21,6 +21,7 @@ import uuid
 from typing import Any, Optional
 
 from .config import PC_TEST_DIR, VOICE_LAB_DIR, default_config_path, load_config
+from .conversation import ConversationController
 from .dialog import DialogEngine, make_engine
 
 OUTPUT_DIR = os.path.join(VOICE_LAB_DIR, "output")
@@ -72,6 +73,61 @@ def _self_check(cfg: dict) -> int:
     except Exception as exc:
         print(f"  初始化失败: {exc}")
         return 1
+
+
+def _wake_event_printer(event: dict) -> None:
+    kind = event.get("type")
+    if kind == "state":
+        print(f"[状态] {event.get('state')}", flush=True)
+    elif kind == "wake":
+        print(f"[唤醒] {event.get('text')}", flush=True)
+    elif kind == "turn_start":
+        print(f"[录音] {event.get('duration_s', 0):.1f} s", flush=True)
+    elif kind == "interrupt":
+        print(f"[打断] {event.get('text')}", flush=True)
+    elif kind == "timeout":
+        print("[超时] 回到待唤醒", flush=True)
+    elif kind == "error":
+        print(f"[错误/{event.get('stage')}] {event.get('text')}", flush=True)
+    elif kind == "result":
+        if event.get("asr"):
+            print(f"[ASR] {event['asr'].get('text')}  "
+                  f"({event['asr'].get('latency_ms', 0):.0f} ms)", flush=True)
+        print(f"[用户] {event.get('user_text')}")
+        for tool in event.get("tool_calls") or []:
+            print(f"  {'✓' if tool.get('ok') else '✗'} {tool.get('name')}"
+                  f"({json.dumps(tool.get('arguments'), ensure_ascii=False)}) → {tool.get('text')}")
+        print(f"[助手] {event.get('reply')}")
+        timing = event.get("timing") or {}
+        print(f"[延迟] ASR {timing.get('asr_ms', 0):.0f} ms | "
+              f"LLM {timing.get('llm_total_ms', 0):.0f} ms | "
+              f"首音 {timing.get('tts_first_audio_ms', 0):.0f} ms | "
+              f"整轮 {timing.get('total_ms', 0):.0f} ms", flush=True)
+
+
+def _run_wake(engine: DialogEngine, cfg: dict) -> int:
+    controller = ConversationController(engine, cfg, on_event=_wake_event_printer)
+    print("连续语音模式：说「Hey Bota」唤醒；输入回车手动唤醒，i+回车打断，q+回车退出。")
+    if controller.kws is None:
+        print(f"  KWS 不可用（{controller.kws_error}），仍可用回车/HTTP 手动唤醒。")
+    else:
+        print(f"  KWS 就绪：{', '.join(controller.kws.keywords) or '（关键词表为空）'}")
+
+    def stdin_loop():
+        for line in sys.stdin:
+            command = line.strip().lower()
+            if command in ("q", "quit", "exit"):
+                controller.stop()
+                break
+            if command in ("i", "interrupt", "打断"):
+                controller.interrupt()
+            else:
+                controller.wake()
+
+    import threading
+    threading.Thread(target=stdin_loop, daemon=True, name="wake-stdin").start()
+    controller.run_forever()
+    return 0
 
 
 def _record_and_turn(engine: DialogEngine, cfg: dict, args) -> int:
@@ -159,6 +215,10 @@ button:disabled{opacity:.45;cursor:wait}
   <span class="pill">ASR <b id="asrPill">--</b></span>
   <span class="pill">LLM <b id="llmPill">--</b></span>
   <span class="pill">TTS <b id="ttsPill">--</b></span>
+  <span class="pill">连续 <b id="convState">未启动</b></span>
+  <button id="convStart" style="font-size:12px;padding:6px 10px">连续语音</button>
+  <button id="convWake" style="font-size:12px;padding:6px 10px">唤醒</button>
+  <button id="convStop" style="font-size:12px;padding:6px 10px">打断</button>
   <span style="flex:1"></span>
   <label class="pill" style="cursor:pointer"><input type="checkbox" id="speak" checked> 语音播报</label>
   <button id="reset" style="font-size:12px;padding:6px 12px">重置</button>
@@ -229,7 +289,7 @@ for(const b of document.querySelectorAll('.examples button'))b.onclick=()=>turnT
 $('reset').onclick=async()=>{try{await api('/api/reset',{method:'POST'}); log.innerHTML=''; sys('已重置。'); renderDevices(null); $('lat').innerHTML='<div class="small">完成一轮后显示。</div>';}catch(e){err.textContent=String(e)}};
 async function toggleMic(){if(busy)return;
   if(recorder && recorder.state==='recording'){recorder.stop(); return;}
-  try{const stream=await navigator.mediaDevices.getUserMedia({audio:true});
+  try{const stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true}});
     chunks=[]; recorder=new MediaRecorder(stream,{mimeType:MediaRecorder.isTypeSupported('audio/webm;codecs=opus')?'audio/webm;codecs=opus':'audio/webm'});
     recorder.ondataavailable=e=>{if(e.data.size)chunks.push(e.data)};
     recorder.onstop=async()=>{stream.getTracks().forEach(t=>t.stop()); $('mic').classList.remove('rec');
@@ -246,6 +306,46 @@ async function uploadAudio(blob){err.textContent=''; setBusy(true); sys('录音�
     if(j.error)add('sys','错误：'+j.error); renderTiming(j.timing); renderDevices(j.state);
   }catch(e){err.textContent=String(e); add('sys','请求失败：'+e);}
   finally{setBusy(false);}}
+let convSeen=0, convReady=false;
+const CONV_TONE={IDLE:'var(--dim)',WAKING:'var(--amber)',LISTENING:'var(--blue)',
+  THINKING:'var(--amber)',SPEAKING:'var(--green)',FOLLOWUP:'var(--purple)'};
+function setConvState(s){$('convState').textContent=s||'IDLE';
+  $('convState').style.color=CONV_TONE[s]||'var(--txt)';}
+function renderConvEvent(e){
+  if(e.seq && e.seq<=convSeen)return; if(e.seq)convSeen=e.seq;
+  switch(e.type){
+    case 'state':setConvState(e.state);break;
+    case 'wake':sys('唤醒：'+(e.text||''));break;
+    case 'turn_start':sys('录音 '+(e.duration_s||0).toFixed(1)+' s，识别中…');break;
+    case 'interrupt':sys(e.text||'已打断');break;
+    case 'timeout':sys('等待超时，回到待唤醒');break;
+    case 'error':add('sys','错误：'+(e.text||''));break;
+    case 'result':
+      if(e.asr)sys('识别：'+e.asr.text);
+      if(e.user_text)add('user',e.user_text);
+      for(const t of (e.tool_calls||[]))tool(t);
+      if(e.reply)add('bot',e.reply);
+      renderTiming(e.timing);renderDevices(e.state);break;
+  }
+}
+async function pollConv(){
+  try{const j=await api('/api/conversation/state');
+    setConvState(j.state);
+    if(!convReady){convReady=true;convSeen=Math.max(0,...(j.events||[]).map(e=>e.seq||0));
+      if(j.running)sys('连续语音已连接（服务端麦克风）');return;}
+    for(const e of (j.events||[]))renderConvEvent(e);
+  }catch(e){}
+}
+async function convAction(path){
+  try{const j=await api(path,{method:'POST'});setConvState(j.state);
+    if(path.endsWith('/start'))sys(j.started?'连续语音已启动：说 Hey Bota，或点“唤醒”':'连续语音已在运行');
+  }catch(e){err.textContent=String(e);}
+}
+$('convStart').onclick=()=>convAction('/api/conversation/start');
+$('convWake').onclick=()=>convAction('/api/conversation/wake');
+$('convStop').onclick=()=>convAction('/api/conversation/interrupt');
+setInterval(pollConv,800);
+pollConv();
 async function boot(){try{const j=await api('/api/info');
   $('asrPill').textContent=j.asr; $('llmPill').textContent=j.llm; $('ttsPill').textContent=j.tts;
   $('devices').textContent=j.state;
@@ -255,11 +355,19 @@ boot();
 </script></body></html>"""
 
 
-def create_app(engine: DialogEngine):
+def create_app(engine: DialogEngine, controller: Optional[ConversationController] = None):
     from flask import Flask, jsonify, request, send_from_directory
 
     app = Flask(__name__)
     app.config["MAX_CONTENT_LENGTH"] = 24 * 1024 * 1024
+    app.config["VOICE_CONTROLLER"] = controller
+
+    def get_controller() -> ConversationController:
+        current = app.config.get("VOICE_CONTROLLER")
+        if current is None:
+            current = ConversationController(engine, engine.cfg)
+            app.config["VOICE_CONTROLLER"] = current
+        return current
 
     @app.get("/")
     def index():
@@ -315,6 +423,42 @@ def create_app(engine: DialogEngine):
         engine.reset()
         return jsonify({"ok": True, "state": engine.home.snapshot()})
 
+    @app.get("/api/conversation/state")
+    def conversation_state():
+        current = app.config.get("VOICE_CONTROLLER")
+        if current is None:
+            return jsonify({"state": "IDLE", "running": False, "kws": False,
+                            "kws_error": "", "events": [], "last_result": None})
+        return jsonify(current.snapshot())
+
+    @app.post("/api/conversation/start")
+    def conversation_start():
+        current = get_controller()
+        started = current.start()
+        return jsonify({"ok": True, "started": started, **current.snapshot()})
+
+    @app.post("/api/conversation/stop")
+    def conversation_stop():
+        current = app.config.get("VOICE_CONTROLLER")
+        if current is not None:
+            current.stop()
+        return jsonify({"ok": True, "running": False, "state": "IDLE"})
+
+    @app.post("/api/conversation/wake")
+    def conversation_wake():
+        current = get_controller()
+        if not current.running:
+            current.start()
+        current.wake()
+        return jsonify({"ok": True, "state": current.state.value})
+
+    @app.post("/api/conversation/interrupt")
+    def conversation_interrupt():
+        current = app.config.get("VOICE_CONTROLLER")
+        if current is not None:
+            current.interrupt()
+        return jsonify({"ok": True, "state": current.state.value if current else "IDLE"})
+
     @app.get("/audio/<path:name>")
     def audio(name: str):
         return send_from_directory(os.path.join(VOICE_LAB_DIR, "output"), name)
@@ -328,6 +472,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--text", help="文本指令（跳过 ASR）")
     parser.add_argument("--wav", help="WAV/MP3/WebM 文件（走 ASR）")
     parser.add_argument("--mic", action="store_true", help="从默认麦克风录一句")
+    parser.add_argument("--wake", action="store_true",
+                        help="连续语音模式：Hey Bota 唤醒 + VAD 端点 + 半双工状态机")
     parser.add_argument("--serve", action="store_true", help="启动本地 Web 演示")
     parser.add_argument("--self-check", action="store_true", help="检查模型/设备，不加载模型")
     parser.add_argument("--warmup", action="store_true", help="启动时预加载 ASR/LLM/TTS 权重")
@@ -356,18 +502,34 @@ def main(argv: Optional[list[str]] = None) -> int:
         print(list_devices())
         return 0
     if args.serve:
-        from flask import Flask
         engine = DialogEngine(cfg, play_tts=not args.no_play, tts_enabled=not args.no_tts)
         if args.warmup:
             print("preloading models ...", flush=True)
             print("  " + json.dumps(engine.preload(), ensure_ascii=False), flush=True)
-        app = create_app(engine)
+        controller = None
+        if args.wake:
+            controller = ConversationController(engine, cfg)
+            if controller.start():
+                print("  continuous voice: on (click 连续语音 / say Hey Bota)", flush=True)
+            else:
+                print("  continuous voice: failed to start microphone", flush=True)
+        app = create_app(engine, controller=controller)
         host = args.host or cfg["server"]["host"]
         port = int(args.port or cfg["server"]["port"])
         print(f"Voice Lab: http://{host}:{port}/")
         print(f"  ASR={engine.asr.backend}  LLM={engine.llm.backend}  TTS={engine.tts.backend}")
-        app.run(host=host, port=port, threaded=True, debug=False)
+        try:
+            app.run(host=host, port=port, threaded=True, debug=False)
+        finally:
+            if controller is not None:
+                controller.stop()
         return 0
+    if args.wake:
+        engine = DialogEngine(cfg, play_tts=not args.no_play, tts_enabled=not args.no_tts)
+        if args.warmup:
+            print("preloading models ...", flush=True)
+            print("  " + json.dumps(engine.preload(), ensure_ascii=False), flush=True)
+        return _run_wake(engine, cfg)
     if not (args.text or args.wav or args.mic):
         parser.print_help()
         return 0

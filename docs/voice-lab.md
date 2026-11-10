@@ -76,18 +76,41 @@
 - 用 xiaoxiao 音色的干净 WAV → ASR → 对话 → 工具，比较任务成功率与
   `asr_ms / llm_ms / total_ms`。TTS 不计入端到端任务成功，但单独评测。
 
-## 5. 延迟分解的读法
+## 5. 连续语音与半双工
+
+`conversation.py` 把「按一下录一句」扩展成连续模式：
+
+| 状态 | 行为 | 麦克风 |
+|---|---|---|
+| `IDLE` | KWS 听 `Hey Bota`，或等待手动唤醒 | KWS |
+| `WAKING` | 滴声提示，清空 VAD | 关闭 |
+| `LISTENING` | VAD 收集一句话，端点/超时 | 开 |
+| `THINKING` | ASR + LLM/工具 | **关** |
+| `SPEAKING` | TTS 播放 | **关**（半双工） |
+| `FOLLOWUP` | TTS 播完后 8 s 追问窗口 | VAD |
+
+- `VAD` 用能量阈值 + 最短语音 + 尾静音 + 最长句；带 pre-roll，端点后把整句写成 WAV 再走现有 `DialogEngine`。
+- `SPEAKING` 期间**主动丢帧**，因此 TTS 不会被当成用户输入；这是没有 AEC 时唯一安全的做法。
+- 手动打断（CLI `i` / 网页“打断” / `POST /api/conversation/interrupt`）会调用
+  `DialogEngine.cancel()`：停当前 TTS、放弃本轮、回到 `LISTENING`；不需要 AEC。
+- 浏览器 `getUserMedia` 已开启 `echoCancellation/noiseSuppression/autoGainControl`；
+  但**服务端没有真 AEC**。要做到“边播边听、自然 barge-in”，需要 WebRTC/Speex AEC +
+  双工状态机（播放参考信号、延迟估计、非线性残留抑制），本次明确不假装实现。
+
+## 6. 延迟分解的读法
 
 `Timing.tts_first_audio_ms` 是**从本轮开始**到第一次出声的绝对时间，不是「TTS 单独耗时」。
 因为 LLM 流式输出与 TTS 合成是重叠的，各段不能简单相加；报告里用绝对时间线画瀑布图，
 并另列 `llm_total_ms`、`tool_ms` 等。
 
-## 6. 限制与后续
+## 7. 限制与后续
 
-- 没有唤醒词/回声消除/远场阵列；这些是产品化问题。
+- **半双工已实现，真 AEC 未实现**：`SPEAKING` 关麦避免自听，手动打断可用；
+  自然 barge-in 仍需 WebRTC/Speex AEC + 双工状态机。
+- 唤醒词是声学 KWS（`Hey Bota`），远场/噪声下的唤醒率未做系统评测。
 - 没有真机串口；`MockHome` 只验证语义与状态，不验证 Arduino 协议。
 - 本地 3B LLM 的冷启动和 3B 的能力上限是主要瓶颈；有可用 API Key 时
   切 `--llm openai` 可以把首字降到 1 s 量级。
 - CosyVoice2 适配器按 OpenAI `/audio/speech` 风格实现，但本次没有可用 Key，
   未做真实 API 验证；报告里如实标注。
-- 后续可加：流式 VAD、KWS 唤醒、TTS 真流式解码、更多真人录音测试集。
+- 后续可加：真 AEC、流式 VAD/ASR、TTS 真流式解码、更多真人录音测试集。
