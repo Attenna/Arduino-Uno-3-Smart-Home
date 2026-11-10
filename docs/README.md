@@ -17,6 +17,7 @@
 | | [configuration.md](configuration.md) | 配置项参考（yaml / .env / 环境变量 / Config.h） |
 | | [face-models.md](face-models.md) | 人脸嵌入模型：实测延迟与判别余量、下载校验、换模型后重建人脸库 |
 | **实战 / 排障** | [ha-automation-examples.md](ha-automation-examples.md) | Home Assistant 自动化实战 |
+| | [voice-lab.md](voice-lab.md) | 语音对话实验：级联 ASR/LLM/TTS、评测口径与限制 |
 | | [hardware-debug-notes.md](hardware-debug-notes.md) | 硬件踩坑复盘、排障速查 |
 | | [faq.md](faq.md) | 常见问题解答（39 问） |
 | **部署 / 运维** | 见下表 ↓ | 每部分的 Linux 部署、接线、调试、二次开发 |

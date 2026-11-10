@@ -379,6 +379,10 @@ py -3.13 voice_assistant.py --gateway http://127.0.0.1:5000 --llm-mode local --m
 - 「现在多少度」→ 调 `get_sensor_status` → TTS 回读数
 - 「开门」「关风扇」「蜂鸣器响三声」→ 对应工具执行
 
+> **本地语音对话实验**：不想接硬件/串口时，用 [`voice_lab/`](voice_lab/README.md)：
+> 同一套级联思路（Sherpa/Whisper ASR + Qwen + edge-tts/VITS），但工具执行在内存 mock 设备里，
+> 带 Web 演示、ASR CER / 意图准确率 / 延迟分解和批量评测。`python -m voice_lab.app --serve --warmup`。
+
 ### 调试 MCP server（独立）
 
 用 MCP Inspector GUI 手动调每个工具，观察 B 板动作与 A 板状态：
