@@ -89,3 +89,22 @@ def play_wav(path: str) -> None:
     if data.ndim > 1:
         data = data.mean(axis=1)
     sd.play(data, sample_rate, blocking=True)
+
+
+def play_chirp(freq: float = 880.0, ms: int = 120, volume: float = 0.2) -> None:
+    """Short, zero-synthesis wake acknowledgement (non-blocking failure-safe)."""
+    import sounddevice as sd
+
+    rate = 24000
+    count = max(1, int(rate * ms / 1000))
+    t = np.arange(count, dtype=np.float32) / rate
+    wave = (volume * np.sin(2 * np.pi * freq * t)).astype(np.float32)
+    fade = min(int(rate * 0.006), count // 2)
+    if fade:
+        ramp = np.linspace(0.0, 1.0, fade, dtype=np.float32)
+        wave[:fade] *= ramp
+        wave[-fade:] *= ramp[::-1]
+    try:
+        sd.play(wave, rate, blocking=True)
+    except Exception:
+        pass

@@ -82,6 +82,24 @@ dialog:
   followup_timeout: 8.0
   max_utterance_seconds: 15.0
 
+# 连续语音模式：KWS 唤醒 + VAD 端点 + 半双工状态机。
+# --wake 或 --serve --wake 启用；不启用时仍是按一下录一句。
+wake:
+  enabled: false
+  kws:
+    model_dir: "models/sherpa/kws"
+    keywords_file: "models/sherpa/kws/keywords.txt"
+    keywords_score: 1.5
+    keywords_threshold: 0.25
+    num_threads: 2
+  ack: "chirp"              # chirp=滴声 / none
+  chirp_freq: 880
+  chirp_ms: 120
+  command_timeout: 8.0      # 唤醒后等用户开口
+  followup_timeout: 8.0     # TTS 结束后追问窗口
+  max_utterance_seconds: 15.0
+  barge_in: false           # 真打断需要 AEC；默认半双工，SPEAKING 时关麦
+
 server:
   host: "127.0.0.1"
   port: 8110
@@ -92,3 +110,4 @@ audio:
   record_seconds: 6.0
   silence_seconds: 0.8
   energy_threshold: 0.012
+  min_speech_seconds: 0.2

@@ -5,7 +5,7 @@ import json
 import os
 import threading
 import time
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from .asr import ASRResult, build_asr
 from .config import load_config
@@ -33,6 +33,8 @@ class DialogEngine:
         self.history: list[dict[str, str]] = []
         self._lock = threading.RLock()
         self._last_events: list[dict[str, Any]] = []
+        self._cancel = threading.Event()
+        self._active_player: Optional[TTSPlayer] = None
 
     # ── status ───────────────────────────────────────────────────────
     def model_status(self) -> dict[str, Any]:
@@ -91,6 +93,17 @@ class DialogEngine:
                 status[name] = f"failed: {exc}"
         return status
 
+    def cancel(self) -> None:
+        """Stop the current turn/TTS; safe to call from another thread."""
+        self._cancel.set()
+        player = self._active_player
+        if player is not None:
+            player.stop()
+
+    @property
+    def cancelled(self) -> bool:
+        return self._cancel.is_set()
+
     # ── dialogue ─────────────────────────────────────────────────────
     def _messages(self, user_text: str) -> list[dict[str, str]]:
         rounds = int(self.cfg["llm"].get("history_rounds", 3)) * 2
@@ -126,8 +139,11 @@ class DialogEngine:
             self.history = self.history[-rounds:]
 
     def handle_text(self, text: str, *, speak: bool = True,
-                    play: Optional[bool] = None) -> TurnResult:
+                    play: Optional[bool] = None,
+                    stage_cb: Optional[Callable[[str], None]] = None) -> TurnResult:
         text = (text or "").strip()
+        self._cancel.clear()
+        self._active_player = None
         with self._lock:
             started = time.perf_counter()
             events: list[dict[str, Any]] = []
@@ -136,6 +152,15 @@ class DialogEngine:
             def emit(kind: str, **fields: Any) -> None:
                 events.append({"type": kind, "ts": time.time(), **fields})
 
+            def stage(name: str) -> None:
+                if stage_cb is None:
+                    return
+                try:
+                    stage_cb(name)
+                except Exception:
+                    pass
+
+            stage("thinking")
             if not text:
                 result = TurnResult("", "", events=events, state=self.home.snapshot(),
                                     error="空指令")
@@ -152,7 +177,7 @@ class DialogEngine:
                 splitter = SentenceSplitter()
 
             def stream_cb(token: str) -> None:
-                if not token:
+                if not token or self._cancel.is_set():
                     return
                 emit("assistant_delta", text=token)
                 if splitter is not None and player is not None:
@@ -169,6 +194,15 @@ class DialogEngine:
                 final_text = (reply.text or "").strip()
                 final_first_ms = reply.first_token_ms
                 calls = reply.tool_calls
+                if self._cancel.is_set():
+                    if player is not None:
+                        player.stop()
+                    emit("cancelled", text="用户打断")
+                    timing.total_ms = (time.perf_counter() - started) * 1000.0
+                    result = TurnResult(text, "", tool_results, timing, events,
+                                        state=self.home.snapshot(), error="cancelled")
+                    self._last_events = events
+                    return result
                 if calls:
                     # A tool-call turn: discard any partial speech, execute tools,
                     # then let the model phrase the result in natural language.
@@ -192,6 +226,15 @@ class DialogEngine:
                             timing.tool_ms += result.latency_ms
                         tool_results.append(result)
                         emit("tool", **result.to_dict())
+                    if self._cancel.is_set():
+                        if player is not None:
+                            player.stop()
+                        emit("cancelled", text="用户打断")
+                        timing.total_ms = (time.perf_counter() - started) * 1000.0
+                        result = TurnResult(text, "", tool_results, timing, events,
+                                            state=self.home.snapshot(), error="cancelled")
+                        self._last_events = events
+                        return result
                     if getattr(reply, "final_text_ready", False):
                         final_text = self._answer_from_tools(tool_results)
                         final_streamed = False
@@ -218,23 +261,35 @@ class DialogEngine:
                         for sentence in splitter.feed(final_text):
                             player.feed_sentences([sentence])
                     player.feed_sentences(splitter.flush())
+                    self._active_player = player
+                    stage("speaking")
                     player.flush()
                     player.wait_done()
+                    self._active_player = None
                     timing.tts_first_audio_ms = player.first_audio_ms
                     timing.tts_total_ms = (time.perf_counter() - started) * 1000.0
                     if player.last_error:
                         emit("error", stage="tts", text=player.last_error)
+                    if self._cancel.is_set():
+                        emit("cancelled", text="用户打断")
+                        timing.total_ms = (time.perf_counter() - started) * 1000.0
+                        result = TurnResult(text, "", tool_results, timing, events,
+                                            state=self.home.snapshot(), error="cancelled")
+                        self._last_events = events
+                        return result
 
                 timing.total_ms = (time.perf_counter() - started) * 1000.0
                 self._remember(text, final_text, tool_results)
                 emit("assistant", text=final_text)
                 emit("timing", **timing.to_dict())
                 emit("state", state=self.home.snapshot())
+                stage("done")
                 result = TurnResult(text, final_text, tool_results, timing, events,
                                     state=self.home.snapshot())
                 self._last_events = events
                 return result
             except Exception as exc:
+                self._active_player = None
                 if player is not None:
                     player.stop()
                 emit("error", stage="turn", text=str(exc))
@@ -245,8 +300,14 @@ class DialogEngine:
                 return result
 
     def handle_audio(self, path: str, *, speak: bool = True,
-                     play: Optional[bool] = None) -> TurnResult:
+                     play: Optional[bool] = None,
+                     stage_cb: Optional[Callable[[str], None]] = None) -> TurnResult:
         with self._lock:
+            if stage_cb is not None:
+                try:
+                    stage_cb("transcribing")
+                except Exception:
+                    pass
             asr_started = time.perf_counter()
             try:
                 asr = self.asr.transcribe_file(path)
@@ -263,7 +324,13 @@ class DialogEngine:
                 result.events = [{"type": "asr", **asr.to_dict()},
                                  {"type": "error", "stage": "asr", "text": "没有识别到语音"}]
                 return result
-            result = self.handle_text(asr.text, speak=speak, play=play)
+            if self._cancel.is_set():
+                result = TurnResult(asr.text, "", state=self.home.snapshot(), error="cancelled")
+                result.asr = asr
+                result.events = [{"type": "asr", **asr.to_dict()},
+                                 {"type": "cancelled", "text": "用户打断"}]
+                return result
+            result = self.handle_text(asr.text, speak=speak, play=play, stage_cb=stage_cb)
             result.asr = asr
             result.timing.asr_ms = asr.latency_ms
             result.timing.audio_duration_s = asr.audio_duration_s
