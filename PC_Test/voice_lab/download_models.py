@@ -1,0 +1,134 @@
+"""Download the voice-lab models into PC_Test/models (git-ignored).
+
+    python -m voice_lab.download_models --all
+    python -m voice_lab.download_models --asr
+    python -m voice_lab.download_models --llm
+
+The ASR download uses the 2025-06-30 Chinese streaming Zipformer (int8).  It
+is noticeably more accurate on short commands than the older bilingual model
+already used by voice_assistant.py.  The LLM download uses ModelScope, which is
+reachable from mainland China without a HuggingFace mirror.
+"""
+from __future__ import annotations
+
+import argparse
+import os
+import shutil
+import sys
+import tarfile
+import urllib.request
+
+from .config import PC_TEST_DIR
+
+MODELS = os.path.join(PC_TEST_DIR, "models")
+MIRRORS = ("https://ghfast.top/", "")
+
+ASR_NAME = "sherpa-onnx-streaming-zipformer-zh-int8-2025-06-30"
+ASR_URL = ("https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/"
+           + ASR_NAME + ".tar.bz2")
+ASR_DIR = os.path.join(MODELS, "sherpa", "asr_zh")
+LLM_REPO = "https://modelscope.cn/models/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/master"
+LLM_FILE = "qwen2.5-3b-instruct-q4_k_m.gguf"
+LLM_DIR = os.path.join(MODELS, "qwen")
+
+
+def _download(url: str, dest: str) -> None:
+    if os.path.isfile(dest) and os.path.getsize(dest) > 1024:
+        print(f"  exists: {dest}")
+        return
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    last = None
+    for prefix in MIRRORS:
+        full = prefix + url
+        try:
+            print(f"  GET {full}")
+            request = urllib.request.Request(full, headers={"User-Agent": "curl/8"})
+            with urllib.request.urlopen(request, timeout=60) as response, open(dest, "wb") as handle:
+                total = int(response.headers.get("Content-Length") or 0)
+                done = 0
+                while True:
+                    chunk = response.read(1 << 20)
+                    if not chunk:
+                        break
+                    handle.write(chunk)
+                    done += len(chunk)
+                    if total and done % (50 << 20) < (1 << 20):
+                        print(f"    {done * 100 // total}% ({done >> 20}/{total >> 20} MB)", flush=True)
+            print(f"  OK {os.path.getsize(dest) >> 20} MB")
+            return
+        except Exception as exc:
+            last = exc
+            print(f"  failed: {exc}")
+            try:
+                os.remove(dest)
+            except OSError:
+                pass
+    raise RuntimeError(f"下载失败: {url} ({last})")
+
+
+def _link_or_copy(src: str, dst: str) -> None:
+    if os.path.exists(dst):
+        return
+    try:
+        os.link(src, dst)
+    except OSError:
+        shutil.copy2(src, dst)
+
+
+def download_asr() -> None:
+    archive = os.path.join(MODELS, "sherpa", ASR_NAME + ".tar.bz2")
+    _download(ASR_URL, archive)
+    extract_root = os.path.join(MODELS, "sherpa", "_extract_" + ASR_NAME)
+    os.makedirs(extract_root, exist_ok=True)
+    with tarfile.open(archive, "r:bz2") as tar:
+        tar.extractall(extract_root)
+    src = os.path.join(extract_root, ASR_NAME)
+    os.makedirs(ASR_DIR, exist_ok=True)
+    for name, target in (("encoder.int8.onnx", "encoder.onnx"),
+                         ("joiner.int8.onnx", "joiner.onnx"),
+                         ("decoder.onnx", "decoder.onnx"),
+                         ("tokens.txt", "tokens.txt")):
+        _link_or_copy(os.path.join(src, name), os.path.join(ASR_DIR, target))
+    print(f"ASR -> {ASR_DIR}")
+
+
+def download_llm() -> None:
+    _download(f"{LLM_REPO}/{LLM_FILE}", os.path.join(LLM_DIR, LLM_FILE))
+    print(f"LLM -> {os.path.join(LLM_DIR, LLM_FILE)}")
+
+
+def download_whisper() -> None:
+    try:
+        import whisper
+    except Exception as exc:
+        raise SystemExit("请先安装 openai-whisper: pip install openai-whisper") from exc
+    root = os.path.join(MODELS, "whisper")
+    os.makedirs(root, exist_ok=True)
+    print(f"Whisper -> {root} (首次加载会自动下载 small.pt)")
+    whisper.load_model("small", download_root=root, device="cpu")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="下载 voice_lab 模型")
+    parser.add_argument("--asr", action="store_true")
+    parser.add_argument("--llm", action="store_true")
+    parser.add_argument("--whisper", action="store_true")
+    parser.add_argument("--all", action="store_true")
+    args = parser.parse_args()
+    if not (args.asr or args.llm or args.whisper or args.all):
+        parser.print_help()
+        return 0
+    if args.asr or args.all:
+        print("[ASR] Sherpa 2025 Chinese streaming Zipformer")
+        download_asr()
+    if args.llm or args.all:
+        print("[LLM] Qwen2.5-3B-Instruct Q4_K_M")
+        download_llm()
+    if args.whisper or args.all:
+        print("[Whisper] small (PyTorch)")
+        download_whisper()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -3,6 +3,9 @@ models/
 data/
 logs/
 *.log
+voice_lab/dataset/
+voice_lab/output/
+voice_lab/config.local.yaml
 
 # Python 缓存/虚拟环境
 __pycache__/
