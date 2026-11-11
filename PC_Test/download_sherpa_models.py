@@ -2,7 +2,7 @@
 
 三套模型（GitHub Release，自动走 ghfast.top 国内镜像加速）：
     KWS  sherpa-onnx-kws-zipformer-wenetspeech-3.3M  (~14MB)  → models/sherpa/kws/
-    ASR  sherpa-onnx-streaming-zipformer-bilingual-zh-en（int8 三件套，香橙派 CPU 实时）→ models/sherpa/asr/
+    ASR  sherpa-onnx-streaming-zipformer-zh-int8-2025-06-30（中文 int8 三件套）→ models/sherpa/asr_zh/
     TTS  vits-melo-tts-zh_en（中英双语 VITS）                → models/sherpa/tts/
 
 解压后统一重命名为 encoder.onnx / decoder.onnx / joiner.onnx / tokens.txt，
@@ -35,8 +35,9 @@ PACKS = {
         "joiner":  ("joiner.onnx",  ["fp32"]),
         "tokens.txt": ("tokens.txt", None),
     }),
-    # transducer 架构（含 joiner），int8 三件套是香橙派/ARM CPU 实时识别推荐配置
-    "asr": ("asr-models", "sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20", "asr", {
+    # 2025-06-30 中文流式模型：短指令重复字明显少于旧 bilingual 模型。
+    # 包内文件名是 encoder.int8.onnx / joiner.int8.onnx，安装时统一改名为 encoder.onnx / joiner.onnx。
+    "asr": ("asr-models", "sherpa-onnx-streaming-zipformer-zh-int8-2025-06-30", "asr_zh", {
         "encoder": ("encoder.onnx", ["int8", "fp32"]),
         "decoder": ("decoder.onnx", ["int8", "fp32"]),
         "joiner":  ("joiner.onnx",  ["int8", "fp32"]),
@@ -198,11 +199,12 @@ def write_wordlists() -> None:
         with open(os.path.join(kws_dir, "keywords.txt"), "w", encoding="utf-8") as f:
             f.write(KEYWORDS_TXT)
         print("  刷新 KWS 唤醒词 keywords.txt: Hey Bota（4 个拼音音近变体）")
-    asr_dir = os.path.join(MODELS_ROOT, "asr")
-    if os.path.isdir(asr_dir):
-        with open(os.path.join(asr_dir, "hotwords.txt"), "w", encoding="utf-8") as f:
-            f.write(_build_hotwords_txt())
-        print(f"  刷新 ASR 热词 hotwords.txt: {len(HOTWORDS)} 个智能家居高频词")
+    for subdir in ("asr_zh", "asr"):
+        asr_dir = os.path.join(MODELS_ROOT, subdir)
+        if os.path.isdir(asr_dir):
+            with open(os.path.join(asr_dir, "hotwords.txt"), "w", encoding="utf-8") as f:
+                f.write(_build_hotwords_txt())
+            print(f"  刷新 {subdir}/hotwords.txt: {len(HOTWORDS)} 个智能家居高频词")
 
 
 def main():

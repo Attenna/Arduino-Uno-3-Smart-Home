@@ -22,8 +22,8 @@ matplotlib>=3.8
 # 可选：离线高精度 ASR 对照（CPU 较慢，模型约 461MB）
 openai-whisper>=20231117
 
-# 可选：更快的 Whisper 后端（需要 CTranslate2 模型）
-# faster-whisper>=1.0
+# 可选：更快的 Whisper 后端（CTranslate2，本地 int8；需下载 CT2 模型）
+faster-whisper>=1.2
 
 # 可选：本地 LLM。Windows CPU 轮子见上方注释。
 llama-cpp-python>=0.3.0

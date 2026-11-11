@@ -214,9 +214,10 @@ py -3.13 camera_test.py --cam 0 --frames 10
 ```
 
 语音前端为 **Sherpa-ONNX**（全离线，同栈可直接移植香橙派）：
-KWS 关键词声学唤醒（zipformer-wenetspeech 3.3M）+ 流式 ASR（streaming Zipformer 中英双语 INT8，
-自带端点检测）+ 本地 VITS 语音合成（vits-melo-tts-zh_en）。
-模型一键下载：`py -3.13 download_sherpa_models.py`（KWS ~31MB / ASR ~1GB / TTS ~160MB，国内镜像加速）。
+KWS 关键词声学唤醒（zipformer-wenetspeech 3.3M）+ 流式 ASR（2025-06-30 中文 streaming Zipformer INT8，
+短指令重复字明显少于旧 bilingual 模型，自带端点检测；旧模型保留在 `models/sherpa/asr` 作为回退）+
+本地 VITS 语音合成（vits-melo-tts-zh_en）。
+模型一键下载：`py -3.13 download_sherpa_models.py`（KWS ~31MB / ASR ~133MB / TTS ~160MB，国内镜像加速）。
 
 `mcp_home_server.py` 是 **⑤ web 的 stdio 子进程**，由它独占 A/B 两串口，暴露 14 个工具：
 `light / door / window / fan / buzzer / oled / display / ir / ac / get_distance /

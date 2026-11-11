@@ -29,7 +29,7 @@ class SherpaListener:
 
         s = cfg["sherpa"]
         kws_dir = _abspath(s["kws"]["model_dir"])
-        asr_dir = _abspath(s["asr"]["model_dir"])
+        asr_dir = _resolve_asr_dir(s)
 
         # ── KWS（唤醒词）──
         keywords_file = _abspath(s["kws"]["keywords_file"])
@@ -151,6 +151,18 @@ def _abspath(p: str) -> str:
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), p)
 
 
+def _resolve_asr_dir(s: dict) -> str:
+    """Prefer the configured model; fall back to the legacy asr dir if absent."""
+    asr_dir = _abspath(s["asr"]["model_dir"])
+    if os.path.isfile(os.path.join(asr_dir, "encoder.onnx")):
+        return asr_dir
+    fallback = _abspath("models/sherpa/asr")
+    if os.path.isfile(os.path.join(fallback, "encoder.onnx")):
+        print(f"[ASR] 配置模型不存在，回退旧模型: {fallback}")
+        return fallback
+    return asr_dir
+
+
 def check_models(cfg: dict) -> list[str]:
     """返回缺失文件列表（空列表=齐全）。"""
     s = cfg["sherpa"]
@@ -161,7 +173,7 @@ def check_models(cfg: dict) -> list[str]:
             need.append(f"kws/{f}")
     if not os.path.isfile(_abspath(s["kws"]["keywords_file"])):
         need.append("kws/keywords.txt")
-    asr_dir = _abspath(s["asr"]["model_dir"])
+    asr_dir = _resolve_asr_dir(s)
     # transducer（zipformer）需要 joiner；paraformer 只有 encoder+decoder
     asr_files = (("encoder.onnx", "decoder.onnx", "joiner.onnx", "tokens.txt")
                  if os.path.isfile(os.path.join(asr_dir, "joiner.onnx"))

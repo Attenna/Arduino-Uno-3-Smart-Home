@@ -59,10 +59,12 @@ def _bar_labels(ax, bars, fmt="{:.0f}"):
 
 def fig_asr(data):
     backends = data.get("backends", {})
-    names = [n for n in ("sherpa", "whisper") if n in backends]
+    names = [n for n in ("sherpa", "faster_whisper", "whisper") if n in backends]
     if not names:
         return
-    base_labels = {"sherpa": "Sherpa 2025\n(streaming int8)", "whisper": "Whisper small\n(CPU)"}
+    base_labels = {"sherpa": "Sherpa 2025\n(streaming int8)",
+                   "faster_whisper": "faster-whisper\n(CT2 int8)",
+                   "whisper": "Whisper small\n(CPU)"}
     cer = [backends[n]["summary"]["cer"]["mean"] for n in names]
     exact = [backends[n]["summary"]["exact"]["mean"] * 100 for n in names]
     lat = [backends[n]["summary"]["latency_ms"]["mean"] for n in names]
@@ -86,17 +88,18 @@ def fig_asr(data):
 
 def fig_asr_groups(data):
     backends = data.get("backends", {})
-    names = [n for n in ("sherpa", "whisper") if n in backends]
+    names = [n for n in ("sherpa", "faster_whisper", "whisper") if n in backends]
     if not names:
         return
     voices = ["xiaoxiao", "yunxi", "xiaoyi"]
-    width = 0.38
-    fig, ax = plt.subplots(figsize=(8.6, 3.4))
+    width = 0.28
+    fig, ax = plt.subplots(figsize=(9.2, 3.4))
+    palette = [BLUE, AMBER, GREEN]
     for i, backend in enumerate(names):
         groups = backends[backend]["summary"].get("groups", {})
         values = [groups.get(f"{v}/clean", {}).get("cer", {}).get("mean", 0) for v in voices]
         x = np.arange(len(voices)) + (i - (len(names) - 1) / 2) * width
-        bars = ax.bar(x, values, width, label=backend, color=[BLUE, GREEN][i % 2])
+        bars = ax.bar(x, values, width, label=backend, color=palette[i % len(palette)])
         _bar_labels(ax, bars, "{:.3f}")
     ax.set_xticks(np.arange(len(voices)))
     ax.set_xticklabels(["晓晓\nXiaoxiao", "云希\nYunxi", "晓伊\nXiaoyi"])

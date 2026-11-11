@@ -478,7 +478,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--self-check", action="store_true", help="检查模型/设备，不加载模型")
     parser.add_argument("--warmup", action="store_true", help="启动时预加载 ASR/LLM/TTS 权重")
     parser.add_argument("--list-mic", action="store_true")
-    parser.add_argument("--asr", choices=["sherpa", "whisper"])
+    parser.add_argument("--asr", choices=["sherpa", "faster_whisper", "whisper"])
     parser.add_argument("--llm", choices=["hybrid", "llama_cpp", "openai", "rules"])
     parser.add_argument("--tts", choices=["edge", "sherpa", "cosyvoice", "none"])
     parser.add_argument("--no-tts", action="store_true", help="不合成语音（只显示文本）")

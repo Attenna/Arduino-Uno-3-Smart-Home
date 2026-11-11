@@ -3,7 +3,7 @@
 流程：
     麦克风 → Sherpa-ONNX 双引擎（sherpa_listener.SherpaListener）
         KWS（zipformer 关键词检测）→ 命中「Hey Bota」→ 切 COMMAND + 提示音
-        流式 Paraformer ASR + 端点检测 → 整句指令
+        流式 Zipformer ASR + 端点检测 → 整句指令
         FOLLOWUP：回答后 8s 追问窗口，无需再唤醒
     用户指令 → LLM 流式 + 工具调用（默认硅基流动云端 API，可切阿里云百炼或本地 qwen_server.py）
         delta.content → 按句切分喂 TTS（边生成边播）
@@ -219,9 +219,9 @@ DEFAULT_CONFIG = {
         "kws": {"model_dir": "models/sherpa/kws",
                 "keywords_file": "models/sherpa/kws/keywords.txt",
                 "keywords_score": 1.5, "keywords_threshold": 0.25},
-        "asr": {"model_dir": "models/sherpa/asr",
+        "asr": {"model_dir": "models/sherpa/asr_zh",
                 "rule1_silence": 2.4, "rule2_silence": 1.2, "rule3_utt_len": 20.0,
-                "hotwords_file": "models/sherpa/asr/hotwords.txt", "hotwords_score": 2.0},
+                "hotwords_file": "", "hotwords_score": 2.0},
         "tts": {"model_dir": "models/sherpa/tts", "speaker_id": 0,
                 "speed": 1.0, "num_threads": 2},
     },

@@ -12,7 +12,7 @@
 
 | 阶段 | 默认 | 对照 | 关键指标 |
 |---|---|---|---|
-| ASR | Sherpa-ONNX 2025 中文流式 int8 | Whisper small（CPU） | CER、精确匹配、RTF |
+| ASR | Sherpa-ONNX 2025 中文流式 int8 | faster-whisper small（CT2 int8）/ Whisper small（PyTorch CPU） | CER、精确匹配、RTF |
 | 对话 | hybrid（规则快路径 + Qwen2.5-3B） | rules / llama_cpp / OpenAI API | 工具名/参数准确率、任务成功率、首字/总延迟 |
 | TTS | edge-tts | Sherpa VITS / CosyVoice2 API | 首包、总合成、RTF |
 | 端到端 | 上述默认组合 | 各组合 | 任务成功率、ASR/LLM/总延迟 |
