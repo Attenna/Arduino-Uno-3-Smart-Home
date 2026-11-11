@@ -81,11 +81,13 @@ sherpa:
     keywords_score: 1.5       # 唤醒词打分提升（调大更易唤醒，误唤醒也会增加）
     keywords_threshold: 0.25  # 声学阈值（调小更灵敏，误唤醒也会增加）
   asr:                  # 流式识别（streaming Zipformer 中英双语，INT8 三件套）
-    model_dir: "models/sherpa/asr"
+    # 2025-06-30 中文 int8 模型；旧 bilingual 模型保留在 models/sherpa/asr 作为回退。
+    model_dir: "models/sherpa/asr_zh"
     rule1_silence: 2.4  # 端点规则：句尾静音秒数
     rule2_silence: 1.2  #           句中有内容后的静音秒数
     rule3_utt_len: 20.0 #           最长句长（秒）
-    hotwords_file: "models/sherpa/asr/hotwords.txt"  # 智能家居热词（开灯/红色/蜂鸣器…加权提准）
+    # 2025 模型 token 表不含部分单字，热词表会告警；默认关闭。
+    hotwords_file: ""
     hotwords_score: 2.0 # 热词加成（1.5~3：越大越偏向热词，过大可能误识；想加词直接编辑该文件）
   tts:                  # 本地语音合成（vits-melo-tts-zh_en）
     model_dir: "models/sherpa/tts"

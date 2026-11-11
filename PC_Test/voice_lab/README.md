@@ -11,9 +11,10 @@
    │
    ▼
 ┌───────────────────────────────┐
-│ ASR（二选一）                  │
+│ ASR（三选一）                  │
 │  • Sherpa-ONNX 2025 中文流式   │  默认，本地，约 0.9–1.2 s/句
-│  • OpenAI Whisper small        │  对照，本地 CPU，约 5–6 s/句
+│  • faster-whisper small        │  CT2 int8，本地 CPU，约 2.4 s/句
+│  • OpenAI Whisper small        │  PyTorch 对照，本地 CPU，约 3.4 s/句
 └───────────────┬───────────────┘
                 ▼
 ┌───────────────────────────────┐
@@ -43,7 +44,7 @@
 
 | 项 | 结果 |
 |---|---|
-| ASR | Sherpa 2025：CER 0.039、精确匹配 88.2%、897 ms/句（RTF 0.40）；Whisper small：CER 0.055、3390 ms/句（RTF 1.53） |
+| ASR | Sherpa 2025：CER 0.039、精确匹配 88.2%、897 ms/句（RTF 0.40）；faster-whisper small：CER 0.063、2375 ms/句（RTF 1.09）；Whisper small：CER 0.055、3390 ms/句（RTF 1.53） |
 | 对话 | 规则 90.3% 用例成功；hybrid（规则 + 对话状态改写 + LLM 兜底）100%、约 438 µs/轮 |
 | TTS | edge-tts 首音 678 ms / 总合成 1216 ms（RTF 0.58）；离线 VITS 2323 ms（RTF 2.06） |
 | 端到端 | Sherpa + rules/hybrid 27 条干净音频任务成功率 100%，总延迟 0.9–1.6 s（ASR 主导） |
@@ -70,7 +71,7 @@
 ```text
 PC_Test/voice_lab/
 ├─ config.yaml          # 后端、模型路径、系统提示词、端口
-├─ asr.py               # Sherpa / Whisper 适配器 + 领域纠错
+├─ asr.py               # Sherpa / faster-whisper / Whisper 适配器 + 领域纠错
 ├─ llm.py               # llama.cpp / OpenAI 兼容 / 规则 / hybrid
 ├─ tts.py               # edge-tts / Sherpa VITS / CosyVoice2 + 流式播放
 ├─ tools.py             # 6 个工具 schema + MockHome
@@ -102,9 +103,10 @@ uv pip install -r PC_Test/requirements-voice-lab.txt
 
 ```powershell
 cd PC_Test
-python -m voice_lab.download_models --asr   # Sherpa 2025 中文流式 int8（约 133 MB）
-python -m voice_lab.download_models --llm   # Qwen2.5-3B-Instruct Q4_K_M（约 2 GB）
-# 可选：python -m voice_lab.download_models --whisper
+python -m voice_lab.download_models --asr            # Sherpa 2025 中文流式 int8（约 133 MB）
+python -m voice_lab.download_models --llm            # Qwen2.5-3B-Instruct Q4_K_M（约 2 GB）
+python -m voice_lab.download_models --faster-whisper # CT2 small（约 484 MB，支持断点续传）
+# 可选：python -m voice_lab.download_models --whisper # PyTorch small（约 461 MB）
 ```
 
 `config.yaml` 默认路径：
@@ -112,6 +114,7 @@ python -m voice_lab.download_models --llm   # Qwen2.5-3B-Instruct Q4_K_M（约 2
 | 后端 | 默认模型 | 说明 |
 |---|---|---|
 | ASR | `models/sherpa/asr_zh` | 2025-06-30 中文 streaming Zipformer int8；比仓库旧 bilingual 模型准 |
+| ASR 对照 | `models/whisper_ct2/small` | faster-whisper small CT2 int8；HF 下载失败时用脚本断点续传 |
 | LLM | `models/qwen/qwen2.5-3b-instruct-q4_k_m.gguf` | 想更快可换 1.5B 同名文件 |
 | TTS | edge-tts | 需要网络；离线改用 `--tts sherpa` |
 
@@ -187,8 +190,8 @@ cd PC_Test
 # 1) 生成 ASR 测试集：3 个 edge-tts 音色 × 27 个单轮用例 + 12 个加噪变体
 python -m voice_lab.make_dataset
 
-# 2) ASR：Sherpa vs Whisper（Whisper CPU 较慢，可用 --limit 30 控制）
-python -m voice_lab.eval --asr-backends sherpa,whisper --skip-dialog --skip-tts --skip-e2e
+# 2) ASR：Sherpa / faster-whisper / Whisper（Whisper CPU 较慢，可用 --limit 30 控制）
+python -m voice_lab.eval --asr-backends sherpa,faster_whisper,whisper --skip-dialog --skip-tts --skip-e2e
 
 # 3) 对话：规则 / hybrid / 纯 LLM
 python -m voice_lab.eval --llm-backends rules,hybrid,llama_cpp --skip-asr --skip-tts --skip-e2e
@@ -200,7 +203,7 @@ python -m voice_lab.eval --tts-backends edge,sherpa --skip-asr --skip-dialog --s
 python -m voice_lab.eval --asr-backends sherpa --llm-backends rules,hybrid --skip-tts
 
 # 全量（Whisper 会跑很久）
-python -m voice_lab.eval --all --asr-backends sherpa,whisper
+python -m voice_lab.eval --all --asr-backends sherpa,faster_whisper,whisper
 ```
 
 输出在 `voice_lab/output/`：
@@ -238,7 +241,8 @@ python -m voice_lab.eval --all --asr-backends sherpa,whisper
 ## 7. 已知限制
 
 - **Sherpa 流式模型不是完美 ASR**：短指令仍可能出现重复字/近音（如「卧室」→「我室」），
-  本模块用领域纠错表兜底；追求准确率请用 `--asr whisper`，代价是 CPU 上约 5 s/句。
+  本模块用领域纠错表兜底；追求准确率请用 `--asr faster_whisper`（约 2.4 s/句）
+  或 `--asr whisper`（约 3.4 s/句）。
 - **本地 3B LLM 冷启动慢**：首次 prompt 处理约 10–30 s，之后同一进程会快很多；
   `hybrid` 模式把明确指令挡在 LLM 之前，是现场演示的默认选择。
 - **edge-tts 需要网络**；离线演示用 `--tts sherpa`，本机 VITS 的 RTF 约 1.6。

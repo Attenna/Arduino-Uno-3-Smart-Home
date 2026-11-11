@@ -135,12 +135,12 @@ web 进程内的常驻线程：取 `<摄像头服务>/snapshot` 的一帧去识�
 | `kws.keywords_file` | `models/sherpa/kws/keywords.txt` | 唤醒词表 |
 | `kws.keywords_score` | `1.5` | 唤醒词打分（调大更易唤醒，误唤醒增加） |
 | `kws.keywords_threshold` | `0.25` | 声学阈值（调小更灵敏，误唤醒增加） |
-| `asr.model_dir` | `models/sherpa/asr` | 流式识别模型目录 |
+| `asr.model_dir` | `models/sherpa/asr_zh` | 2025-06-30 中文流式模型；旧 `models/sherpa/asr` 作为回退 |
 | `asr.rule1_silence` | `2.4` | 句尾静音秒数（端点检测） |
 | `asr.rule2_silence` | `1.2` | 句中静音秒数 |
 | `asr.rule3_utt_len` | `20.0` | 最长句长（秒） |
-| `asr.hotwords_file` | `models/sherpa/asr/hotwords.txt` | 热词文件 |
-| `asr.hotwords_score` | `2.0` | 热词权重（1.5~3） |
+| `asr.hotwords_file` | `""` | 2025 模型 token 表不含部分单字，默认关闭热词 |
+| `asr.hotwords_score` | `2.0` | 热词权重（1.5~3；启用热词时生效） |
 | `tts.model_dir` | `models/sherpa/tts` | TTS 模型目录 |
 | `tts.speaker_id` | `0` | 说话人 ID（0 = 中文女声） |
 | `tts.speed` | `1.0` | 语速倍数 |

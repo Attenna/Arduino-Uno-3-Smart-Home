@@ -182,6 +182,67 @@ class SherpaASR(BaseASR):
                          audio_path=path)
 
 
+class FasterWhisperASR(BaseASR):
+    """CTranslate2 Whisper (faster-whisper): int8 CPU, low memory, ~1/2 latency."""
+
+    backend = "faster_whisper"
+
+    def __init__(self, cfg: dict[str, Any]):
+        self.cfg = cfg
+        self._model = None
+
+    def _load(self):
+        if self._model is not None:
+            return self._model
+        try:
+            from faster_whisper import WhisperModel  # type: ignore
+        except Exception as exc:  # pragma: no cover - optional extra
+            raise ASRError("未安装 faster-whisper，请先 pip install faster-whisper") from exc
+        model_dir = self.cfg.get("model_dir")
+        if model_dir and os.path.isdir(model_dir):
+            target = model_dir
+        else:
+            target = self.cfg.get("model", "small")
+            root = self.cfg.get("download_root")
+            if root:
+                os.makedirs(root, exist_ok=True)
+        self._model = WhisperModel(
+            target,
+            device=self.cfg.get("device", "cpu"),
+            compute_type=self.cfg.get("compute_type", "int8"),
+            cpu_threads=int(self.cfg.get("cpu_threads", 8)),
+            num_workers=int(self.cfg.get("num_workers", 1)),
+            download_root=self.cfg.get("download_root") if not (
+                model_dir and os.path.isdir(model_dir)) else None,
+        )
+        return self._model
+
+    def transcribe_file(self, path: str) -> ASRResult:
+        model = self._load()
+        started = time.perf_counter()
+        segments, info = model.transcribe(
+            path,
+            language=self.cfg.get("language", "zh"),
+            beam_size=int(self.cfg.get("beam_size", 1)),
+            vad_filter=bool(self.cfg.get("vad_filter", True)),
+            condition_on_previous_text=False,
+        )
+        text = "".join(segment.text for segment in segments)
+        elapsed = (time.perf_counter() - started) * 1000.0
+        duration = float(getattr(info, "duration", 0.0) or 0.0)
+        if not duration:
+            try:
+                import soundfile as sf
+                duration = float(sf.info(path).duration)
+            except Exception:
+                duration = 0.0
+        return ASRResult(text=normalize_text(correct_asr_text(text)),
+                         backend=self.backend, latency_ms=elapsed,
+                         audio_duration_s=duration,
+                         rtf=(elapsed / 1000.0 / duration) if duration else 0.0,
+                         audio_path=path)
+
+
 class WhisperASR(BaseASR):
     backend = "whisper"
 
@@ -236,6 +297,8 @@ def build_asr(cfg: dict[str, Any], backend: Optional[str] = None) -> BaseASR:
     backend = (backend or cfg.get("backend") or "sherpa").lower()
     if backend == "sherpa":
         return SherpaASR(cfg.get("sherpa") or cfg)
+    if backend in ("faster_whisper", "faster-whisper", "ct2"):
+        return FasterWhisperASR(cfg.get("faster_whisper") or cfg)
     if backend == "whisper":
         return WhisperASR(cfg.get("whisper") or cfg)
     raise ASRError(f"未知 ASR 后端: {backend}")

@@ -4,7 +4,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from voice_lab.asr import ASRResult, normalize_text
+from voice_lab.asr import ASRResult, FasterWhisperASR, build_asr, normalize_text
 from voice_lab.cases import get_path
 from voice_lab.config import DEFAULT_CONFIG, load_config
 from voice_lab.dialog import DialogEngine
@@ -262,6 +262,15 @@ class DialogEngineTests(unittest.TestCase):
         engine.reset()
         self.assertEqual(engine.history, [])
         self.assertFalse(engine.home.snapshot()["fan"]["on"])
+
+
+class ASRFactoryTests(unittest.TestCase):
+    def test_faster_whisper_backend_is_selectable_without_loading_model(self):
+        cfg = {"backend": "sherpa", "sherpa": {}, "whisper": {},
+               "faster_whisper": {"model_dir": "models/whisper_ct2/small"}}
+        asr = build_asr(cfg, "faster_whisper")
+        self.assertIsInstance(asr, FasterWhisperASR)
+        self.assertEqual(asr.backend, "faster_whisper")
 
 
 class ConfigTests(unittest.TestCase):

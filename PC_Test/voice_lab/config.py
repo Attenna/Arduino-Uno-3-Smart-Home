@@ -24,6 +24,18 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "hotwords_score": 2.0,
             "max_active_paths": 4,
         },
+        "faster_whisper": {
+            "model_dir": "models/whisper_ct2/small",
+            "model": "small",
+            "download_root": "models/whisper_ct2",
+            "device": "cpu",
+            "compute_type": "int8",
+            "cpu_threads": 8,
+            "num_workers": 1,
+            "language": "zh",
+            "beam_size": 1,
+            "vad_filter": True,
+        },
         "whisper": {
             "model": "small",
             "download_root": "models/whisper",
