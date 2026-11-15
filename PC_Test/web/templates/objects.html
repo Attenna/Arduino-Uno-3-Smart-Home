@@ -1,0 +1,7 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8"><title>物体检测 · 橙居</title>
+<style>body{margin:0;background:#f5f1e8;color:#38443e;font:16px system-ui}main{max-width:1200px;margin:48px auto;padding:0 32px}header{display:flex;align-items:center;justify-content:space-between}a{color:#567c6b}section{background:#fffdf8;border-radius:24px;padding:28px;margin-top:24px}.grid{display:grid;grid-template-columns:2fr 1fr;gap:24px}button{background:#658572;color:white;border:0;border-radius:12px;padding:12px 20px;cursor:pointer;margin:8px}button:disabled{opacity:.5}canvas{width:100%;background:#e9e6df;border-radius:16px}small,p{color:#748177}article{padding:18px 0;border-bottom:1px solid #e7e4dc}article img{max-width:220px}#status{line-height:1.8}input{margin:12px 0}</style>
+<main><header><div><h1>物体检测</h1><p>共用门口摄像头，查看检测结果与事件记录</p></div><a href="/">返回中控室</a></header>
+<div class="grid"><section><canvas id="view" width="960" height="540"></canvas><p id="message" role="status">选择摄像头检测或上传图片</p><button id="once">检测摄像头</button><button id="live">开始连续检测</button><label><input type="checkbox" id="evidence">保存命中事件图片</label><hr><input type="file" id="file" accept="image/*"><button id="upload">检测图片</button></section><section><h2>模型状态</h2><p id="status">加载中…</p><h2>本次结果</h2><div id="result">等待检测</div><p>坐标为原图像素，顺序为左、上、右、下。连续检测每 3 秒执行一次，命中事件至少间隔 30 秒。</p></section></div>
+<section><header><h2>检测事件</h2><button id="refresh">刷新</button></header><p>仅命中时记录。图片取证默认关闭，开启后保存原始快照。</p><div id="events"></div></section></main>
+<script src="/static/js/objects.js"></script></html>
