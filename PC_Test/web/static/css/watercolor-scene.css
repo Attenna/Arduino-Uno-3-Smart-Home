@@ -1,0 +1,258 @@
+    .room {
+      position: relative;
+      aspect-ratio: 1672 / 941;
+      overflow: hidden;
+      isolation: isolate;
+      background: #e9dfd1;
+    }
+    .room::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      z-index: -2;
+      background: url("../assets/watercolor/smart-home-watercolor.png") center / cover no-repeat;
+      transition: filter .35s ease;
+    }
+    .room::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      z-index: -1;
+      pointer-events: none;
+      opacity: 0;
+      background: radial-gradient(ellipse at 42% 13%, rgba(255, 231, 151, .98) 0, rgba(255, 210, 88, .70) 17%, rgba(255, 195, 61, .30) 38%, rgba(255, 191, 56, 0) 68%);
+      mix-blend-mode: screen;
+      transition: opacity .35s ease;
+    }
+    .room.light-on::after { opacity: 1; }
+    .room.light-on::before { filter: brightness(1.12) saturate(1.08); }
+    .room.focus-mode::before { filter: saturate(.82) brightness(.96); }
+    .room.focus-mode::after {
+      opacity: .55;
+      background: radial-gradient(ellipse at 42% 14%, rgba(255, 187, 73, .62), transparent 43%);
+    }
+    .room.away-mode::before { filter: saturate(.62) brightness(.82); }
+
+    .room-label {
+      position: absolute;
+      left: 16px;
+      top: 16px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 11px;
+      border: 1px solid rgba(255,255,255,.75);
+      border-radius: 12px;
+      background: rgba(255,255,255,.77);
+      box-shadow: 0 7px 18px rgba(26, 38, 37, .1);
+      backdrop-filter: blur(10px);
+      font-size: 12px;
+    }
+    .room-label span { color: var(--green); font-weight: 700; }
+    .hint {
+      position: absolute;
+      left: 50%;
+      bottom: 16px;
+      transform: translateX(-50%);
+      z-index: 3;
+      padding: 9px 13px;
+      border-radius: 999px;
+      background: rgba(33, 43, 42, .82);
+      color: #fff;
+      font-size: 12px;
+      box-shadow: 0 8px 22px rgba(20, 25, 25, .18);
+      backdrop-filter: blur(8px);
+      pointer-events: none;
+      transition: opacity .3s ease;
+    }
+    .hint.hidden { opacity: 0; }
+
+    .hotspot {
+      --hot: var(--teal);
+      position: absolute;
+      z-index: 2;
+      display: grid;
+      place-items: center;
+      width: 38px;
+      height: 38px;
+      border: 2px solid rgba(255,255,255,.92);
+      border-radius: 50%;
+      background: rgba(255,255,255,.9);
+      box-shadow: 0 7px 17px rgba(20, 32, 31, .2);
+      cursor: pointer;
+      transform: translate(-50%, -50%);
+      transition: transform .18s ease, background .2s ease, box-shadow .2s ease;
+      backdrop-filter: blur(8px);
+    }
+    .hotspot:hover, .hotspot:focus-visible { transform: translate(-50%, -50%) scale(1.1); outline: none; }
+    .hotspot::after {
+      content: attr(data-label);
+      position: absolute;
+      left: 50%;
+      top: calc(100% + 7px);
+      transform: translateX(-50%);
+      padding: 5px 8px;
+      border-radius: 8px;
+      background: rgba(31, 40, 39, .88);
+      color: #fff;
+      font-size: 11px;
+      white-space: nowrap;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity .15s ease;
+    }
+    .hotspot:hover::after, .hotspot:focus-visible::after { opacity: 1; }
+    .hotspot svg { width: 19px; height: 19px; stroke: var(--hot); fill: none; stroke-width: 2; }
+    .hotspot.on { background: var(--orange); box-shadow: 0 0 0 7px rgba(239, 184, 79, .2), 0 8px 20px rgba(70, 50, 20, .22); }
+    .hotspot.on svg { stroke: #fff; }
+    .hotspot.warning { --hot: var(--orange); }
+    .hotspot[data-device="fan"].on svg { animation: spin 1.05s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .hot-lamp { left: 42%; top: 14%; }
+    .hot-window { left: 58.5%; top: 37%; }
+    .hot-fan { left: 68%; top: 59%; }
+    .hot-door { left: 86%; top: 52%; }
+    .hot-oled { left: 75.7%; top: 35.8%; }
+    .hot-lock { left: 77.1%; top: 44%; }
+    .hot-board { left: 96.2%; top: 35.2%; }
+
+    /* Open-state artwork is limited to the original openings; the rest of the room stays fixed. */
+    .window-closed, .window-state, .door-state {
+      position: absolute;
+      inset: 0;
+      z-index: 0;
+      pointer-events: none;
+    }
+    .window-state { opacity: 0; transition: opacity .2s ease; }
+    .door-state {
+      opacity: 0;
+      transition: opacity 0s linear .58s;
+    }
+    .window-closed, .window-state {
+      clip-path: polygon(50.75% 18.7%, 66.65% 18.7%, 66.65% 56.2%, 50.75% 56.2%);
+    }
+    .door-state {
+      -webkit-mask-image: linear-gradient(to right, transparent 77%, #000 79%, #000 94%, transparent 96%);
+      mask-image: linear-gradient(to right, transparent 77%, #000 79%, #000 94%, transparent 96%);
+    }
+    .window-closed > div, .window-state > div, .door-state > div {
+      position: absolute;
+      inset: 0;
+      background-position: center;
+      background-size: cover;
+      background-repeat: no-repeat;
+    }
+    .door-state > div {
+      -webkit-mask-image: linear-gradient(to bottom, transparent 16%, #000 19%, #000 78%, transparent 82%);
+      mask-image: linear-gradient(to bottom, transparent 16%, #000 19%, #000 78%, transparent 82%);
+    }
+    .room.window-open .window-closed { opacity: 0; }
+    .room.window-open .window-state { opacity: 1; }
+    .room.door-open .door-state { opacity: 1; transition-delay: 0s; }
+    .door-leaf {
+      position: absolute;
+      z-index: 1;
+      left: 79.9%;
+      top: 23.4%;
+      width: 12.7%;
+      height: 52.2%;
+      pointer-events: none;
+      background-image: url("../assets/watercolor/smart-home-watercolor.png");
+      background-size: 787.4% 191.6%;
+      background-position: 91.5% 48.9%;
+      background-repeat: no-repeat;
+      clip-path: polygon(0% 6%, 100% 0%, 100% 100%, 0% 96%);
+      transform-origin: left center;
+      transform: perspective(900px) rotateY(0deg);
+      transition: transform .58s cubic-bezier(.22,.72,.16,1), filter .58s ease;
+      backface-visibility: hidden;
+    }
+    .room.door-open .door-leaf {
+      transform: perspective(900px) rotateY(-67deg);
+      filter: drop-shadow(8px 8px 5px rgba(34, 32, 29, .22));
+    }
+
+.room::before { background-image: url("../assets/watercolor/smart-home-watercolor.png"); }
+.room.light-on::before { filter: brightness(1.035) saturate(1.02); }
+.room::after { z-index: 1; }
+.room.light-on::after { opacity: .48; }
+.hotspot, .hotspot.on, .hotspot:hover, .hotspot:focus-visible {
+  z-index: 5;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  transform: translate(-50%, -50%);
+}
+.hotspot svg { display: none; }
+.hotspot:focus-visible { outline: 2px dashed #718673; outline-offset: 3px; background: rgba(255,255,255,.12); }
+.hotspot:hover { background: rgba(255,253,244,.1); }
+.hotspot::after { top: calc(100% + 4px); background: rgba(67,77,65,.9); padding: 7px 10px; font-size: 11px; }
+.hot-lamp { left: 42%; top: 16%; width: 11%; height: 15%; }
+.hot-window { left: 59%; top: 38%; width: 15%; height: 33%; }
+.hot-fan { left: 69%; top: 63%; width: 8%; height: 25%; }
+.hot-door { left: 86%; top: 51%; width: 13%; height: 52%; }
+.hot-oled { left: 75.7%; top: 35.8%; width: 4.8%; height: 8%; }
+.hot-lock { left: 77.1%; top: 44%; width: 2.8%; height: 6%; }
+.hot-board { left: 97%; top: 36.5%; width: 5%; height: 16%; }
+.room-label { z-index: 6; background: rgba(255,253,248,.78); box-shadow: none; }
+.hint { z-index: 6; background: rgba(67,77,65,.8); }
+.door-state, .window-state { opacity: 1; transition: none; mask-image: none; -webkit-mask-image: none; }
+.door-state { clip-path: polygon(80% 26.4%, 92.65% 23.8%, 92.65% 76.3%, 80% 73.8%); }
+.window-state { clip-path: polygon(52.35% 24.9%, 65.8% 22.4%, 65.8% 54.3%, 52.35% 54.3%); }
+.door-state > div, .window-state > div {
+  background-image: url("../assets/watercolor/smart-home-watercolor-openings.png");
+  mask-image: none;
+  -webkit-mask-image: none;
+}
+.door-leaf { background-image: url("../assets/watercolor/smart-home-watercolor.png"); transition-duration: .85s; }
+.room.door-open .door-leaf { transform: perspective(900px) rotateY(-72deg); filter: drop-shadow(5px 5px 5px rgba(65,56,43,.15)); }
+.window-leaf {
+  position: absolute;
+  pointer-events: none;
+  z-index: 1;
+  background-image: url("../assets/watercolor/smart-home-watercolor.png");
+  background-repeat: no-repeat;
+  backface-visibility: hidden;
+  transition: transform .85s cubic-bezier(.22,.72,.16,1), filter .85s ease;
+}
+.window-leaf-left {
+  left: 52.2%; top: 23.3%; width: 6.7%; height: 31.3%;
+  background-size: 1492.54% 319.49%; background-position: 55.9486% 33.9156%;
+  clip-path: polygon(0 5%, 100% 1%, 100% 100%, 0 100%);
+  transform-origin: left center;
+}
+.window-leaf-right {
+  left: 58.9%; top: 22.2%; width: 7%; height: 32.4%;
+  background-size: 1428.57% 308.64%; background-position: 63.3333% 32.8402%;
+  clip-path: polygon(0 4%, 100% 0, 100% 100%, 0 100%);
+  transform-origin: right center;
+}
+.room.window-open .window-leaf-left { transform: perspective(650px) rotateY(-69deg); filter: drop-shadow(4px 3px 3px #66543d20); }
+.room.window-open .window-leaf-right { transform: perspective(650px) rotateY(69deg); filter: drop-shadow(-4px 3px 3px #66543d20); }
+.lamp-glow {
+  position: absolute; left: 30%; top: 10%; width: 25%; height: 50%; z-index: 2;
+  pointer-events: none; opacity: 0; transform-origin: 50% 15%;
+  background: radial-gradient(ellipse at 50% 15%, #fff4bbba, #ffe7a33d 35%, transparent 70%);
+  mix-blend-mode: screen; transition: opacity .65s ease;
+}
+.light-on .lamp-glow { opacity: .65; }
+.fan-rotor {
+  position: absolute; z-index: 2; left: 66.6%; top: 54.2%; width: 3.3%; aspect-ratio: 1;
+  pointer-events: none; opacity: 0; transition: opacity .5s ease;
+  animation: rotor-turn .42s linear infinite; animation-play-state: paused;
+}
+.fan-rotor i { position: absolute; left: 43%; top: 7%; width: 32%; height: 48%; border-radius: 75% 45% 65% 30%; background: #8f96826b; transform-origin: 22% 89%; }
+.fan-rotor i:nth-child(2) { transform: rotate(120deg); }
+.fan-rotor i:nth-child(3) { transform: rotate(240deg); }
+.fan-rotor b { position: absolute; inset: 41%; border-radius: 50%; background: #e9e0c8; }
+.fan-on .fan-rotor { opacity: .75; animation-play-state: running; }
+@keyframes rotor-turn { to { transform: rotate(360deg); } }
+.fan-rotor { animation-duration: var(--wc-fan-duration, .5s); }
+.room.light-on::after { opacity: calc(.48 * var(--wc-light-strength, 1)); }
+.room.light-on .lamp-glow { opacity: calc(.65 * var(--wc-light-strength, 1)); }
+@media (prefers-reduced-motion: reduce) {
+  .window-leaf, .door-leaf, .lamp-glow, .room::before, .room::after { transition-duration: .01ms; }
+  .fan-rotor { animation: none; }
+}
