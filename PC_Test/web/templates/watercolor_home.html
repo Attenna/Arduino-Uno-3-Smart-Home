@@ -1,0 +1,56 @@
+<section class="wc-grid" aria-label="家的实时状态">
+  <article class="wc-scene-card">
+    <header class="wc-scene-head">
+      <div><h2>客厅与入口</h2><p>点击灯、风扇或门窗控制设备</p></div>
+      <a class="wc-link" href="/automation">场景与自动化 →</a>
+    </header>
+    <div class="room" id="watercolorRoom" aria-label="水彩客厅，设备状态同步自服务器">
+      <div class="room-label" id="wcRoomStatus" role="status">正在连接设备…</div>
+      <div class="window-state" aria-hidden="true"><div></div></div>
+      <div class="window-leaf window-leaf-left" aria-hidden="true"></div>
+      <div class="window-leaf window-leaf-right" aria-hidden="true"></div>
+      <div class="door-state" aria-hidden="true"><div></div></div>
+      <div class="door-leaf" aria-hidden="true"></div>
+      <div class="lamp-glow" aria-hidden="true"></div>
+      <div class="fan-rotor" aria-hidden="true"><i></i><i></i><i></i><b></b></div>
+      <button class="hotspot hot-lamp" data-wc-device="light" data-label="客厅主灯" aria-label="切换客厅主灯" aria-pressed="false"></button>
+      <button class="hotspot hot-fan" data-wc-device="fan" data-label="客厅风扇" aria-label="切换客厅风扇" aria-pressed="false"></button>
+      <button class="hotspot hot-window" data-wc-device="window" data-label="客厅窗户" aria-label="切换客厅窗户" aria-pressed="false"></button>
+      <button class="hotspot hot-door" data-wc-device="door" data-label="入户门" aria-label="切换入户门" aria-pressed="false"></button>
+      <a class="hotspot hot-lock" href="/access" data-label="门禁管理" aria-label="打开门禁管理"></a>
+      <a class="hotspot hot-oled" href="/automation#oledEnabled" data-label="门口信息屏" aria-label="设置门口 OLED 信息屏"></a>
+      <button class="hotspot hot-board" id="wcOpenNotes" data-label="本机留言板" aria-label="打开本机留言板"></button>
+      <div class="hint" id="wcSceneFeedback" role="status" aria-live="polite">正在读取真实设备状态</div>
+    </div>
+    <div class="wc-quickbar">
+      {% for device, label in [('light', '主灯'), ('fan', '风扇'), ('door', '前门'), ('window', '窗户')] %}
+      <button class="wc-quick" data-wc-device="{{ device }}" aria-pressed="false"><span><strong>{{ label }}</strong><small data-wc-status="{{ device }}">等待连接</small></span><i class="wc-toggle" aria-hidden="true"></i></button>
+      {% endfor %}
+      <button class="wc-quick" data-wc-device="buzzer"><span><strong>蜂鸣器</strong><small>点击自检</small></span><span aria-hidden="true">♪</span></button>
+      <a class="wc-quick" href="/hardware"><span><strong>硬件管理</strong><small>连接与诊断</small></span><span aria-hidden="true">↗</span></a>
+    </div>
+  </article>
+  <aside class="wc-side">
+    <section class="wc-panel">
+      <header><h3>家的体感</h3><span id="wcFreshness">等待采样</span></header>
+      <div class="wc-comfort">
+        <div><small>室内温度</small><strong><span id="wcTemperature">—</span><small>°C</small></strong></div>
+        <div><small>空气湿度</small><strong><span id="wcHumidity">—</span><small>%</small></strong></div>
+      </div>
+      <dl class="wc-sensors"><div><dt>光照</dt><dd id="wcLightRaw">—</dd></div><div><dt>烟雾</dt><dd id="wcSmoke">—</dd></div><div><dt>雨滴</dt><dd id="wcRain">—</dd></div><div><dt>人体活动</dt><dd id="wcMotion">—</dd></div><div><dt>门口距离</dt><dd id="wcDistance">—</dd></div><div><dt>土壤湿度</dt><dd id="wcSoil">—</dd></div></dl>
+      <p class="wc-data-note" id="wcDataNote">数据尚未就绪</p>
+    </section>
+    <section class="wc-panel">
+      <header><h3>精细控制</h3><a class="wc-link" href="/rooms">所有设备 →</a></header>
+      <div class="wc-control"><label for="wcBrightness">灯光亮度 <output id="wcBrightnessValue">—</output></label><input type="range" id="wcBrightness" min="0" max="100" value="0" disabled></div>
+      <div class="wc-control"><label for="wcFanSpeed">风扇速度 <output id="wcFanValue">—</output></label><input type="range" id="wcFanSpeed" min="0" max="100" value="0" disabled></div>
+      <div class="wc-link-row"><a href="/access">门禁与摄像头</a><a href="/voice">语音管家</a></div>
+    </section>
+    <section class="wc-panel"><header><h3>最近动态</h3><a class="wc-link" href="/history">家庭记录 →</a></header><div id="wcEvents" class="wc-events"><p>正在读取记录…</p></div></section>
+  </aside>
+</section>
+<dialog id="wcNotes" class="wc-notes">
+  <form method="dialog" class="wc-notes-head"><h3>本机留言板</h3><button aria-label="关闭留言板">×</button></form>
+  <p class="wc-data-note">留言保存在当前浏览器中</p><div id="wcNotesList"></div>
+  <form id="wcNoteForm"><input id="wcNoteInput" maxlength="120" placeholder="给家人留句话…" aria-label="留言内容" required><button class="btn" type="submit">贴上留言</button></form>
+</dialog>
