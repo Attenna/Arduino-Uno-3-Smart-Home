@@ -88,6 +88,14 @@ test('zero sensor readings remain visible', () => {
     assert.equal(ui.element('wcTemperature').textContent, '0.0');
     assert.equal(ui.element('wcHumidity').textContent, '0');
 });
+test('PIR idle and retained occupancy are shown independently', () => {
+    const ui = sandbox();
+    ui.status({...online, motion: false, occupancy: {value: true}});
+    assert.equal(ui.element('wcPirRaw').textContent, '未检测到活动');
+    assert.equal(ui.element('wcOccupancy').textContent, '保持有人');
+    ui.expire();
+    assert.equal(ui.element('wcOccupancy').textContent, '状态未知');
+});
 test('rapid repeat clicks issue only one command per device', async () => {
     const ui = sandbox(); ui.status(online);
     ui.element('door').click(); ui.element('door').click(); await ui.flush();

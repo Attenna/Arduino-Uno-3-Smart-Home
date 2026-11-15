@@ -58,6 +58,14 @@
             text(output, online ? valueText(data[field], '%') : '—');
         }
         const fresh = connected() && data.sensor_online === true;
+        const occupancy = data.occupancy || {};
+        text('wcOccupancy', fresh && typeof occupancy.value === 'boolean'
+            ? (occupancy.value ? '保持有人' : '未保持有人') : '状态未知');
+        text('wcPirRaw', fresh && data.motion != null
+            ? (data.motion ? '检测到活动' : '未检测到活动') : '离线 / 无有效数据');
+        text('wcOccupancyDetail', fresh && occupancy.updated_at
+            ? '保持状态更新时间：' + occupancy.updated_at + ' UTC · ' + (occupancy.source || '自动化')
+            : '由自动化保持状态；离线时不推断是否有人');
         text('wcFreshness', fresh ? '实时采样' : '数据未更新');
         text('wcTemperature', fresh ? valueText(data.temperature, '', 1) : '—');
         text('wcHumidity', fresh ? valueText(data.humidity) : '—');
@@ -66,7 +74,7 @@
         for (const [id, field, yes, no] of [
             ['wcSmoke', 'smoke', '烟雾告警', '正常'],
             ['wcRain', 'rain', '有雨', '无雨'],
-            ['wcMotion', 'motion', '有人', '无人'],
+            ['wcMotion', 'motion', '检测到活动', '未检测到活动'],
         ]) text(id, fresh && data[field] != null ? (data[field] ? yes : no) : '—');
         text('wcDataNote', fresh ? '环境读数来自传感器最新采样' : '传感器离线或数据过期，等待新采样');
     }

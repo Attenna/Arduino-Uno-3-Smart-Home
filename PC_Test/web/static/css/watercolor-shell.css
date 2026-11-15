@@ -47,6 +47,9 @@ body { min-width: 1000px; }
 .wc-quick[aria-busy="true"] { border-color: #b9936a; }
 .wc-quick:disabled { cursor: not-allowed; opacity: .55; }
 .wc-side { display: grid; gap: 15px; }
+.wc-occupancy { padding: 13px; margin-bottom: 12px; background: #eaf0e7; border-radius: 14px; }
+.wc-occupancy strong { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; }
+.wc-occupancy p { margin-top: 7px; font-size: 10px; color: var(--text-secondary); overflow-wrap: anywhere; }
 .wc-panel { padding: 18px; }
 .wc-panel header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; gap: 10px; }
 .wc-panel h3 { margin: 0; font-size: 15px; }
