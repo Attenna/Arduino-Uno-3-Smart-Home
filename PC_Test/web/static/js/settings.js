@@ -8,11 +8,7 @@ const QUIET_KEY = 'smart_home_quiet_hours';
 const ALERT_ACCESS_KEY = 'smart_home_alert_access';
 const ALERT_OFFLINE_KEY = 'smart_home_alert_offline';
 
-const DEFAULT_MEMBERS = [
-    { name: '张哲俊', role: 'owner', rfid: 'A1B2C3D4' },
-    { name: '家人', role: 'member', rfid: 'E5F6A7B8' },
-    { name: '访客', role: 'guest', rfid: '—' },
-];
+const DEFAULT_MEMBERS = [];
 
 function esc(s) {
     return String(s === null || s === undefined ? '' : s).replace(/[&<>"']/g, c => (
@@ -46,41 +42,25 @@ function roleLabel(role) {
     return t(map[role] || 'settings.role_member');
 }
 
-function renderMembers() {
+async function renderMembers() {
     const box = document.getElementById('memberList');
     if (!box) return;
-    const list = loadMembers();
-    box.innerHTML = list.map((m, i) => `
-        <div class="person-item" style="display:flex;align-items:center;gap:12px;padding:10px;border:1px solid var(--border-color);border-radius:var(--radius-sm)">
-            <div class="person-info">
-                <div class="person-avatar">${esc((m.name || '?').slice(0, 1))}</div>
-                <div>
-                    <div class="person-name">${esc(m.name)}</div>
-                    <div class="person-rfid">${esc(m.rfid || '—')} · ${esc(roleLabel(m.role))}</div>
-                </div>
-            </div>
-            <button class="btn btn-sm btn-danger" style="margin-left:auto" onclick="removeMember(${i})">
-                ${esc(t('settings.remove'))}
-            </button>
-        </div>`).join('');
+    try {
+        const response = await fetch('/api/access/persons');
+        if (!response.ok) throw new Error('无法读取人员名单');
+        const data = await response.json();
+        const people = Array.isArray(data) ? data : (data.persons || []);
+        box.innerHTML = people.length ? people.map(person => `
+            <div class="person-item">
+                <div class="person-info"><div class="person-avatar">${esc(person.name.slice(0, 1))}</div>
+                <div><div class="person-name">${esc(person.name)}</div>
+                <div class="person-rfid">${person.enabled ? '已启用' : '已停用'} · ${person.face_id ? '已录入人脸' : '未录入人脸'}</div></div></div>
+                <a class="btn btn-sm" href="/access">管理门禁凭证</a>
+            </div>`).join('') : '<p>暂无注册人员，请在门禁页面添加。</p>';
+    } catch (error) { box.textContent = error.message; }
 }
-
-function addMember() {
-    const name = (prompt(t('settings.prompt_name')) || '').trim();
-    if (!name) return;
-    const list = loadMembers();
-    list.push({ name, role: 'member', rfid: '—' });
-    saveMembers(list);
-    renderMembers();
-}
-
-function removeMember(index) {
-    const list = loadMembers();
-    if (!list[index]) return;
-    list.splice(index, 1);
-    saveMembers(list);
-    renderMembers();
-}
+function addMember() { location.href = '/access'; }
+function removeMember() { location.href = '/access'; }
 
 // ==================== 偏好设置 ====================
 
@@ -266,7 +246,6 @@ const DEVICE_TYPES = [
     { key: 'living_window', zh: '窗户传感器', en: 'Window sensor' },
     { key: 'main_light', zh: '灯光', en: 'Light' },
     { key: 'fan', zh: '风扇', en: 'Fan' },
-    { key: 'ac', zh: '空调', en: 'AC' },
     { key: 'door_lock', zh: '门锁', en: 'Door lock' },
     { key: 'camera', zh: '摄像头', en: 'Camera' },
 ];
@@ -307,7 +286,6 @@ async function loadDevMap() {
 async function haAction(device, action) {
     const labels = {
         light_on: t('ha.light_on'), light_off: t('ha.light_off'),
-        ac_on: t('ha.ac_on'), ac_off: t('ha.ac_off'),
         fan_on: t('ha.fan_on'), fan_off: t('ha.fan_off'),
         door_unlock: t('ha.unlock'), door_lock: t('ha.lock'),
     };
@@ -315,7 +293,6 @@ async function haAction(device, action) {
     let result = null;
     try {
         if (device === 'light') result = await apiPost('/api/ha/light', { action, brightness: action === 'on' ? 100 : 0 });
-        else if (device === 'ac') result = await apiPost('/api/ha/ac', { mode: action === 'on' ? 'cool' : 'off' });
         else if (device === 'fan') result = await apiPost('/api/ha/fan', { speed: action === 'on' ? 100 : 0 });
         else if (device === 'door') result = await apiPost('/api/ha/door', { action });
     } catch (e) { result = null; }

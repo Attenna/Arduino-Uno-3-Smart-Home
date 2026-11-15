@@ -152,37 +152,18 @@ class ApiTests(unittest.TestCase):
         self.assertIsNone(response.headers.get("Connection"))
         self.assertIn('"type":"user"', response.get_data(as_text=True))
 
-    def test_ac_resends_unchanged_state(self):
+    def test_removed_ac_routes_return_404(self):
         self.login()
-        with patch.object(devices, "_ac_state_from_db", return_value=midea_ac.AcState()), \
-             patch.object(devices, "_record_ac"), \
-             patch.object(devices, "_hw_call", return_value=(True, "ok")) as hardware:
-            response = self.client.post("/api/ac", json={"temperature": 26},
-                                        headers={"Origin": "http://localhost"})
-            self.assertEqual(response.status_code, 200)
-            hardware.assert_called_once()
+        for path in ("/api/ac", "/api/ha/ac"):
+            self.assertEqual(self.client.post(path, json={}, headers={"Origin": "http://localhost"}).status_code, 404)
+        self.assertEqual(self.client.get("/voice").status_code, 404)
 
-    def test_concurrent_ac_patches_do_not_overwrite(self):
-        state = [midea_ac.AcState()]
-        results = []
-        def command(*args, **kwargs):
-            time.sleep(.03)
-            return True, "ok"
-        def request(payload):
-            client = self.app.test_client()
-            self.login(client)
-            results.append(client.post("/api/ac", json=payload,
-                                       headers={"Origin": "http://localhost"}).status_code)
-        with patch.object(devices, "_ac_state_from_db", side_effect=lambda: state[0]), \
-             patch.object(devices, "_record_ac", side_effect=lambda value: state.__setitem__(0, value)), \
-             patch.object(devices, "_hw_call", side_effect=command):
-            threads = [threading.Thread(target=request, args=(payload,))
-                       for payload in ({"temperature": 23}, {"fan": "high"})]
-            for thread in threads: thread.start()
-            for thread in threads: thread.join(2)
-        self.assertEqual(results, [200, 200])
-        self.assertEqual(state[0].temperature, 23)
-        self.assertEqual(state[0].fan, "high")
+    def test_fan_positive_values_map_to_on(self):
+        self.login()
+        with patch.object(devices, "_hw_call", return_value=(True, "ok")) as call:
+            response = self.client.post("/api/fan", json={"speed": 30}, headers={"Origin": "http://localhost"})
+            self.assertEqual(response.status_code, 200)
+            call.assert_called_with("control_fan", 100)
 
 
 class LightModeTests(unittest.TestCase):

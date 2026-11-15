@@ -58,7 +58,7 @@
                     <circle cx="12" cy="12" r="3"/>
                     <path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/>
                 </svg>
-                <h3 data-i18n="fan.title">风扇 / 伺服电机</h3>
+                <h3 >风扇</h3>
             </div>
             <div class="card-body">
                 <div class="fan-visual" id="fanVisual">
@@ -68,22 +68,16 @@
                         <div class="blade"></div>
                     </div>
                 </div>
-                <div class="control-row">
-                    <label data-i18n="fan.speed">风扇速度</label>
-                    <div class="slider-container">
-                        <input type="range" id="fanSpeed" min="0" max="100" value="0" class="slider slider-fan">
-                        <span class="slider-value" id="fanSpeedValue">0%</span>
-                    </div>
-                </div>
+
                 <div class="fan-readback hidden" id="fanReadback">
                     <span data-i18n="fan.readback">回读</span>
                     <span id="fanReadbackValue">--%</span>
                 </div>
                 <div class="btn-group">
                     <button class="btn btn-sm" onclick="setFan(0)" data-i18n="fan.off">关闭</button>
-                    <button class="btn btn-sm" onclick="setFan(30)" data-i18n="fan.low">低速</button>
-                    <button class="btn btn-sm" onclick="setFan(60)" data-i18n="fan.medium">中速</button>
-                    <button class="btn btn-sm" onclick="setFan(100)" data-i18n="fan.high">高速</button>
+
+
+                    <button class="btn btn-sm" onclick="setFan(100)" >开启</button>
                 </div>
             </div>
         </div>
@@ -238,14 +232,8 @@
                     <div class="remote-icon door-close-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg></div>
                     <span data-i18n="remote.door_close">关门</span>
                 </div>
-                <div class="remote-device" onclick="remoteControl('ac_on')">
-                    <div class="remote-icon ac-on-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="10" rx="2"/><path d="M6 18v2M12 18v3M18 18v2"/></svg></div>
-                    <span data-i18n="remote.ac_on">开空调</span>
-                </div>
-                <div class="remote-device" onclick="remoteControl('ac_off')">
-                    <div class="remote-icon ac-off-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="10" rx="2"/><line x1="3" y1="15" x2="21" y2="3"/></svg></div>
-                    <span data-i18n="remote.ac_off">关空调</span>
-                </div>
+
+
                 <div class="remote-device" onclick="location.href='/access'">
                     <div class="remote-icon camera-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg></div>
                     <span data-i18n="remote.camera">摄像头</span>

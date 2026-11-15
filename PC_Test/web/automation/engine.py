@@ -42,10 +42,8 @@ from .oled_carousel import (DEFAULT_PAGES, PAGES_VERSION, OledCarousel,
                             OLED_MIN_INTERVAL, is_legacy_default_pages)
 from .schema import validate_rule, validate_rules
 from . import webhook
-import midea_ac
 from .. import voice_client
 from .. import light_state
-from ..ac_state import AC_LOCK, AC_KEYS, ac_state_from_db, write_ac_state
 # RFID 卡号归一化：规则里存的与事件里带的两侧都归一后再比
 from ..database import normalize_uid
 
@@ -1361,7 +1359,7 @@ class AutomationEngine:
                     target = speed
                 else:
                     target = self._fan_memory
-            target = max(0, min(100, int(target)))
+            target = 100 if target > 0 else 0
             # 默认规则控制自动开启权限；结合当前设备状态去重，手动改动后可恢复联动。
             with self._lock:
                 dup = (self._last_cmd.get("fan") == target
@@ -1404,21 +1402,6 @@ class AutomationEngine:
             if ok:
                 return True, f"红外已发射 addr=0x{key[0]:02X} cmd=0x{key[1]:02X}"
             return False, msg
-        if device == "ac":
-            with AC_LOCK:
-                # 空调是"合并式"状态（一帧带齐开关/模式/温度/风速）：
-                # 规则只给要改的项，其余按库里的当前值补齐后整帧下发。
-                try:
-                    target, changed = midea_ac.apply_overrides(
-                        ac_state_from_db(self.db),
-                        **{k: action.get(k) for k in AC_KEYS})
-                except (ValueError, TypeError) as e:
-                    return False, f"空调参数无效：{e}"
-                ok, msg = self.bridge.control_ac(**target.snapshot())
-                if ok:
-                    write_ac_state(self.db, target)
-                    return True, "空调已更新"
-                return False, msg
         if device == "oled":
             # 清屏比分快且不依赖占位符
             if action.get("clear"):

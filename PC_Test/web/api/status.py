@@ -13,7 +13,8 @@ bp = Blueprint("status", __name__)
 
 @bp.route("/api/status")
 def get_status():
-    status = db.get_current_status()
+    status = {key: value for key, value in db.get_current_status().items()
+              if not key.startswith(("ac_", "rb_ac", "soil_"))}
     status["statistics"] = db.get_statistics()
     bridge = extensions.bridge
     status["hardware_bridge"] = {

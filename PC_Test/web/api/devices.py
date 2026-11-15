@@ -11,11 +11,9 @@ import time
 
 from flask import Blueprint, jsonify, request
 
-import midea_ac
 
 from .. import extensions
 from .. import light_state
-from ..ac_state import AC_KEYS, AC_LOCK, serialized_ac, ac_state_from_db, write_ac_state
 from ..extensions import db
 
 logger = logging.getLogger(__name__)
@@ -89,8 +87,6 @@ def _record_fan(speed):
 
 # ==================== 空调（美的红外）====================
 
-def _ac_state_from_db() -> midea_ac.AcState:
-    return ac_state_from_db(db)
 
 
 def _opt_bool(data, key):
@@ -105,9 +101,6 @@ def _opt_bool(data, key):
     raise ValueError(f"{key} 需为 true/false")
 
 
-def _record_ac(state, who="面板"):
-    write_ac_state(db, state)
-    _note_manual("ac", reason=f"{who}手动操作空调，全屋切到手动模式并保持当前状态")
 
 
 def _pct(value, default=0):
@@ -151,7 +144,7 @@ class _DeviceGate:
     自动化引擎走 bridge 直连且自带下发去重，不经此收口器。
     """
 
-    DEVICES = ("door", "window", "light", "fan", "ac")
+    DEVICES = ("door", "window", "light", "fan")
 
     def __init__(self):
         self._submit_lock = threading.Lock()
@@ -430,7 +423,7 @@ def get_fan_status():
 @bp.route("/api/fan", methods=["POST"])
 def control_fan():
     data = request.get_json(silent=True) or {}
-    speed = _pct(data.get("speed"), 0)
+    speed = 100 if _pct(data.get("speed"), 0) > 0 else 0
     cid, seq = _client_token(data)
 
     def _run(v):
@@ -461,55 +454,8 @@ def control_fan():
 
 # ==================== 空调（美的红外遥控）====================
 
-@bp.route("/api/ac", methods=["GET"])
-def get_ac_status():
-    return jsonify({**_ac_state_from_db().snapshot(), "state_source": "last_sent", "confirmed": False})
 
 
-@bp.route("/api/ac", methods=["POST"])
-@serialized_ac
-def control_ac():
-    """只传要改的字段；其余按数据库里的当前状态补齐后整帧下发。
-
-    红外指令里一帧就带齐了开关/模式/温度/风速，所以这里下发的是**完整状态**
-    而不是增量——MCP 进程重启后第一次指令也能一次带齐全部设定。
-    """
-    data = request.get_json(silent=True) or {}
-    try:
-        target, changed = midea_ac.apply_overrides(
-            _ac_state_from_db(),
-            power=_opt_bool(data, "power"),
-            mode=data.get("mode"),
-            temperature=data.get("temperature"),
-            fan=data.get("fan"),
-            swing_ud=_opt_bool(data, "swing_ud"),
-            swing_lr=_opt_bool(data, "swing_lr"),
-        )
-    except (ValueError, TypeError) as e:
-        return jsonify({"error": f"空调参数无效：{e}",
-                        "error_en": f"Invalid AC parameter: {e}"}), 400
-
-    payload = target.snapshot()
-    cid, seq = _client_token(data)
-
-    def _run(v):
-        payload2, target2 = v
-        ok, msg = _hw_call("control_ac", **payload2)
-        if ok:
-            _record_ac(target2)
-        return ok, msg
-
-    # 空调整帧天然幂等，这里只需串行化 + 连点合并 + seq 防乱序（不做状态比对）
-    outcome, _, ok, msg = gate.submit(
-        "ac", (payload, target), cid, seq, _run, get_current=None)
-    if not ok:
-        return _hardware_error(msg)
-    snap = _ac_state_from_db().snapshot()
-    if outcome == "stale":
-        return jsonify({**snap, "message": "已按最新操作执行",
-                        "message_en": "Latest command applied"})
-    return jsonify({**snap, "message": "空调已更新",
-                    "message_en": "AC updated"})
 
 
 # ==================== 硬件工具网关（web 独占串口，语音/外部系统共用）====================
@@ -524,7 +470,7 @@ def hardware_tools():
     if bridge is None or not bridge.tool_schemas:
         return jsonify({"error": "硬件服务未就绪（MCP 未连接或串口未启用）",
                         "error_en": "Hardware tools unavailable"}), 503
-    return jsonify({"tools": bridge.tool_schemas})
+    return jsonify({"tools": [tool for tool in bridge.tool_schemas if tool.get("name") != "ac"]})
 
 
 @bp.route("/api/hardware/tool", methods=["POST"])
@@ -535,12 +481,21 @@ def hardware_tool():
     web 既是执行者也是记账者，状态/历史/「手动优先」事件天然与面板一致，
     不再需要 manual_report 二段式回传。
     """
+    if (request.get_json(silent=True) or {}).get("name") == "ac":
+        return jsonify(error="不支持的硬件工具"), 404
     bridge = extensions.bridge
     if bridge is None:
         return jsonify({"ok": False,
                         "error": "硬件服务未启动（硬件桥未初始化）"}), 503
     data = request.get_json(silent=True) or {}
     name = data.get("name")
+    if name == "ac":
+        return jsonify(error="不支持的硬件工具"), 404
+    if name == "fan" and isinstance(data.get("arguments"), dict):
+        arguments = data["arguments"]
+        if arguments.get("action") == "set_speed":
+            arguments["action"] = "on" if _pct(arguments.get("value"), 0) > 0 else "off"
+            arguments.pop("value", None)
     arguments = data.get("arguments") or {}
     if not isinstance(name, str) or not name:
         return jsonify({"ok": False, "error": "name 不能为空"}), 400
@@ -551,13 +506,7 @@ def hardware_tool():
     except (TypeError, ValueError):
         timeout = 10.0
 
-    with AC_LOCK if name == "ac" else nullcontext():
-        if name == "ac":
-            try:
-                target, _ = midea_ac.apply_overrides(_ac_state_from_db(), **arguments)
-                arguments = target.snapshot()
-            except (TypeError, ValueError) as exc:
-                return jsonify(ok=False, error=str(exc)), 400
+    with nullcontext():
         ok, text = bridge.call_tool(name, arguments, timeout=timeout)
         if ok:
             report = _tool_state_report(name, arguments)
@@ -607,17 +556,10 @@ def _tool_state_report(name, args):
             return {"device": "fan", "speed": light_state.pct255(args.get("value"), 50)}
         return None
 
-    if name == "ac":
-        # 空调没有 action：只回传本次真正给出的字段，按 DB 当前值补齐
-        keys = ("power", "mode", "temperature", "fan",
-                "swing_ud", "swing_lr")
-        state = {k: args[k] for k in keys if args.get(k) is not None}
-        return {"device": "ac", "state": state} if state else None
 
     return None
 
 
-@serialized_ac
 def _bookkeep(data, who):
     """按 manual_report 形态做面板等效记账（只写库/发事件，不下发硬件）。
 
@@ -650,19 +592,6 @@ def _bookkeep(data, who):
         speed = _pct(data.get("speed"), 0)
         _record_fan(speed)
         return 200, {"ok": True, "fan_speed": speed}
-    if device == "ac":
-        # 空调是"合并式"状态：调用方只报变化的字段，这里按 DB 当前值补齐
-        state = data.get("state")
-        if not isinstance(state, dict):
-            return 400, {"error": "空调记账需要 state 对象"}
-        try:
-            target, _ = midea_ac.apply_overrides(
-                _ac_state_from_db(),
-                **{k: v for k, v in state.items() if k in AC_KEYS})
-        except (ValueError, TypeError) as e:
-            return 400, {"error": f"空调参数无效：{e}"}
-        _record_ac(target, who=who)
-        return 200, {"ok": True, **target.snapshot()}
 
     return 400, {"error": f"不支持的设备: {device or '(空)'}",
                  "error_en": f"Unsupported device: {device or '(empty)'}"}

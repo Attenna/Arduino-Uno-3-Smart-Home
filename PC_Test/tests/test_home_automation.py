@@ -296,17 +296,9 @@ class AutomationRiskTests(unittest.TestCase):
         self.engine._snapshot.update(data)
         self.engine._snapshot_ts = time.time()
 
-    def test_R1_ac_fan_enum_accepts_legacy_levels(self):
-        def fan_level(raw):
-            rule = validate_rule(dict(
-                name="空调", trigger=dict(kind="time", hhmm="08:00"), conditions=[],
-                actions=[dict(device="ac", temperature=26, fan=raw)]))
-            return rule["actions"][0]["fan"]
-        for raw, want in [("low", "low"), ("MID", "mid"), ("60", "mid"),
-                          ("100", "high"), (20, "low"), ("auto", "auto")]:
-            self.assertEqual(fan_level(raw), want)
-        with self.assertRaises(ValidationError):
-            fan_level("turbo")
+    def test_removed_ac_is_not_an_automation_device(self):
+        from web.automation.capabilities import ACTION_DEVICES
+        self.assertNotIn("ac", ACTION_DEVICES)
 
     def test_R7_comparison_checked_by_source_kind_on_save(self):
         for bad in [dict(sensor="temperature", op=">", value="26"),

@@ -42,7 +42,7 @@ const I18N = {
             'humidity.label': '湿度 (%)',
 
             // 风扇
-            'fan.title': '风扇 / 伺服电机',
+            'fan.title': '风扇',
             'fan.speed': '风扇速度',
             'fan.off': '关闭',
             'fan.low': '低速',
@@ -735,7 +735,7 @@ const I18N = {
             'humidity.label': 'Humidity (%)',
 
             // Fan
-            'fan.title': 'Fan / Servo Motor',
+            'fan.title': 'Fan',
             'fan.speed': 'Fan Speed',
             'fan.off': 'Off',
             'fan.low': 'Low',

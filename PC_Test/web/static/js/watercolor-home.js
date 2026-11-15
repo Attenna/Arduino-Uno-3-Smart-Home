@@ -41,7 +41,7 @@
             button.setAttribute('aria-busy', String(pending.has(device)));
             button.setAttribute('aria-pressed', String(online && deviceOn(device)));
             const label = pending.has(device) ? '执行中…' : !online ? (canControl() ? '等待确认' : '设备离线') :
-                device === 'fan' ? (deviceOn(device) ? data.fan_speed + '%' : '已停止') :
+                device === 'fan' ? (deviceOn(device) ? '已开启' : '已停止') :
                 device === 'light' ? (deviceOn(device) ? data.light_brightness + '%' : '已关闭') :
                 device === 'buzzer' ? '点击自检' : (deviceOn(device) ? '已打开' : '已关闭');
             const detail = button.querySelector('[data-wc-status], small');
@@ -50,7 +50,7 @@
         });
         for (const [id, field, device, output] of [
             ['wcBrightness', 'light_brightness', 'light', 'wcBrightnessValue'],
-            ['wcFanSpeed', 'fan_speed', 'fan', 'wcFanValue'],
+
         ]) {
             const slider = document.getElementById(id);
             slider.disabled = !canControl() || pending.has(device);
@@ -63,7 +63,6 @@
         text('wcHumidity', fresh ? valueText(data.humidity) : '—');
         text('wcLightRaw', fresh ? valueText(data.light_raw) : '—');
         text('wcDistance', fresh ? valueText(data.distance, ' cm') : '—');
-        text('wcSoil', fresh ? valueText(data.soil_moisture) : '—');
         for (const [id, field, yes, no] of [
             ['wcSmoke', 'smoke', '烟雾告警', '正常'],
             ['wcRain', 'rain', '有雨', '无雨'],
@@ -106,14 +105,14 @@
         const device = button.dataset.wcDevice;
         let body;
         if (device === 'light') body = { status: deviceOn(device) ? 'off' : 'on', brightness: deviceOn(device) ? 0 : 72, ...lightStyleFromStatus(snapshot || {}) };
-        else if (device === 'fan') body = { speed: deviceOn(device) ? 0 : 60 };
+        else if (device === 'fan') body = { speed: deviceOn(device) ? 0 : 100 };
         else if (device === 'buzzer') body = { name: 'buzzer', arguments: { action: 'beep', count: 2, on_ms: 180, off_ms: 180 } };
         else body = { status: deviceOn(device) ? 'closed' : 'open' };
         command(device, body);
     }));
 
     for (const [id, device, output] of [
-        ['wcBrightness', 'light', 'wcBrightnessValue'], ['wcFanSpeed', 'fan', 'wcFanValue'],
+        ['wcBrightness', 'light', 'wcBrightnessValue'],
     ]) {
         const slider = document.getElementById(id);
         slider.addEventListener('input', () => text(output, slider.value + '%'));
