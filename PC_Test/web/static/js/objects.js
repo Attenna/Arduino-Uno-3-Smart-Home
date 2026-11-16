@@ -124,7 +124,21 @@ setInterval(()=>{
 window.addEventListener('pagehide',()=>{
   if(running) fetch('/api/monitor/session',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...options(),active:false}),keepalive:true});
 });
-video.onerror=()=>{clearBoxes();el('message').textContent='摄像头画面不可用，请检查连接';};
+let reconnectTimer = null;
+video.onload = () => {
+  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+  if (!running && !previewUrl) el('message').textContent = '摄像头实时画面已连接，可开始检测';
+};
+video.onerror = () => {
+  clearBoxes();
+  if (previewUrl) { el('message').textContent = '图片无法显示，请重新选择图片'; return; }
+  el('message').textContent = '摄像头画面暂时不可用，正在重新连接…';
+  if (!reconnectTimer) reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    if (!previewUrl) video.src = '/api/camera/stream?t=' + Date.now();
+  }, 3000);
+};
+if (video.complete && video.naturalWidth > 0) video.onload();
 api('/api/face/status').then(s => { el('faceResult').textContent = s.model_loaded ? '人脸模型已加载，等待检测' : '人脸模型未就绪'; }).catch(e => el('faceResult').textContent = e.message);
 api('/api/objects/status').then(s => { el('status').textContent = s.loaded ? `已加载 · ${Object.values(s.classes).map(displayLabel).join('、')} · ${s.input_size.join(' × ')} · ${s.provider}` : s.error; }).catch(e => el('status').textContent = e.message);
 events().catch(e => el('message').textContent = e.message);

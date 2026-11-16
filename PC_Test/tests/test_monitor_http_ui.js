@@ -11,7 +11,7 @@ for (const crypto of [undefined, {}, {randomUUID:()=> 'fixture-uuid'}]) {
    if(!elements.has(id)) elements.set(id,{checked:false,textContent:'',replaceChildren(){},getContext(){return {clearRect(){}}}});
    return elements.get(id);
   }};
-  const context={document,crypto,console,Date,Math,performance:{now:()=>0},setInterval(){},window:{addEventListener(){}},
+  const context={document,crypto,console,Date,Math,performance:{now:()=>0},setInterval(){},setTimeout(){},clearTimeout(){},window:{addEventListener(){}},
    fetch:async(url)=>{requested.push(url);return {ok:true,json:async()=>url.includes('/events')?[]:url.includes('/objects/status')?{loaded:true,classes:{0:'light bulb'},input_size:[640,640],provider:'Ascend310B4'}:{model_loaded:true}}}};
   vm.runInNewContext(code,context);
   await new Promise(resolve=>setImmediate(resolve));

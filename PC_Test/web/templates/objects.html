@@ -6,7 +6,7 @@
     <small>同一画面查看人脸身份与物体检测结果</small>
 {% endblock %}
 {% block head %}
-<link rel="stylesheet" href="{{ url_for('static', filename='css/objects.css') }}?v=20261116">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/objects.css') }}?v=20261116-live-layer-fix">
 {% endblock %}
 {% block content %}
 <div class="objects-page">
@@ -59,7 +59,7 @@
 </div>
 {% endblock %}
 {% block scripts %}
-<script src="{{ url_for('static', filename='js/objects.js') }}?v=20261116-lan-fix"></script>
+<script src="{{ url_for('static', filename='js/objects.js') }}?v=20261116-video-retry"></script>
 <script>
 (function () {
     const clock = document.getElementById('currentTime');
