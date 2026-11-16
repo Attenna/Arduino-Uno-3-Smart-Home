@@ -47,7 +47,7 @@
                 <h3>物体</h3><div id="result" role="status">等待检测</div>
                 <h3>人脸</h3><div id="faceResult" role="status">等待检测</div>
                 <p class="objects-note">识别开关控制本页显示与推理。门禁自动验证由后台运行，通行结果请到门禁管理查看。</p>
-                <p class="objects-note">视频持续播放，后台完成一轮后处理最新帧。检测框超过5秒会清除。位置框使用原图像素，依次为左、上、右、下。</p>
+                <p class="objects-note">视频持续播放，后台每 {{ monitor_interval }} 秒处理最新帧，与门禁后台的常规间隔一致。检测框超过5秒会清除。位置框使用原图像素，依次为左、上、右、下。</p>
             </section>
         </div>
     </div>

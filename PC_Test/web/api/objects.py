@@ -95,7 +95,8 @@ def init_objects(app):
                 raise RuntimeError(data.get("error", "检测失败"))
             data.pop("preview", None)
             return data
-    app.extensions["monitor_worker"] = MonitorWorker(infer)
+    watcher = (app.config["SMART_HOME_CFG"].get("face") or {}).get("watcher") or {}
+    app.extensions["monitor_worker"] = MonitorWorker(infer, interval=watcher.get("interval", 2.0))
     app.register_blueprint(bp)
 
 
@@ -106,7 +107,7 @@ def service():
 @bp.get("/monitor")
 @bp.get("/objects")
 def page():
-    return render_template("objects.html")
+    return render_template("objects.html", monitor_interval=current_app.extensions["monitor_worker"].interval)
 
 
 @bp.get("/api/objects/status")

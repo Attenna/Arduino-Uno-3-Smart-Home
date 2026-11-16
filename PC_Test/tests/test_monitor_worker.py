@@ -39,3 +39,14 @@ class MonitorWorkerTests(unittest.TestCase):
         revision = worker.revision
         worker.configure('one', True, {'bulb_light':'false'})
         self.assertFalse(worker.current(revision))
+
+
+    def test_heartbeat_does_not_accelerate_inference(self):
+        worker = self.worker()
+        worker.configure('one', True, {'objects':'true'})
+        worker.wake.clear()
+        worker.configure('one', True, {'objects':'true'})
+        self.assertFalse(worker.wake.is_set())
+        self.assertEqual(worker.snapshot()['interval_ms'], 2000)
+        worker.configure('one', True, {'objects':'false'})
+        self.assertTrue(worker.wake.is_set())
