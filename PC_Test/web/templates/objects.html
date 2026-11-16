@@ -6,7 +6,7 @@
     <small>同一画面查看人脸身份与物体检测结果</small>
 {% endblock %}
 {% block head %}
-<link rel="stylesheet" href="{{ url_for('static', filename='css/objects.css') }}?v=20261116-live-layer-fix">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/objects.css') }}?v=20261116-video-fallback">
 {% endblock %}
 {% block content %}
 <div class="objects-page">
@@ -21,6 +21,7 @@
                 <img id="liveVideo" src="/api/camera/stream" alt="摄像头实时画面">
                 <canvas id="view" width="960" height="540" aria-label="检测框叠加层"></canvas>
             </div>
+            <p id="videoStatus" role="status">正在连接摄像头画面…</p>
             <p id="message" role="status">选择摄像头检测或上传图片</p>
             <div class="objects-actions">
                 <button id="once" class="objects-primary">检测摄像头</button>
@@ -59,7 +60,7 @@
 </div>
 {% endblock %}
 {% block scripts %}
-<script src="{{ url_for('static', filename='js/objects.js') }}?v=20261116-video-retry"></script>
+<script src="{{ url_for('static', filename='js/objects.js') }}?v=20261116-video-fallback"></script>
 <script>
 (function () {
     const clock = document.getElementById('currentTime');

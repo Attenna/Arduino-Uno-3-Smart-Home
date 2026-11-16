@@ -5,7 +5,7 @@ const displayLabel = label => labels[label] || label;
 async function api(url, options) {
   const response = await fetch(url, options);
   const data = await response.json();
-  if (!response.ok) throw new Error(data.error || '请求失败');
+  if (!response.ok) { const error = new Error(data.error || '请求失败'); error.status = response.status; throw error; }
   return data;
 }
 async function events() {
@@ -31,7 +31,8 @@ function clearBoxes() {
 }
 function useLiveVideo() {
   if (previewUrl) { URL.revokeObjectURL(previewUrl); previewUrl = null; }
-  if (video.getAttribute('src') !== '/api/camera/stream') video.src = '/api/camera/stream';
+  if (!snapshotMode && !video.getAttribute('src')?.startsWith('/api/camera/stream')) startVideo();
+  else if (snapshotMode) loadSnapshot();
   clearBoxes();
 }
 function showResult(data, ttl = 5000) {
@@ -67,7 +68,11 @@ async function setRunning(value) {
   generation++;
   running = value;
   try { await updateSession(); }
-  catch (e) { running = false; throw e; }
+  catch (e) {
+    running = false;
+    if (e.status === 409) e.message = '另一个监测标签页已开启连续检测；本页仍可看视频。请在原标签页停止检测，或关闭它后等待15秒再开始。';
+    throw e;
+  }
   el('live').textContent = running ? '停止连续检测' : '开始连续检测';
   el('once').disabled = el('upload').disabled = running;
   clearBoxes(); resultVersion = ''; expiry = 0;
@@ -124,21 +129,48 @@ setInterval(()=>{
 window.addEventListener('pagehide',()=>{
   if(running) fetch('/api/monitor/session',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...options(),active:false}),keepalive:true});
 });
-let reconnectTimer = null;
+// A stream can stay pending without an error in some browsers. Fall back to
+// sequential shared snapshots if no decoded image appears within eight seconds.
+let snapshotMode = false, snapshotTimer = null, videoWatchdog = null;
+function loadSnapshot() {
+  if (previewUrl || !snapshotMode) return;
+  if (snapshotTimer) clearTimeout(snapshotTimer);
+  if (videoWatchdog) clearTimeout(videoWatchdog);
+  video.src = '/api/camera/snapshot?t=' + Date.now();
+  videoWatchdog = setTimeout(() => {
+    el('videoStatus').textContent = '摄像头画面连接超时，正在重试…';
+    loadSnapshot();
+  }, 8000);
+}
+function fallbackVideo() {
+  if (previewUrl) return;
+  snapshotMode = true;
+  el('videoStatus').textContent = '视频流未显示，正在切换连续快照…';
+  loadSnapshot();
+}
+function startVideo() {
+  if (videoWatchdog) clearTimeout(videoWatchdog);
+  video.src = '/api/camera/stream?t=' + Date.now();
+  videoWatchdog = setTimeout(() => {
+    if (!previewUrl && !video.naturalWidth) fallbackVideo();
+  }, 8000);
+}
 video.onload = () => {
-  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
-  if (!running && !previewUrl) el('message').textContent = '摄像头实时画面已连接，可开始检测';
+  if (videoWatchdog) { clearTimeout(videoWatchdog); videoWatchdog = null; }
+  if (previewUrl) { el('videoStatus').textContent = '当前显示上传图片'; return; }
+  el('videoStatus').textContent = snapshotMode ? '摄像头已连接 · 连续快照模式' : '摄像头实时视频已连接';
+  if (snapshotMode) snapshotTimer = setTimeout(loadSnapshot, 250);
 };
 video.onerror = () => {
   clearBoxes();
-  if (previewUrl) { el('message').textContent = '图片无法显示，请重新选择图片'; return; }
-  el('message').textContent = '摄像头画面暂时不可用，正在重新连接…';
-  if (!reconnectTimer) reconnectTimer = setTimeout(() => {
-    reconnectTimer = null;
-    if (!previewUrl) video.src = '/api/camera/stream?t=' + Date.now();
-  }, 3000);
+  if (videoWatchdog) { clearTimeout(videoWatchdog); videoWatchdog = null; }
+  if (previewUrl) { el('videoStatus').textContent = '图片无法显示，请重新选择图片'; return; }
+  if (!snapshotMode) { fallbackVideo(); return; }
+  el('videoStatus').textContent = '摄像头画面暂不可用，正在重试…';
+  snapshotTimer = setTimeout(loadSnapshot, 3000);
 };
-if (video.complete && video.naturalWidth > 0) video.onload();
+// Restart after installing handlers so cached/early errors are also handled.
+startVideo();
 api('/api/face/status').then(s => { el('faceResult').textContent = s.model_loaded ? '人脸模型已加载，等待检测' : '人脸模型未就绪'; }).catch(e => el('faceResult').textContent = e.message);
 api('/api/objects/status').then(s => { el('status').textContent = s.loaded ? `已加载 · ${Object.values(s.classes).map(displayLabel).join('、')} · ${s.input_size.join(' × ')} · ${s.provider}` : s.error; }).catch(e => el('status').textContent = e.message);
 events().catch(e => el('message').textContent = e.message);
