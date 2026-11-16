@@ -61,8 +61,8 @@ Module B 是一块 Arduino Uno，负责执行硬件动作并驱动显示设备�
 
 | 引脚 | 设备 |
 |------|------|
-| D2 | 门舵机 |
-| D3 | 窗舵机 |
+| D2 | 窗舵机（房屋模型交叉接线） |
+| D3 | 门舵机（房屋模型交叉接线） |
 | D4 | NeoPixel 灯带数据线（B 板保留驱动；灯带实际接 **A 板 A0**，`light` 命令由 A 板执行） |
 | D5 | HC-SR04 Echo（输入） |
 | D6 | HC-SR04 Trig（输出） |
@@ -77,6 +77,8 @@ Module B 是一块 Arduino Uno，负责执行硬件动作并驱动显示设备�
 | A1（D15） | OLED RES |
 
 > OLED 为 **SPI 4 线接口**（SCK/SDA/RES/DC/CS 共 5 根），不是 I2C。SCK、SDA 走 Uno 硬件 SPI 固定引脚 D13/D11。
+> **门/窗舵机为交叉接线**：门舵机信号线接 D3、窗舵机接 D2。固件用 `SERVO_DOOR_WINDOW_CROSSED`（默认 1）适配；
+> 若重新按常规接线（门 D2 / 窗 D3），把该宏置 0 重新烧录。
 > 所有引脚集中在 [src/Config.h](src/Config.h) 管理。
 
 ---

@@ -29,8 +29,17 @@
 #endif
 
 // ---- 舵机 ----
+// 房屋模型（2026-11 装配）的舵机信号线是交叉的：门舵机接 D3、窗舵机接 D2，
+// 与常规接线（门 D2 / 窗 D3）相反。这是装配现状，不是软件错误；宏置 1 让
+// door/window 命令仍分别驱动各自的机构。若改回常规接线，把宏置 0 即可。
+#define SERVO_DOOR_WINDOW_CROSSED 1
+#if SERVO_DOOR_WINDOW_CROSSED
+#define DOOR_SERVO_PIN      3
+#define WINDOW_SERVO_PIN    2
+#else
 #define DOOR_SERVO_PIN      2
 #define WINDOW_SERVO_PIN    3
+#endif
 #define DOOR_CLOSED_ANGLE   0
 #define DOOR_OPEN_ANGLE     90
 #define WINDOW_CLOSED_ANGLE 0
@@ -91,6 +100,6 @@
 // ---- 设备标识 ----
 #define BOARD_TYPE          "MODULE_B"
 #define BOARD_ROLE          "OUTPUT_NODE"
-#define FW_VERSION          "V2.13"  // V2.13 新增栈高水位/空闲 RAM 诊断（ready 帧 diag + selftest ram，EEPROM 跨复位持久化）；V2.12 OLED 多页轮播下移固件并改为 B 每 15s 主动拉取；V2.11 限制灯带 USB 电流并放宽看门狗瞬时阻塞容限；V2.10 新增 HC-SR04 按需测距；V2.9 新增状态回读与自检
+#define FW_VERSION          "V2.14"  // V2.14 适配房屋模型交叉接线：门/窗舵机引脚对调（门=D3、窗=D2，宏可切回）；V2.13 新增栈高水位/空闲 RAM 诊断（ready 帧 diag + selftest ram，EEPROM 跨复位持久化）；V2.12 OLED 多页轮播下移固件并改为 B 每 15s 主动拉取；V2.11 限制灯带 USB 电流并放宽看门狗瞬时阻塞容限；V2.10 新增 HC-SR04 按需测距；V2.9 新增状态回读与自检
 
 #endif // CONFIG_B_H
