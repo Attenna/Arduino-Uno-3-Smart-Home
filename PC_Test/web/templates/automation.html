@@ -8,6 +8,7 @@
 {% endblock %}
 
 {% block head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/ui-polish.css') }}?v=20261116">
     <!-- Blockly 全量自托管（内网/校园网无外网也可用）-->
     <script src="{{ url_for('static', filename='vendor/blockly/blockly.min.js') }}?v=20261001a"></script>
     <script>
@@ -147,7 +148,7 @@
 {% endblock %}
 
 {% block content %}
-    <p><button class="btn" onclick="createDoorwayRule()">📷 新建门口测距拍照规则</button>
+    <p><button class="btn" onclick="createDoorwayRule()"><svg class="ui-line-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="6" width="18" height="14" rx="3"/><circle cx="12" cy="13" r="4"/><path d="m8 6 2-3h4l2 3"/></svg> 新建门口测距拍照规则</button>
     <span class="dev-note">默认小于 50 cm 持续 2 秒，可在积木中修改距离和时间，保存后生效。</span>
     <a href="/security">查看照片记录</a></p>
 
@@ -158,16 +159,16 @@
     <div id="listView">
         <div class="card" style="margin-bottom:12px">
             <div class="card-body auto-toolbar">
-                <h3>🧩 自动化</h3>
+                <h3><svg class="ui-line-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="6" height="6" rx="1"/><rect x="15" y="15" width="6" height="6" rx="1"/><path d="M6 9v9h9M9 6h9v9"/></svg> 自动化</h3>
                 <span id="ruleCount" class="rule-count"></span>
                 <span class="spacer"></span>
                 <button class="btn btn-primary" onclick="createRule()">＋ 新建规则</button>
-                <button class="btn" onclick="createState()">📌 ＋ 新建状态</button>
-                <button class="btn" onclick="restorePresets()">♻️ 恢复内置</button>
-                <button class="btn mini-btn" onclick="refreshPreview()">🔄</button>
+                <button class="btn" onclick="createState()"><svg class="ui-line-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 3 8 0-1 6 3 4H6l3-4-1-6M12 13v8"/></svg> ＋ 新建状态</button>
+                <button class="btn" onclick="restorePresets()"><svg class="ui-line-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 7V3l-4 4M4 17v4l4-4M20 7a9 9 0 0 0-15-1M4 17a9 9 0 0 0 15 1"/></svg> 恢复内置</button>
+                <button class="btn mini-btn" onclick="refreshPreview()"><svg class="ui-line-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 7V3l-4 4M4 17v4l4-4M20 7a9 9 0 0 0-15-1M4 17a9 9 0 0 0 15 1"/></svg></button>
             </div>
             <div class="card-body mode-hint dev-note" style="padding-top:0">
-                📌 全局状态是积木用的命名变量：条目卡片只显示当前值，值由规则里的「设置全局状态」积木维护；
+                <svg class="ui-line-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 3 8 0-1 6 3 4H6l3-4-1-6M12 13v8"/></svg> 全局状态是积木用的命名变量：条目卡片只显示当前值，值由规则里的「设置全局状态」积木维护；
                 「允许自动开风扇」默认「否」＝风扇只能手动开，要放开就改这条状态定义。
             </div>
         </div>
@@ -176,7 +177,7 @@
 
             <div style="display:flex;flex-direction:column;gap:16px">
                 <div class="card">
-                    <div class="card-header"><h3>🖥️ OLED 轮播</h3></div>
+                    <div class="card-header"><h3><svg class="ui-line-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="14" rx="2"/><path d="M12 17v4M8 21h8"/></svg> OLED 轮播</h3></div>
                     <div class="card-body" style="display:flex;flex-direction:column;gap:10px">
                         <div class="dev-note" style="font-size:13px;color:var(--text-secondary)">
                             屏上 3 页（Environment / Devices / Safety）现由 <b>B 板固件每 15 秒</b>
@@ -191,12 +192,12 @@
                                    style="width:70px"> 秒切页
                         </label>
                         <span class="dev-note" style="font-size:12px;color:var(--text-secondary)">仅英文/数字，每行 16 字符；为保护 B 板，最短 15 秒切页</span>
-                        <button class="btn btn-primary" onclick="saveOledConfig()">💾 保存设置</button>
+                        <button class="btn btn-primary" onclick="saveOledConfig()"><svg class="ui-line-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 3h13l4 4v14H3V3h1M7 3v6h10V3M7 21v-8h10v8"/></svg> 保存设置</button>
                         <span id="oledStatus" style="font-size:12px;color:var(--text-secondary)"></span>
                     </div>
                 </div>
                 <div class="card">
-                    <div class="card-header"><h3>📜 执行记录</h3></div>
+                    <div class="card-header"><h3><svg class="ui-line-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 3h10l4 4v14H5V3M9 11h6M9 15h6"/></svg> 执行记录</h3></div>
                     <div class="card-body log-wrap">
                         <table class="auto-log">
                             <thead><tr><th>时间</th><th>规则</th><th>结果</th></tr></thead>
@@ -218,7 +219,7 @@
                     <input type="checkbox" id="editorEnabled"> 启用
                 </label>
                 <button class="btn" id="editorRunBtn" onclick="runEditing()">▶ 运行一次</button>
-                <button class="btn btn-primary" onclick="saveEditor()">💾 保存</button>
+                <button class="btn btn-primary" onclick="saveEditor()"><svg class="ui-line-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 3h13l4 4v14H3V3h1M7 3v6h10V3M7 21v-8h10v8"/></svg> 保存</button>
             </div>
         </div>
         <div class="card" style="margin-top:12px">
@@ -236,5 +237,5 @@
 {% endblock %}
 
 {% block scripts %}
-    <script src="{{ url_for('static', filename='js/automation.js') }}?v=20261011-wait"></script>
+    <script src="{{ url_for('static', filename='js/automation.js') }}?v=20261116-icons"></script>
 {% endblock %}

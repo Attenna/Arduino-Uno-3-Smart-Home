@@ -1,0 +1,28 @@
+.ui-line-icon { width: 20px; height: 20px; flex-shrink: 0; vertical-align: middle; }
+.btn .ui-line-icon, h3 .ui-line-icon { margin-right: 7px; }
+.rc-icon .ui-line-icon { width: 23px; height: 23px; }
+.rc-icon { color: #718676; }
+.rc-icon.evt { color: #a27f64; }
+.rc-icon.time { color: #8b8272; }
+.rc-icon.state { color: #718676; }
+.auto-toolbar h3 { display: inline-flex; align-items: center; }
+.hardware-page { display: grid; gap: 24px; max-width: 1520px; margin: 0 auto; }
+.hardware-page > .card { margin: 0 !important; border-radius: 24px; border: 1px solid var(--border-color); box-shadow: var(--shadow); overflow: hidden; }
+.hardware-page .card-header { padding: 22px 26px; gap: 16px; }
+.hardware-page .card-header h3 { font-size: 18px; }
+.hardware-page .card-body { padding: 24px 26px; }
+.hardware-page .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+.hardware-page .form-group { min-width: 0; }
+.hardware-page .input-field { width: 100%; min-width: 0; border: 1px solid var(--border-color); border-radius: 12px; background: #fcfaf5; }
+.hardware-page .input-field:focus { border-color: #748b7c; box-shadow: 0 0 0 3px #748b7c18; }
+.hardware-page .btn { background: #efeee7; color: #637d6c; border: 1px solid transparent; padding: 10px 16px; }
+.hardware-page .btn:hover { background: #e4e9df; }
+.hardware-page .btn-group { display: flex; flex-wrap: wrap; gap: 10px; }
+.hardware-page .data-table th { background: #f5f2eb; color: var(--text-secondary); font-weight: 500; }
+.hardware-page .data-table th, .hardware-page .data-table td { padding: 16px 18px; border-bottom: 1px solid var(--border-color); }
+.hardware-page .data-table tr:last-child td { border-bottom: 0; }
+.hardware-page .table-wrapper { border: 1px solid var(--border-color); border-radius: 14px; }
+.hardware-page .ha-status-badge, .hardware-page .readonly-badge { color: #637d6c; background: #eaf0e7; border-color: #dce4d7; }
+.hardware-page .remote-grid { gap: 16px; }
+.hardware-page .remote-device { border: 1px solid var(--border-color); background: #fcfaf5; border-radius: 16px; box-shadow: none; }
+.hardware-page .remote-icon { color: #748b7c; background: #edf0e8; }
