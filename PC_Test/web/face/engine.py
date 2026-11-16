@@ -657,14 +657,15 @@ class FaceEngine:
             return []
         return sorted(p.name for p in AUTHORIZED_DIR.iterdir() if p.is_dir())
 
-    def recognize_jpeg(self, blob: bytes, min_face_px: int = 0) -> dict:
+    def recognize_jpeg(self, blob: bytes, min_face_px: int = 0,
+                       apply_throttle: bool = True) -> dict:
         """识别一整帧 JPEG（门口识别哨兵用）。
 
         与录入共用同一把锁：两个线程同时进 ultralytics 推理没有保护，而且录脸
         本来就该独占摄像头（人站在门口摆姿势，此时不需要刷脸开门）。
         """
         with self._enroll_lock:
-            if not self.throttler.can_execute():
+            if apply_throttle and not self.throttler.can_execute():
                 return self._throttled_result()
             return self._recognize_blob(blob, min_face_px=min_face_px)
 

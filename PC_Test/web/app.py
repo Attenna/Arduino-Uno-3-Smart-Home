@@ -27,6 +27,9 @@ def create_app(config: dict | None = None, start_hardware: bool = True):
     for module in (pages, status, devices, access, face, camera, voice, ha, automation):
         app.register_blueprint(module.bp)
 
+    from .api.objects import init_objects
+    init_objects(app)
+
     # ==================== 全局异常处理 ====================
 
     @app.errorhandler(Exception)

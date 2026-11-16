@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block doc_title_key %}nav.objects{% endblock %}
+{% block doc_title %}视频监测 · 橙居{% endblock %}
+{% block page_header %}
+    <span>视频监测</span>
+    <small>同一画面查看人脸身份与物体检测结果</small>
+{% endblock %}
+{% block head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/objects.css') }}?v=20261116">
+{% endblock %}
+{% block content %}
+<div class="objects-page">
+    <div class="objects-grid">
+        <section class="objects-card objects-view">
+            <div class="objects-heading"><h2>监测画面</h2><a href="/access">人员与门禁管理 →</a></div>
+            <div class="objects-actions monitor-options">
+                <label><input type="checkbox" id="enableFaces" checked>人脸识别</label>
+                <label><input type="checkbox" id="enableObjects" checked>物体检测</label>
+            </div>
+            <canvas id="view" width="960" height="540" aria-label="物体检测画面"></canvas>
+            <p id="message" role="status">选择摄像头检测或上传图片</p>
+            <div class="objects-actions">
+                <button id="once" class="objects-primary">检测摄像头</button>
+                <button id="live">开始连续检测</button>
+                <label><input type="checkbox" id="evidence">保存命中事件图片</label>
+            </div>
+            <div class="objects-upload">
+                <label for="file">本地图片</label>
+                <input type="file" id="file" accept="image/*">
+                <button id="upload">检测图片</button>
+            </div>
+        </section>
+        <div class="objects-summary">
+            <section class="objects-card">
+                <h2>模型状态</h2>
+                <p id="status" role="status">加载中…</p>
+            </section>
+            <section class="objects-card">
+                <h2>本次结果</h2>
+                <h3>物体</h3><div id="result" role="status">等待检测</div>
+                <h3>人脸</h3><div id="faceResult" role="status">等待检测</div>
+                <p class="objects-note">识别开关控制本页显示与推理。门禁自动验证由后台运行，通行结果请到门禁管理查看。</p>
+                <p class="objects-note">连续检测每秒尝试一次，上一轮未完成时跳过本次请求。位置框使用原图像素，依次为左、上、右、下。</p>
+            </section>
+        </div>
+    </div>
+    <section class="objects-card objects-events">
+        <div class="objects-heading"><h2>检测事件</h2><button id="refresh">刷新记录</button></div>
+        <p class="objects-note">命中事件至少间隔 30 秒。开启图片取证后保存原始快照。</p>
+        <div id="events" aria-live="polite"></div>
+    </section>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/objects.js') }}?v=20261116-monitor"></script>
+<script>
+(function () {
+    const clock = document.getElementById('currentTime');
+    function updateClock() { clock.textContent = new Date().toLocaleTimeString('zh-CN', {hour12: false}); }
+    updateClock();
+    setInterval(updateClock, 1000);
+})();
+</script>
+{% endblock %}
