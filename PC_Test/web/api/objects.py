@@ -13,6 +13,7 @@ from contextlib import contextmanager
 from flask import Blueprint, current_app, jsonify, render_template, request, send_from_directory
 from ..config import DATA_DIR
 from ..object_detection import ObjectDetector
+from ..bulb_light import BulbLightLink, activate_light
 from .camera import _stream_url
 
 bp = Blueprint("objects", __name__)
@@ -24,6 +25,7 @@ class ObjectService:
         self.error = None
         self.latest = None
         self.last_event = 0
+        self.bulb_light = BulbLightLink()
         self.lock = threading.Lock()
         self.directory = data_dir / "objects"
         self.directory.mkdir(parents=True, exist_ok=True)
@@ -147,6 +149,9 @@ def detect():
             result = {"time": datetime.now(timezone.utc).isoformat(), "width": width,
                       "height": height, "detections": [], "event_id": None, "inference_ms": 0}
         result = dict(result)
+        result["bulb_light"] = s.bulb_light.process(
+            result["detections"], request.form.get("bulb_light") == "true" and objects_enabled,
+            not bool(request.files.get("image")), activate_light)
         result["objects_enabled"] = objects_enabled
         result["faces_enabled"] = faces_enabled
         result["face_result"] = None

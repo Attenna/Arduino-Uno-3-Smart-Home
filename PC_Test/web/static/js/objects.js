@@ -34,6 +34,7 @@ async function detect(upload = false) {
     body.append('evidence', String(el('evidence').checked));
     body.append('faces', String(el('enableFaces').checked));
     body.append('objects', String(el('enableObjects').checked));
+    body.append('bulb_light', String(el('bulbLight').checked));
     const data = await api('/api/monitor/detect', {method:'POST', body});
     // 摄像头画面使用检测时同一快照，避免框与后续帧错位。
     if (!upload) preview = data.preview;
@@ -44,6 +45,7 @@ async function detect(upload = false) {
       ctx.strokeStyle = '#e27c42'; ctx.fillStyle = '#e27c42'; ctx.lineWidth = 3; ctx.font = '18px sans-serif';
       for (const d of data.detections) { const [x,y,r,b] = d.box; ctx.strokeRect(x,y,r-x,b-y); ctx.fillText(`${displayLabel(d.label)} ${(d.confidence*100).toFixed(0)}%`,x,Math.max(20,y-6)); }
     }
+    el('bulbLightStatus').textContent = data.bulb_light?.message || '等待检测';
     const faces = data.face_result;
     if (faces && preview) {
       const ctx = el('view').getContext('2d');
