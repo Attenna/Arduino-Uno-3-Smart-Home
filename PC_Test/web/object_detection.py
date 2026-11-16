@@ -1,5 +1,6 @@
 """ONNX 物体检测。只消费共享摄像头快照，不直接打开摄像头。"""
 import ast
+import os
 import hashlib
 import json
 import threading
@@ -14,6 +15,10 @@ class ObjectDetector:
     def __init__(self, model_path):
         import onnxruntime as ort
         self.lock = threading.Lock()
+        self.npu_url = os.environ.get("SMART_HOME_NPU_URL", "").rstrip("/")
+        self.npu_token = os.environ.get("SMART_HOME_NPU_TOKEN", "")
+        if self.npu_url and len(self.npu_token) < 32:
+            raise ValueError("NPU 服务认证配置缺失")
         self.session = ort.InferenceSession(str(model_path), providers=["CPUExecutionProvider"])
         meta = self.session.get_modelmeta().custom_metadata_map
         self.names = ast.literal_eval(meta.get("names", "{}"))
@@ -28,7 +33,7 @@ class ObjectDetector:
 
     def info(self):
         return {"loaded": True, "classes": self.names, "input_size": [self.width, self.height],
-                "sha256": self.sha256, "provider": self.session.get_providers()[0]}
+                "sha256": self.sha256, "provider": "Ascend310B4" if self.npu_url else self.session.get_providers()[0]}
 
     def detect(self, jpeg):
         image = cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR)
@@ -43,7 +48,26 @@ class ObjectDetector:
         tensor = np.ascontiguousarray(canvas[:, :, ::-1].transpose(2, 0, 1)[None], dtype=np.float32) / 255
         started = time.monotonic()
         with self.lock:
-            rows = self.session.run(None, {self.input.name: tensor})[0][0].T
+            if self.npu_url:
+                import requests
+                try:
+                    response = requests.post(self.npu_url + "/infer", data=tensor.tobytes(),
+                                             headers={"Authorization": "Bearer " + self.npu_token,
+                                                      "Content-Type": "application/octet-stream"}, timeout=15)
+                except requests.RequestException as exc:
+                    raise RuntimeError("NPU 推理服务未响应") from exc
+                if response.status_code != 200:
+                    raise RuntimeError("NPU 推理服务不可用，请检查服务日志")
+                shape = self.session.get_outputs()[0].shape
+                expected = int(np.prod(shape)) * 4
+                if len(response.content) != expected:
+                    raise RuntimeError("NPU 输出尺寸不匹配")
+                output = np.frombuffer(response.content, dtype=np.float32).reshape(shape)
+                if not np.isfinite(output).all():
+                    raise RuntimeError("NPU 输出包含无效数值")
+            else:
+                output = self.session.run(None, {self.input.name: tensor})[0]
+            rows = output[0].T
         boxes, scores, classes = [], [], []
         for row in rows:
             cls = int(np.argmax(row[4:]))

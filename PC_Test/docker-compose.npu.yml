@@ -1,0 +1,9 @@
+# Use with the existing base and authentication/runtime override files.
+services:
+  web:
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    env_file:
+      - .auth.npu.env
+    environment:
+      SMART_HOME_NPU_URL: http://host.docker.internal:8093
