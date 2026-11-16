@@ -184,7 +184,7 @@ function defineBlocks() {
     Blockly.Blocks['rule_block'] = {
         init: function () {
             this.appendDummyInput()
-                .appendField('🧩')
+                .appendField(L('规则', 'Rule'))
                 .appendField(new Blockly.FieldTextInput(L('新规则', 'New rule')), 'NAME')
                 .appendField(new Blockly.FieldCheckbox('TRUE'), 'ENABLED');
             this.appendStatementInput('TRIGGER').setCheck('TRIG').appendField(L('当', 'When'));
@@ -253,7 +253,7 @@ function defineBlocks() {
     Blockly.Blocks['trig_touch'] = {
         init: function () {
             this.appendDummyInput()
-                .appendField(L('当 👆 触摸', 'When 👆 Touch'))
+                .appendField(L('当  触摸', 'When  Touch'))
                 .appendField(new Blockly.FieldDropdown([
                     [L('按下', 'Pressed'), 'touch_on'], [L('松开', 'Released'), 'touch_off']]), 'EVT');
             this.setPreviousStatement(true, 'TRIG');
@@ -274,7 +274,7 @@ function defineBlocks() {
     Blockly.Blocks['trig_ir'] = {
         init: function () {
             this.appendDummyInput()
-                .appendField(L('当 📡 红外遥控', 'When 📡 IR remote'))
+                .appendField(L('当  红外遥控', 'When  IR remote'))
                 .appendField(new Blockly.FieldDropdown(irKeyOptions), 'CMD');
             this.setPreviousStatement(true, 'TRIG');
             this.setNextStatement(false);
@@ -284,7 +284,7 @@ function defineBlocks() {
     Blockly.Blocks['trig_rfid'] = {
         init: function () {
             this.appendDummyInput()
-                .appendField(L('当 🪪 RFID 刷卡', 'When 🪪 RFID tap'))
+                .appendField(L('当  RFID 刷卡', 'When  RFID tap'))
                 .appendField(new Blockly.FieldTextInput(''), 'UID')
                 .appendField(L('（卡号留空=任意卡片）', ' (blank Card ID = any card)'));
             this.setPreviousStatement(true, 'TRIG');
@@ -296,7 +296,7 @@ function defineBlocks() {
     Blockly.Blocks['trig_manual'] = {
         init: function () {
             this.appendDummyInput()
-                .appendField(L('当 ✋ 手动操作', 'When ✋ Manual'))
+                .appendField(L('当  手动操作', 'When  Manual'))
                 .appendField(new Blockly.FieldDropdown(manualDeviceOptions), 'DEV')
                 .appendField(L('（面板/语音）', ' (panel/voice)'));
             this.setPreviousStatement(true, 'TRIG');
@@ -310,7 +310,7 @@ function defineBlocks() {
     Blockly.Blocks['trig_access'] = {
         init: function () {
             this.appendDummyInput()
-                .appendField(L('当 🚪 门禁验证通过', 'When 🚪 Access granted'))
+                .appendField(L('当  门禁验证通过', 'When  Access granted'))
                 .appendField(new Blockly.FieldDropdown(accessMethodOptions), 'M')
                 .appendField(L('（不筛方式=人脸/刷卡/键盘任一）', ' (any method: face/card/keypad)'));
             this.setPreviousStatement(true, 'TRIG');
@@ -322,7 +322,7 @@ function defineBlocks() {
     Blockly.Blocks['trig_access_denied'] = {
         init: function () {
             this.appendDummyInput()
-                .appendField(L('当 🚪 门禁被拒绝', 'When 🚪 Access denied'))
+                .appendField(L('当  门禁被拒绝', 'When  Access denied'))
                 .appendField(new Blockly.FieldDropdown(accessMethodOptions), 'M');
             this.setPreviousStatement(true, 'TRIG');
             this.setNextStatement(false);
@@ -333,7 +333,7 @@ function defineBlocks() {
     Blockly.Blocks['trig_event_other'] = {
         init: function () {
             this.appendDummyInput()
-                .appendField(L('当 🔔', 'When 🔔'))
+                .appendField(L('当 ', 'When '))
                 .appendField(new Blockly.FieldDropdown(otherEventOptions), 'EVT');
             this.setPreviousStatement(true, 'TRIG');
             this.setNextStatement(false);
@@ -401,20 +401,20 @@ function defineBlocks() {
     Blockly.Blocks['cond_state_bool'] = {
         init: function () {
             this.appendDummyInput()
-                .appendField(L('📌 状态', '📌 States'))
+                .appendField(L(' 状态', ' States'))
                 .appendField(new Blockly.FieldDropdown(
                     () => orPlaceholder(stateSourceOptions('bool'), newStateHint())), 'SRC')
                 .appendField(new Blockly.FieldDropdown([[L('是', 'yes'), 'true'], [L('否', 'no'), 'false']]), 'STATE');
             this.setPreviousStatement(true, 'COND');
             this.setNextStatement(true, 'COND');
             this.setColour(190);
-            this.setTooltip(L('判断「是/否」类全局状态；变量在列表页的「📌 全局状态」条目里建立', 'Tests a Yes/No global state; variables are created in the "📌 Global states" entry on the list page'));
+            this.setTooltip(L('判断「是/否」类全局状态；变量在列表页的「 全局状态」条目里建立', 'Tests a Yes/No global state; variables are created in the " Global states" entry on the list page'));
         },
     };
     Blockly.Blocks['cond_state_num'] = {
         init: function () {
             this.appendDummyInput()
-                .appendField(L('📌 状态', '📌 States'))
+                .appendField(L(' 状态', ' States'))
                 .appendField(new Blockly.FieldDropdown(
                     () => orPlaceholder(stateSourceOptions('number'), newStateHint())), 'SRC')
                 .appendField(new Blockly.FieldDropdown(opOptions), 'OP')
@@ -427,7 +427,7 @@ function defineBlocks() {
     Blockly.Blocks['cond_state_enum'] = {
         init: function () {
             this.appendDummyInput()
-                .appendField(L('📌 状态', '📌 States'))
+                .appendField(L(' 状态', ' States'))
                 .appendField(new Blockly.FieldDropdown(
                     () => orPlaceholder(condStateEnumOptions(), newStateHint())), 'PRED');
             this.setPreviousStatement(true, 'COND');
@@ -440,7 +440,7 @@ function defineBlocks() {
     // ── 执行器动作 ──
     Blockly.Blocks['act_door'] = {
         init: function () {
-            this.appendDummyInput().appendField(L('🚪 门', '🚪 Door'))
+            this.appendDummyInput().appendField(L(' 门', ' Door'))
                 .appendField(new Blockly.FieldDropdown([[L('打开', 'Open'), 'open'], [L('关闭', 'Close'), 'close']]), 'STATUS');
             this.setPreviousStatement(true, 'ACT');
             this.setNextStatement(true, 'ACT');
@@ -449,7 +449,7 @@ function defineBlocks() {
     };
     Blockly.Blocks['act_window'] = {
         init: function () {
-            this.appendDummyInput().appendField(L('🪟 窗', '🪟 Window'))
+            this.appendDummyInput().appendField(L(' 窗', ' Window'))
                 .appendField(new Blockly.FieldDropdown(
                     [[L('打开', 'Open'), 'open'], [L('关闭', 'Close'), 'close'], [L('半开', 'Half'), 'normal']]), 'STATUS');
             this.setPreviousStatement(true, 'ACT');
@@ -459,7 +459,7 @@ function defineBlocks() {
     };
     Blockly.Blocks['act_light'] = {
         init: function () {
-            this.appendDummyInput().appendField(L('💡 灯', '💡 Light'))
+            this.appendDummyInput().appendField(L(' 灯', ' Light'))
                 .appendField(new Blockly.FieldDropdown([[L('打开', 'Open'), 'on'], [L('关闭', 'Close'), 'off']]), 'STATUS')
                 .appendField(new Blockly.FieldNumber(100, 0, 100, 1), 'BRIGHTNESS')
                 .appendField('%');
@@ -472,7 +472,7 @@ function defineBlocks() {
     // 彩色预设（B 板 8 颗 WS2812 整条同色；彩色不接受亮度参数）
     Blockly.Blocks['act_light_color'] = {
         init: function () {
-            this.appendDummyInput().appendField(L('🎨 灯颜色', '🎨 Light color'))
+            this.appendDummyInput().appendField(L(' 灯颜色', ' Light color'))
                 .appendField(new Blockly.FieldDropdown(lightColorOptions), 'COLOR');
             this.setPreviousStatement(true, 'ACT');
             this.setNextStatement(true, 'ACT');
@@ -482,7 +482,7 @@ function defineBlocks() {
     };
     Blockly.Blocks['act_light_rgb'] = {
         init: function () {
-            this.appendDummyInput().appendField(L('🎨 灯 RGB', '🎨 Light RGB'))
+            this.appendDummyInput().appendField(L(' 灯 RGB', ' Light RGB'))
                 .appendField(new Blockly.FieldNumber(255, 0, 255, 1), 'R').appendField('R')
                 .appendField(new Blockly.FieldNumber(0, 0, 255, 1), 'G').appendField('G')
                 .appendField(new Blockly.FieldNumber(0, 0, 255, 1), 'B').appendField('B');
@@ -496,7 +496,7 @@ function defineBlocks() {
             const opField = new Blockly.FieldDropdown([
                 [L('开关（兼容旧规则）', 'Legacy switch'), 'set'], [L('开启', 'Turn on'), 'on'], [L('关闭', 'Close'), 'off'],
                 [L('切换开/关（同一键再按一次反转）', 'Toggle on/off (same key flips)'), 'toggle']]);
-            this.appendDummyInput().appendField(L('🌀 风扇', '🌀 Fan')).appendField(opField, 'OP');
+            this.appendDummyInput().appendField(L(' 风扇', ' Fan')).appendField(opField, 'OP');
             this.appendDummyInput('SPEEDROW')
                 .appendField(L('转速', 'Speed')).appendField(new Blockly.FieldNumber(60, 0, 100, 1), 'SPEED')
                 .appendField(L('%（填 0 = 用上次转速）', '% (0 = last speed)'));
@@ -514,7 +514,7 @@ function defineBlocks() {
     };
     Blockly.Blocks['act_buzzer'] = {
         init: function () {
-            this.appendDummyInput().appendField(L('🔔 响', '🔔 Beep'))
+            this.appendDummyInput().appendField(L(' 响', ' Beep'))
                 .appendField(new Blockly.FieldNumber(2, 1, 10, 1), 'COUNT').appendField(L('声', 'x'))
                 .appendField(new Blockly.FieldNumber(200, 50, 2000, 10), 'ONMS').appendField('ms')
                 .appendField(new Blockly.FieldNumber(200, 50, 2000, 10), 'OFFMS').appendField('ms');
@@ -526,7 +526,7 @@ function defineBlocks() {
     // 持续响 / 停：报警需要长鸣时用
     Blockly.Blocks['act_buzzer_switch'] = {
         init: function () {
-            this.appendDummyInput().appendField(L('🔔 蜂鸣器', '🔔 Buzzer'))
+            this.appendDummyInput().appendField(L(' 蜂鸣器', ' Buzzer'))
                 .appendField(new Blockly.FieldDropdown([[L('持续响', 'Continuous'), 'on'], [L('停', 'Stop'), 'off']]), 'STATE');
             this.setPreviousStatement(true, 'ACT');
             this.setNextStatement(true, 'ACT');
@@ -589,7 +589,7 @@ function defineBlocks() {
     Blockly.Blocks['act_oled'] = {
         init: function () {
             // OLED 字库只有 ASCII：文案用英文/数字
-            this.appendDummyInput().appendField('🖥️ OLED')
+            this.appendDummyInput().appendField(' OLED')
                 .appendField(new Blockly.FieldTextInput('Temp {temperature}C'), 'TEXT');
             this.appendDummyInput()
                 .appendField(new Blockly.FieldCheckbox('FALSE'), 'CLEAR')
@@ -602,7 +602,7 @@ function defineBlocks() {
     // 指定行直发（不按换行拆分），一行只能放一行文本
     Blockly.Blocks['act_oled_line'] = {
         init: function () {
-            this.appendDummyInput().appendField(L('🖥️ OLED 第', '🖥️ OLED line '))
+            this.appendDummyInput().appendField(L(' OLED 第', ' OLED line '))
                 .appendField(new Blockly.FieldNumber(0, 0, 7, 1), 'LINE')
                 .appendField(L('行', ''))
                 .appendField(new Blockly.FieldTextInput('Temp {temperature}C'), 'TEXT');
@@ -615,7 +615,7 @@ function defineBlocks() {
     // 红外发射：直接选键位（复用 A 板实测的 NEC 键码表），或填自定义 32 位码
     Blockly.Blocks['act_ir'] = {
         init: function () {
-            this.appendDummyInput().appendField(L('📡 红外发射', '📡 IR send'))
+            this.appendDummyInput().appendField(L(' 红外发射', ' IR send'))
                 .appendField(new Blockly.FieldDropdown(irKeyOptions), 'CMD');
             this.setPreviousStatement(true, 'ACT');
             this.setNextStatement(true, 'ACT');
@@ -625,7 +625,7 @@ function defineBlocks() {
     };
     Blockly.Blocks['act_ir_code'] = {
         init: function () {
-            this.appendDummyInput().appendField(L('📡 红外发射 自定义码', '📡 IR send (custom code)'))
+            this.appendDummyInput().appendField(L(' 红外发射 自定义码', ' IR send (custom code)'))
                 .appendField(new Blockly.FieldNumber(16729530, 0, 4294967295, 1), 'CODE');
             this.setPreviousStatement(true, 'ACT');
             this.setNextStatement(true, 'ACT');
@@ -637,7 +637,7 @@ function defineBlocks() {
     Blockly.Blocks['act_ac'] = {
         init: function () {
             this.appendDummyInput()
-                .appendField(L('❄️ 空调', '❄️ AC'))
+                .appendField(L(' 空调', ' AC'))
                 .appendField(new Blockly.FieldDropdown(acSwitchOptions), 'POWER');
             this.appendDummyInput()
                 .appendField(L('模式', 'mode'))
@@ -661,7 +661,7 @@ function defineBlocks() {
     // HTTP 出站（webhook）：把事件/状态推给外部系统，二次开发的主出站通道
     Blockly.Blocks['act_http'] = {
         init: function () {
-            this.appendDummyInput().appendField('🌐 HTTP')
+            this.appendDummyInput().appendField(' HTTP')
                 .appendField(new Blockly.FieldDropdown([
                     ['POST', 'post'], ['GET', 'get']]), 'METHOD');
             this.appendDummyInput().appendField('URL')
@@ -680,7 +680,7 @@ function defineBlocks() {
     // 语音联动：按键触发后免唤醒词直接说话
     Blockly.Blocks['act_camera'] = {
         init: function () {
-            this.appendDummyInput().appendField(L('📷 门口拍照并存储', '📷 Doorway snapshot'));
+            this.appendDummyInput().appendField(L(' 门口拍照并存储', ' Doorway snapshot'));
             this.setPreviousStatement(true, 'ACT');
             this.setNextStatement(true, 'ACT');
             this.setColour(120);
@@ -688,7 +688,7 @@ function defineBlocks() {
     };
     Blockly.Blocks['act_voice'] = {
         init: function () {
-            this.appendDummyInput().appendField(L('🎙️ 语音', '🎙️ Voice'))
+            this.appendDummyInput().appendField(L(' 语音', ' Voice'))
                 .appendField(new Blockly.FieldDropdown([
                     [L('唤醒', 'Wake'), 'wake'], [L('播报', 'Announce'), 'say']]), 'ACT');
             this.appendDummyInput().appendField(new Blockly.FieldTextInput(''), 'TEXT');
@@ -701,7 +701,7 @@ function defineBlocks() {
     // ── 全局状态写入（按类型拆块：下拉选项在 init 期定死，无法随所选变量动态换）──
     Blockly.Blocks['act_state_bool'] = {
         init: function () {
-            this.appendDummyInput().appendField(L('📌 状态', '📌 States'))
+            this.appendDummyInput().appendField(L(' 状态', ' States'))
                 .appendField(new Blockly.FieldDropdown(
                     () => noVarOptions(stateVars('bool'))), 'NAME')
                 .appendField(new Blockly.FieldDropdown([
@@ -714,7 +714,7 @@ function defineBlocks() {
     };
     Blockly.Blocks['act_state_toggle'] = {
         init: function () {
-            this.appendDummyInput().appendField(L('📌 状态', '📌 States'))
+            this.appendDummyInput().appendField(L(' 状态', ' States'))
                 .appendField(new Blockly.FieldDropdown(
                     () => noVarOptions(stateToggleVars())), 'NAME')
                 .appendField(L('⇆ 切换', '⇆ Toggle'));
@@ -726,7 +726,7 @@ function defineBlocks() {
     };
     Blockly.Blocks['act_state_num'] = {
         init: function () {
-            this.appendDummyInput().appendField(L('📌 状态', '📌 States'))
+            this.appendDummyInput().appendField(L(' 状态', ' States'))
                 .appendField(new Blockly.FieldDropdown(
                     () => noVarOptions(stateVars('number'))), 'NAME')
                 .appendField(new Blockly.FieldDropdown([
@@ -739,7 +739,7 @@ function defineBlocks() {
     };
     Blockly.Blocks['act_state_enum'] = {
         init: function () {
-            this.appendDummyInput().appendField(L('📌 状态', '📌 States'))
+            this.appendDummyInput().appendField(L(' 状态', ' States'))
                 .appendField(new Blockly.FieldDropdown(stateEnumPredOptions), 'PRED');
             this.setPreviousStatement(true, 'ACT');
             this.setNextStatement(true, 'ACT');
@@ -749,7 +749,7 @@ function defineBlocks() {
     };
     Blockly.Blocks['act_state_text'] = {
         init: function () {
-            this.appendDummyInput().appendField(L('📌 状态', '📌 States'))
+            this.appendDummyInput().appendField(L(' 状态', ' States'))
                 .appendField(new Blockly.FieldDropdown(
                     () => noVarOptions(stateVars('text'))), 'NAME')
                 .appendField(L('设为', 'Set to'))
@@ -768,7 +768,7 @@ function defineBlocks() {
         init: function () {
             const self = this;
             this.appendDummyInput()
-                .appendField('📌')
+                .appendField('')
                 .appendField(new Blockly.FieldTextInput(L('新状态', 'New state')), 'NAME');
             this.appendDummyInput('TYPEROW')
                 .appendField(L('类型', 'Type'))
@@ -878,7 +878,7 @@ function noVarOptions(fallback) {
 
 // ── 全局状态条目：定义积木的行切换 + 状态条件积木的下拉 ──
 
-function newStateHint() { return L('（先新建「📌 状态」条目）', ' (create a "📌 State" entry first)'); }
+function newStateHint() { return L('（先新建「 状态」条目）', ' (create a " State" entry first)'); }
 function stateTypeOptions() {
     return [[L('是/否', 'Yes/No'), 'bool'], [L('数字', 'Number'), 'number'],
             [L('选项', 'Options'), 'enum'], [L('文本', 'Text'), 'text']];
@@ -895,7 +895,7 @@ function parseChoices(raw) {
     return String(raw || '').split(/[,，]/).map(s => s.trim()).filter(Boolean);
 }
 // 「状态·xxx」是后端 global_state_sources() 给条件源加的标签前缀；专用积木自己
-// 已经写了「📌 状态」，这里把前缀去掉，避免读成「📌 状态 状态·全屋模式」。
+// 已经写了「 状态」，这里把前缀去掉，避免读成「 状态 状态·全屋模式」。
 function stateNameOf(source) {
     return String(source.label || '').replace(/^状态·/, '');
 }
@@ -1093,19 +1093,21 @@ function darkTheme() {
 
 // ==================== 卡片摘要文案 ====================
 
+const AUTOMATION_ICON_PATHS = {"bell": "<path d=\"M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4\"/>", "camera": "<rect x=\"3\" y=\"6\" width=\"18\" height=\"14\" rx=\"3\"/><circle cx=\"12\" cy=\"13\" r=\"4\"/><path d=\"m8 6 2-3h4l2 3\"/>", "flow": "<rect x=\"3\" y=\"3\" width=\"6\" height=\"6\" rx=\"1\"/><rect x=\"15\" y=\"15\" width=\"6\" height=\"6\" rx=\"1\"/><path d=\"M6 9v9h9M9 6h9v9\"/>", "clock": "<circle cx=\"12\" cy=\"12\" r=\"9\"/><path d=\"M12 7v5l3 2\"/>", "pin": "<path d=\"m8 3 8 0-1 6 3 4H6l3-4-1-6M12 13v8\"/>", "chart": "<path d=\"M3 3v18h18M6 15l5-5 4 3 6-8\"/>", "temperature": "<path d=\"M9 14V5a3 3 0 0 1 6 0v9a5 5 0 1 1-6 0M12 8v10\"/>", "drop": "<path d=\"M12 3S5 11 5 15a7 7 0 0 0 14 0c0-4-7-12-7-12Z\"/>", "sun": "<circle cx=\"12\" cy=\"12\" r=\"4\"/><path d=\"M12 2v2M12 20v2M2 12h2M20 12h2M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2\"/>", "wind": "<path d=\"M3 8h12a3 3 0 1 0-3-3M3 12h16a3 3 0 1 1-3 3M3 16h5a3 3 0 1 1-3 3\"/>", "door": "<path d=\"M4 21h16M6 21V3h12v18M14 12h1\"/>", "window": "<rect x=\"3\" y=\"3\" width=\"18\" height=\"18\" rx=\"2\"/><path d=\"M12 3v18M3 12h18\"/>", "bulb": "<path d=\"M9 18h6M10 22h4M9 15a7 7 0 1 1 6 0v3H9v-3Z\"/>", "person": "<circle cx=\"12\" cy=\"6\" r=\"3\"/><path d=\"M5 21v-3a7 7 0 0 1 14 0v3\"/>", "touch": "<circle cx=\"12\" cy=\"12\" r=\"8\"/><circle cx=\"12\" cy=\"12\" r=\"2\"/>", "refresh": "<path d=\"M20 7V3l-4 4M4 17v4l4-4M20 7a9 9 0 0 0-15-1M4 17a9 9 0 0 0 15 1\"/>", "save": "<path d=\"M4 3h13l4 4v14H3V3h1M7 3v6h10V3M7 21v-8h10v8\"/>", "document": "<path d=\"M5 3h10l4 4v14H5V3M9 11h6M9 15h6\"/>", "screen": "<rect x=\"3\" y=\"3\" width=\"18\" height=\"14\" rx=\"2\"/><path d=\"M12 17v4M8 21h8\"/>"};
+function automationIcon(name) {
+    return `<svg class="ui-line-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${AUTOMATION_ICON_PATHS[name] || AUTOMATION_ICON_PATHS.flow}</svg>`;
+}
 const SENSOR_ICONS = {
-    temperature: '🌡️', humidity: '💧', light: '☀️', smoke: '💨', rain: '🌧️',
-    touch: '👆', motion: '🚶', door_status: '🚪', window_status: '🪟',
-    light_status: '💡', fan_speed: '🌀',
+    temperature: 'temperature', humidity: 'drop', light: 'sun', smoke: 'wind', rain: 'drop',
+    touch: 'touch', motion: 'person', door_status: 'door', window_status: 'window',
+    light_status: 'bulb', fan_speed: 'wind',
 };
-
 function triggerIcon(trig) {
-    if (!trig) return '❓';
-    if (trig.kind === 'event') return '🔔';
-    if (trig.kind === 'interval') return '⏱️';
-    if (trig.kind === 'time') return '🕐';
-    if (String(trig.sensor || '').startsWith('g:')) return '📌';
-    return SENSOR_ICONS[trig.sensor] || '📈';
+    if (!trig) return automationIcon('flow');
+    if (trig.kind === 'event') return automationIcon('bell');
+    if (trig.kind === 'interval' || trig.kind === 'time') return automationIcon('clock');
+    if (String(trig.sensor || '').startsWith('g:')) return automationIcon('pin');
+    return automationIcon(SENSOR_ICONS[trig.sensor] || 'chart');
 }
 
 function triggerKindClass(trig) {
@@ -1302,11 +1304,11 @@ function renderRuleList() {
     if (count) count.textContent = `${L('共 ', '')}${RULES.length}${L(' 条规则 · ', ' rules · ')}${GS_VARS.length}${L(' 个全局状态', ' global states')}`;
     if (!grid) return;
     const states = GS_VARS.length
-        ? `<div class="grid-section">${L('📌 全局状态', '📌 Global states')} · ${GS_VARS.length}</div>`
+        ? `<div class="grid-section">${L(' 全局状态', ' Global states')} · ${GS_VARS.length}</div>`
           + GS_VARS.map(stateCardHtml).join('')
         : '';
     const rules = RULES.length
-        ? `<div class="grid-section">${L('🧩 自动化规则', '🧩 Automation rules')} · ${RULES.length}</div>`
+        ? `<div class="grid-section">${L('自动化规则', 'Automation rules')} · ${RULES.length}</div>`
           + RULES.map(ruleCardHtml).join('')
         : L('<div class="empty-rules">还没有规则，点右上角「＋ 新建规则」开始。</div>', '<div class="empty-rules">No rules yet. Click "＋ New rule" at the top-right to start.</div>');
     grid.innerHTML = gatingBannerHtml() + states + rules;
@@ -1323,9 +1325,9 @@ function gatingBannerHtml() {
     const off = gatingDisabledRules();
     if (!off.length) return '';
     const names = off.map((r) => esc(r.name)).join('、');
-    return L('<div class="gating-warn">⚠️ 基础门控预设被停用：', '<div class="gating-warn">⚠️ Base gating presets disabled: ') + names
+    return L('<div class="gating-warn"> 基础门控预设被停用：', '<div class="gating-warn"> Base gating presets disabled: ') + names
         + L('。依赖它们的联动（有人/无人判定、手动优先解除）不会报错，只会静默失效；', '. The automations that depend on them (presence detection, manual-priority release) will not error - they will silently stop working; ')
-        + L('点右上角「♻️ 恢复内置」可一键补回。</div>', 'click "♻️ Restore built-ins" at the top-right to bring them back.</div>');
+        + L('点右上角「 恢复内置」可一键补回。</div>', 'click " Restore built-ins" at the top-right to bring them back.</div>');
 }
 
 function ruleCardHtml(r, i) {
@@ -1335,7 +1337,7 @@ function ruleCardHtml(r, i) {
     if (r.enabled === false) {
         const gating = r.preset && GATING_PRESETS.includes(r.preset);
         statusBadge = gating
-            ? L('<span class="badge disabled">已停用 · ⚠ 门控预设</span>', '<span class="badge disabled">Disabled · ⚠ gating preset</span>')
+            ? L('<span class="badge disabled">已停用 ·  门控预设</span>', '<span class="badge disabled">Disabled ·  gating preset</span>')
             : L('<span class="badge disabled">已停用</span>', '<span class="badge disabled">Disabled</span>');
     }
     else if (pv && pv.trigger_now === true) statusBadge = L('<span class="badge on">条件成立</span>', '<span class="badge on">Condition met</span>');
@@ -1391,20 +1393,20 @@ function openCardMenu(kind, i, btn) {
         if (!GS_VARS[i]) return;
         // 状态条目没有「运行一次/复制/停用」这些规则才有的动作
         menu.innerHTML =
-            L('<button data-m="edit">✏️ 编辑</button>', '<button data-m="edit">✏️ Edit</button>') +
+            L('<button data-m="edit"> 编辑</button>', '<button data-m="edit"> Edit</button>') +
             '<div class="sep"></div>' +
-            L('<button data-m="del" class="danger">🗑 删除</button>', '<button data-m="del" class="danger">🗑 Delete</button>');
+            L('<button data-m="del" class="danger"> 删除</button>', '<button data-m="del" class="danger"> Delete</button>');
     } else {
         const r = RULES[i];
         if (!r) return;
         menu.innerHTML =
             `<button data-m="run"${r.id ? '' : ' disabled'}>▶ ${L('运行一次', 'Run once')}</button>` +
-            L('<button data-m="edit">✏️ 编辑</button>', '<button data-m="edit">✏️ Edit</button>') +
-            L('<button data-m="rename">🏷 重命名</button>', '<button data-m="rename">🏷 Rename</button>') +
-            L('<button data-m="dup">📄 复制</button>', '<button data-m="dup">📄 Duplicate</button>') +
+            L('<button data-m="edit"> 编辑</button>', '<button data-m="edit"> Edit</button>') +
+            L('<button data-m="rename"> 重命名</button>', '<button data-m="rename"> Rename</button>') +
+            L('<button data-m="dup"> 复制</button>', '<button data-m="dup"> Duplicate</button>') +
             `<button data-m="toggle">${r.enabled === false ? L('⏻ 启用', '⏻ Enable') : L('⏻ 停用', '⏻ Disable')}</button>` +
             '<div class="sep"></div>' +
-            L('<button data-m="del" class="danger">🗑 删除</button>', '<button data-m="del" class="danger">🗑 Delete</button>');
+            L('<button data-m="del" class="danger"> 删除</button>', '<button data-m="del" class="danger"> Delete</button>');
     }
     const rect = btn.getBoundingClientRect();
     menu.classList.remove('hidden');
@@ -2324,7 +2326,7 @@ function stateCardHtml(v, i) {
         ? `<span>${L('选项 ', 'Options ')}${esc(v.choices.map(c => (v.choice_labels || {})[c] || c).join(' / '))}</span>`
         : '';
     return `<div class="rule-card state-card" data-kind="state" data-index="${i}">
-      <div class="rc-icon state">📌</div>
+      <div class="rc-icon state">${automationIcon('pin')}</div>
       <div class="rc-main">
         <div class="rc-name">${esc(v.label || v.name)}<span class="gs-type">${gsTypeLabel(v.type)}</span></div>
         <div class="rc-sub">${L('当前值 ', 'Current value ')}<b class="gs-value">${esc(gsValueText(v))}</b></div>
@@ -2380,7 +2382,7 @@ async function loadOledConfig() {
         const cfg = await api('/api/automation/oled');
         on.checked = !!cfg.enabled;
         iv.value = cfg.interval || 15;
-        if (st) st.textContent = cfg.enabled ? L('✅ 已开，每 ', '✅ On, every ') + (cfg.interval || 15) + L(' 秒切页', 's/page') : L('⏸ 已关闭', '⏸ Off');
+        if (st) st.textContent = cfg.enabled ? L(' 已开，每 ', ' On, every ') + (cfg.interval || 15) + L(' 秒切页', 's/page') : L('⏸ 已关闭', '⏸ Off');
     } catch (e) {
         if (st) st.textContent = L('接口暂不可用（引擎未启动）', 'API unavailable (engine not running)');
     }
@@ -2397,7 +2399,7 @@ async function saveOledConfig() {
             method: 'PUT', body: JSON.stringify(body),
         });
         const st = document.getElementById('oledStatus');
-        if (st) st.textContent = r.config.enabled ? L('✅ 已开启，每 ', '✅ On, every ') + r.config.interval + L(' 秒切页', 's/page') : L('⏸ 已关闭', '⏸ Off');
+        if (st) st.textContent = r.config.enabled ? L(' 已开启，每 ', ' On, every ') + r.config.interval + L(' 秒切页', 's/page') : L('⏸ 已关闭', '⏸ Off');
         showNotification(r.message || L('OLED 轮播配置已保存', 'OLED carousel config saved'), 'success');
     } catch (e) {
         showNotification(e.message, 'error');
@@ -2430,7 +2432,7 @@ async function refreshLogs() {
     const tbody = document.getElementById('autoLogBody');
     if (!tbody) return;
     tbody.innerHTML = (data.logs || []).map(r => {
-        const icon = r.success ? '✅' : (r.triggered ? '⚠️' : '•');
+        const icon = r.success ? '' : (r.triggered ? '!' : '•');
         const when = serverDate(r.timestamp);
         const ts = when ? when.toLocaleString(I18N.currentLang === 'zh' ? 'zh-CN' : 'en-US') : '';
         return `<tr><td>${esc(ts)}</td><td>${esc(r.rule_name)}</td>` +

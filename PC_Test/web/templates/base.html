@@ -18,6 +18,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400..700&family=IBM+Plex+Mono:wght@400;500;600&family=Noto+Serif+SC:wght@500;600;700&family=Plus+Jakarta+Sans:wght@400..800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=20261019-fix1">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/watercolor-shell.css') }}?v=20261115">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/form-controls.css') }}?v=20261116">
     {% block head %}{% endblock %}
 </head>
 <body>
@@ -53,7 +54,10 @@
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="14" height="14" rx="3"/><path d="m17 10 4-3v10l-4-3"/></svg>
                     <span>视频监测</span>
                 </a>
-<a href="/hardware" class="side-link {{ 'active' if p == '/hardware' else '' }}"><span>硬件管理</span></a>
+<a href="/hardware" class="side-link {{ 'active' if p == '/hardware' else '' }}">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/></svg>
+                    <span data-i18n="nav.hardware">硬件管理</span>
+                </a>
 
                 <a href="/history" class="side-link {{ 'active' if p == '/history' else '' }}">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 109-9 9 9 0 00-7.5 4"/><polyline points="3 3 3 8 8 8"/><polyline points="12 7 12 12 15 14"/></svg>

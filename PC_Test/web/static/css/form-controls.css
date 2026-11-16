@@ -1,0 +1,128 @@
+/* Shared form appearance. Native form elements retain keyboard and form behavior. */
+.app-shell {
+    --control-bg: #fcfaf5;
+    --control-border: #dcded3;
+    --control-accent: #6f8978;
+    --control-focus: #6f89782b;
+}
+.app-shell select {
+    -webkit-appearance: none;
+    appearance: none;
+    min-height: 42px;
+    padding: 9px 40px 9px 14px;
+    border: 1px solid var(--control-border);
+    border-radius: 12px;
+    background-color: var(--control-bg);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23748177' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m7 10 5 5 5-5'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 13px center;
+    background-size: 16px;
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: 14px;
+    line-height: 1.5;
+    box-shadow: none;
+    cursor: pointer;
+    vertical-align: middle;
+    transition: border-color .16s ease, background-color .16s ease, box-shadow .16s ease;
+}
+.app-shell select:hover:not(:disabled) { border-color: #9aab99; background-color: #fffdf8; }
+.app-shell select:focus-visible {
+    outline: 2px solid var(--control-accent);
+    outline-offset: 2px;
+    border-color: var(--control-accent);
+    box-shadow: 0 0 0 4px var(--control-focus);
+}
+.app-shell select[multiple], .app-shell select[size]:not([size="1"]) {
+    background-image: none;
+    padding-right: 14px;
+    cursor: default;
+}
+.app-shell select option { color: #414a43; background: #fffdf8; }
+.app-shell select:disabled { opacity: .5; cursor: not-allowed; background-color: #eeede7; }
+.app-shell input[type="checkbox"]:not(:where(.editor-toggle input)),
+.app-shell input[type="radio"] {
+    -webkit-appearance: none;
+    appearance: none;
+    display: inline-block;
+    position: relative;
+    flex: 0 0 20px;
+    width: 20px;
+    height: 20px;
+    min-height: 0;
+    margin: 0 7px 0 0;
+    padding: 0;
+    border: 1.5px solid #bbc4b6;
+    border-radius: 6px;
+    background: var(--control-bg);
+    box-shadow: none;
+    vertical-align: -4px;
+    cursor: pointer;
+    accent-color: var(--control-accent);
+    transition: background-color .16s ease, border-color .16s ease, box-shadow .16s ease;
+}
+.app-shell input[type="checkbox"]:not(:where(.editor-toggle input)):checked {
+    background: var(--control-accent);
+    border-color: var(--control-accent);
+}
+.app-shell input[type="checkbox"]:not(:where(.editor-toggle input)):checked::after {
+    content: '';
+    position: absolute;
+    left: 6px;
+    top: 2px;
+    width: 5px;
+    height: 10px;
+    border: solid #fffdf8;
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
+}
+.app-shell input[type="checkbox"]:not(:where(.editor-toggle input)):indeterminate {
+    background: var(--control-accent);
+    border-color: var(--control-accent);
+}
+.app-shell input[type="checkbox"]:not(:where(.editor-toggle input)):indeterminate::after {
+    content: '';
+    position: absolute;
+    inset: 7px 4px;
+    border: 0;
+    background: #fffdf8;
+    transform: none;
+    width: auto;
+    height: 2px;
+}
+.app-shell input[type="radio"] { border-radius: 50%; }
+.app-shell input[type="radio"]:checked {
+    border-color: var(--control-accent);
+    background: var(--control-accent);
+    box-shadow: inset 0 0 0 4px var(--control-bg);
+}
+.app-shell input[type="checkbox"]:hover:not(:disabled),
+.app-shell input[type="radio"]:hover:not(:disabled) { border-color: var(--control-accent); }
+.app-shell input[type="checkbox"]:focus-visible,
+.app-shell input[type="radio"]:focus-visible {
+    outline: 2px solid var(--control-accent);
+    outline-offset: 3px;
+}
+.app-shell input[type="checkbox"]:disabled,
+.app-shell input[type="radio"]:disabled { opacity: .45; cursor: not-allowed; }
+.app-shell .editor-toggle input[type="checkbox"] { background-color: #dfe3d8; }
+.app-shell .editor-toggle input[type="checkbox"]:checked { background-color: var(--control-accent); }
+.monitor-options { gap: 12px; }
+.monitor-options label {
+    padding: 10px 14px;
+    border: 1px solid var(--control-border);
+    border-radius: 12px;
+    background: var(--control-bg);
+    cursor: pointer;
+}
+.monitor-options label:has(input:checked) { background: #edf2e9; border-color: #b9c8b3; }
+.objects-actions label { min-height: 42px; }
+@media (prefers-reduced-motion: reduce) {
+    .app-shell select, .app-shell input[type="checkbox"], .app-shell input[type="radio"] { transition: none; }
+}
+@media (forced-colors: active) {
+    .app-shell select,
+    .app-shell input[type="checkbox"]:not(:where(.editor-toggle input)),
+    .app-shell input[type="radio"] { appearance: auto; background-image: none; }
+    .app-shell input[type="checkbox"]:not(:where(.editor-toggle input))::after { display: none; }
+}

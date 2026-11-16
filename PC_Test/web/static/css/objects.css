@@ -25,3 +25,7 @@
 .monitor-options { margin: 20px 0; }
 .objects-heading a { color: #627e70; font-size: 14px; }
 .objects-summary h3 { font-size: 15px; margin: 20px 0 8px; color: #748177; }
+
+.monitor-stage { position: relative; border-radius: 18px; overflow: hidden; background: #eae7df; }
+.monitor-stage #liveVideo { display: block; width: 100%; height: auto; min-height: 200px; }
+.objects-page .monitor-stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; background: transparent; pointer-events: none; }

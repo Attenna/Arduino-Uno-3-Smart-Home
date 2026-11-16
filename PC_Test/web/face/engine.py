@@ -586,6 +586,7 @@ class FaceEngine:
         recog_cfg = self.config.get("recognition", {})
         status = {
             "model_loaded": self._model_loaded,
+            "detector_provider": getattr(self.detector, "provider", "unavailable"),
             "simulation_mode": self.simulation_mode,
             "mode": "simulation" if self.simulation_mode else (
                 "recognition" if (self.recognizer is not None
@@ -596,6 +597,7 @@ class FaceEngine:
             "known_faces": self.config.get("known_faces", {}),
             "recognition": {
                 "enabled": bool(recog_cfg.get("enabled", True)),
+                "provider": getattr(getattr(self.recognizer, "extractor", None), "provider", "unavailable"),
                 "method": (self.recognizer.method if self.recognizer is not None
                            else recog_cfg.get("method")),
                 "identities": (len(self.recognizer.identities)
