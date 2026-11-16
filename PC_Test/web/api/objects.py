@@ -8,6 +8,7 @@ import threading
 import urllib.parse
 import urllib.request
 import uuid
+from datetime import datetime, timezone
 from contextlib import contextmanager
 from flask import Blueprint, current_app, jsonify, render_template, request, send_from_directory
 from ..config import DATA_DIR
@@ -89,6 +90,7 @@ def service():
     return current_app.extensions["objects"]
 
 
+@bp.get("/monitor")
 @bp.get("/objects")
 def page():
     return render_template("objects.html")
@@ -105,10 +107,13 @@ def latest():
     return jsonify(service().latest or {"detections": [], "time": None})
 
 
+@bp.post("/api/monitor/detect")
 @bp.post("/api/objects/detect")
 def detect():
     s = service()
-    if not s.detector:
+    objects_enabled = request.form.get("objects", "true") == "true"
+    faces_enabled = request.form.get("faces", "false") == "true"
+    if objects_enabled and not s.detector:
         return jsonify(error=s.error), 503
     if request.files.get("image"):
         jpeg = request.files["image"].read(10*1024*1024+1)
@@ -127,7 +132,33 @@ def detect():
         except Exception:
             return jsonify(error="共享摄像头快照不可用"), 503
     try:
-        result = s.run(jpeg, request.form.get("evidence") == "true")
+        if len(jpeg) > 10*1024*1024:
+            return jsonify(error="图片超过 10MB"), 413
+        started = time.monotonic()
+        if objects_enabled:
+            result = s.run(jpeg, request.form.get("evidence") == "true")
+        else:
+            import cv2
+            import numpy as np
+            frame = cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR)
+            if frame is None:
+                raise ValueError("无效图像")
+            height, width = frame.shape[:2]
+            result = {"time": datetime.now(timezone.utc).isoformat(), "width": width,
+                      "height": height, "detections": [], "event_id": None, "inference_ms": 0}
+        result = dict(result)
+        result["objects_enabled"] = objects_enabled
+        result["faces_enabled"] = faces_enabled
+        result["face_result"] = None
+        if faces_enabled:
+            from ..extensions import face_engine
+            if face_engine.config.get("simulation_mode", True):
+                result["face_result"] = {"faces": [], "error": "人脸模型尚未就绪"}
+            else:
+                result["face_result"] = face_engine.recognize_jpeg(jpeg, apply_throttle=False)
+        result["inference_ms"] = round((time.monotonic() - started) * 1000, 1)
+        # 监测展示复用识别引擎，门禁联动由现有后台哨兵统一处理。
+
         return jsonify(**result, preview="data:image/jpeg;base64," + base64.b64encode(jpeg).decode())
     except ValueError as exc:
         return jsonify(error=str(exc)), 400

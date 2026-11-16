@@ -21,3 +21,7 @@
 .objects-heading h2 { margin: 0; }
 .objects-events article { padding: 20px 0; border-top: 1px solid #e9e5dc; line-height: 1.8; }
 .objects-events article img { max-width: 280px; max-height: 200px; border-radius: 14px; margin-top: 12px; }
+
+.monitor-options { margin: 20px 0; }
+.objects-heading a { color: #627e70; font-size: 14px; }
+.objects-summary h3 { font-size: 15px; margin: 20px 0 8px; color: #748177; }
