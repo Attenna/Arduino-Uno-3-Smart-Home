@@ -62,6 +62,26 @@ def camera_status():
     return jsonify(body)
 
 
+@bp.route("/api/camera/snapshot")
+def camera_snapshot():
+    """Browser fallback: one fresh image from the shared capture service."""
+    url = _stream_url()
+    if not url:
+        return jsonify(error="未配置摄像头流地址"), 503
+    parts = urllib.parse.urlsplit(url)
+    snapshot_url = urllib.parse.urlunsplit((parts.scheme, parts.netloc,
+        parts.path.rsplit("/", 1)[0] + "/snapshot", "", ""))
+    try:
+        with urllib.request.urlopen(snapshot_url, timeout=5) as upstream:
+            jpeg = upstream.read(10 * 1024 * 1024 + 1)
+        if len(jpeg) > 10 * 1024 * 1024 or not jpeg.startswith(b"\xff\xd8"):
+            raise ValueError("摄像头没有返回有效图像")
+    except Exception as exc:
+        current_app.logger.warning("Camera snapshot unavailable: %s", exc)
+        return jsonify(error="摄像头快照暂不可用"), 503
+    return Response(jpeg, mimetype="image/jpeg", headers={"Cache-Control": "no-store"})
+
+
 @bp.route("/api/camera/stream")
 def camera_stream():
     url = _stream_url()
