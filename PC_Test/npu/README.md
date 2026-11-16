@@ -27,3 +27,16 @@ OM SHA256 为 f6e8eba6cc0aed0c12f94874d89023a37dbe30c7ff5d4ab07123186529dee209�
 部署时将.env凭据存为运行目录的.auth.npu.env（权限600），包含 SMART_HOME_NPU_TOKEN、SMART_HOME_NPU_MODEL、SMART_HOME_NPU_BIND。
 安装本目录的 smart-home-npu.service 后启用系统服务，将 docker-compose.npu.yml 加入现有Compose文件列表，重建Web。
 服务绑定Docker私有网桥地址，Web使用host.docker.internal访问。新增模型权重、OM和凭据均不进入Git。
+
+## 人脸适配（板上验收待完成）
+
+代码沿用当前整合分支，增加两个可选后端。
+
+- SMART_HOME_FACE_DETECTOR_NPU_URL 指向人脸检测服务（建议私有端口8094），静态输入1×3×640×640，五点姿态输出1×20×8400。
+- SMART_HOME_FACE_EMBEDDING_NPU_URL 指向MobileFaceNet服务（建议私有端口8095），输入1×3×112×112，输出1×512。
+- 使用同一个SMART_HOME_NPU_TOKEN认证。服务通过SMART_HOME_NPU_PORT指定端口，由smart-home-npu@.service模板读取.auth.npu.face-detector.env或.auth.npu.face-embedding.env。
+- 启用前验证原YOLOFaceDetector与新解码的人脸框和五点坐标，并对现有注册样本比较CPU/NPU归一化特征、相似度、身份与授权判定。阈值继续取现有配置。
+
+原检测权重SHA256为d545bf1add5aa736a4febac4f4f9245a6d596cd0fe70d5d57989fe0cb9e626ca。
+本机导出的ONNX为opset12、静态640输入。8张已有本机人脸样本的PyTorch/ONNX框与五点解码最大坐标差0.233像素。
+板上已启动w600k_mbf的ATC转换，随后SSH握手超时，转换结果与NPU特征兼容性尚待确认。当前运行版本仍采用CPU人脸后端，不能把代码适配和本机解码验证视为人脸NPU已上线。

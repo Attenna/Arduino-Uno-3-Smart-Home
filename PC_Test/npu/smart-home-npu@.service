@@ -1,0 +1,16 @@
+[Unit]
+Description=Smart home Ascend inference (%i)
+After=network.target docker.service
+
+[Service]
+Type=simple
+User=HwHiAiUser
+WorkingDirectory=/home/HwHiAiUser/smart-home/npu
+EnvironmentFile=/home/HwHiAiUser/smart-home/.auth.npu.%i.env
+ExecStart=/bin/bash -c '. /usr/local/Ascend/ascend-toolkit/set_env.sh; exec /home/HwHiAiUser/smart-home-npu-test/atc-env/bin/python /home/HwHiAiUser/smart-home/npu/server.py'
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target

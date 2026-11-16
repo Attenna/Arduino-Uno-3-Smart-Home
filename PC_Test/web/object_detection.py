@@ -49,22 +49,8 @@ class ObjectDetector:
         started = time.monotonic()
         with self.lock:
             if self.npu_url:
-                import requests
-                try:
-                    response = requests.post(self.npu_url + "/infer", data=tensor.tobytes(),
-                                             headers={"Authorization": "Bearer " + self.npu_token,
-                                                      "Content-Type": "application/octet-stream"}, timeout=15)
-                except requests.RequestException as exc:
-                    raise RuntimeError("NPU 推理服务未响应") from exc
-                if response.status_code != 200:
-                    raise RuntimeError("NPU 推理服务不可用，请检查服务日志")
-                shape = self.session.get_outputs()[0].shape
-                expected = int(np.prod(shape)) * 4
-                if len(response.content) != expected:
-                    raise RuntimeError("NPU 输出尺寸不匹配")
-                output = np.frombuffer(response.content, dtype=np.float32).reshape(shape)
-                if not np.isfinite(output).all():
-                    raise RuntimeError("NPU 输出包含无效数值")
+                from .npu_client import infer_npu
+                output = infer_npu(self.npu_url, self.npu_token, tensor, self.session.get_outputs()[0].shape)
             else:
                 output = self.session.run(None, {self.input.name: tensor})[0]
             rows = output[0].T

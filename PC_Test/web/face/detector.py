@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import os
 import numpy as np
 
 
@@ -88,10 +89,19 @@ class YOLOFaceDetector:
         self.iou_threshold = iou_threshold
         self.image_size = image_size
         self.device = device
+        self.provider = "PyTorch"
+        self.npu_detector = None
+        if os.environ.get("SMART_HOME_FACE_DETECTOR_NPU_URL"):
+            from .ascend_detector import AscendFaceDetector
+            self.npu_detector = AscendFaceDetector(conf_threshold, iou_threshold, image_size)
+            self.provider = "Ascend310B4"
+            return
         from ultralytics import YOLO  # 懒加载
         self.model = YOLO(str(self.model_path))
 
     def detect(self, image: np.ndarray) -> list[FaceDetection]:
+        if self.npu_detector is not None:
+            return self.npu_detector.detect(image)
         if image is None or image.size == 0:
             return []
 

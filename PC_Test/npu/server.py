@@ -59,7 +59,7 @@ def main():
             except Exception as exc:
                 return self.reply(503, {'error': str(exc)})
 
-    server = ThreadingHTTPServer((os.environ.get('SMART_HOME_NPU_BIND', '127.0.0.1'), 8093), Handler)
+    server = ThreadingHTTPServer((os.environ.get('SMART_HOME_NPU_BIND', '127.0.0.1'), int(os.environ.get('SMART_HOME_NPU_PORT', '8093'))), Handler)
     server.daemon_threads = True
     try:
         server.serve_forever()

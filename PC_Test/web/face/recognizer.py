@@ -10,6 +10,7 @@ data/face/embeddings.pkl，识别时取余弦相似度最高且超过阈值的�
 from __future__ import annotations
 
 import hashlib
+import os
 import pickle
 from dataclasses import dataclass
 from pathlib import Path
@@ -219,6 +220,8 @@ class ArcFaceONNXEmbeddingExtractor:
             str(self.model_path),
             providers=["CPUExecutionProvider"],
         )
+        self.npu_url = os.environ.get("SMART_HOME_FACE_EMBEDDING_NPU_URL", "")
+        self.provider = "Ascend310B4" if self.npu_url else "CPUExecutionProvider"
         self.input_name = self.session.get_inputs()[0].name
         self.output_name = self.session.get_outputs()[0].name
         self.image_size = infer_onnx_image_size(
@@ -241,7 +244,12 @@ class ArcFaceONNXEmbeddingExtractor:
         rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
         blob = (rgb.astype(np.float32) - 127.5) / 127.5
         blob = np.transpose(blob, (2, 0, 1))[None, ...]
-        output = self.session.run([self.output_name], {self.input_name: blob})[0]
+        if self.npu_url:
+            from ..npu_client import infer_npu
+            output = infer_npu(self.npu_url, os.environ.get("SMART_HOME_NPU_TOKEN", ""), blob,
+                               self.session.get_outputs()[0].shape)
+        else:
+            output = self.session.run([self.output_name], {self.input_name: blob})[0]
         embedding = np.asarray(output, dtype=np.float32).reshape(-1)
         return normalize_embedding(embedding)
 
