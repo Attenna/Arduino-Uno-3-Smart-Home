@@ -17,7 +17,10 @@
                 <label><input type="checkbox" id="enableFaces" checked>人脸识别</label>
                 <label><input type="checkbox" id="enableObjects" checked>物体检测</label>
             </div>
-            <canvas id="view" width="960" height="540" aria-label="物体检测画面"></canvas>
+            <div class="monitor-stage">
+                <img id="liveVideo" src="/api/camera/stream" alt="摄像头实时画面">
+                <canvas id="view" width="960" height="540" aria-label="检测框叠加层"></canvas>
+            </div>
             <p id="message" role="status">选择摄像头检测或上传图片</p>
             <div class="objects-actions">
                 <button id="once" class="objects-primary">检测摄像头</button>
@@ -44,7 +47,7 @@
                 <h3>物体</h3><div id="result" role="status">等待检测</div>
                 <h3>人脸</h3><div id="faceResult" role="status">等待检测</div>
                 <p class="objects-note">识别开关控制本页显示与推理。门禁自动验证由后台运行，通行结果请到门禁管理查看。</p>
-                <p class="objects-note">连续检测每秒尝试一次，上一轮未完成时跳过本次请求。位置框使用原图像素，依次为左、上、右、下。</p>
+                <p class="objects-note">视频持续播放，后台完成一轮后处理最新帧。检测框超过5秒会清除。位置框使用原图像素，依次为左、上、右、下。</p>
             </section>
         </div>
     </div>
@@ -56,7 +59,7 @@
 </div>
 {% endblock %}
 {% block scripts %}
-<script src="{{ url_for('static', filename='js/objects.js') }}?v=20261116-monitor"></script>
+<script src="{{ url_for('static', filename='js/objects.js') }}?v=20261116-live"></script>
 <script>
 (function () {
     const clock = document.getElementById('currentTime');

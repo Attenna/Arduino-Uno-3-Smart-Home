@@ -13,6 +13,7 @@ from contextlib import contextmanager
 from flask import Blueprint, current_app, jsonify, render_template, request, send_from_directory
 from ..config import DATA_DIR
 from ..object_detection import ObjectDetector
+from ..monitor_worker import MonitorWorker
 from ..bulb_light import BulbLightLink, activate_light
 from .camera import _stream_url
 
@@ -85,6 +86,16 @@ def init_objects(app):
     cfg = app.config["SMART_HOME_CFG"].get("objects", {})
     model = os.environ.get("SMART_HOME_OBJECT_MODEL", cfg.get("model_path", "models/objects/best.onnx"))
     app.extensions["objects"] = ObjectService(model, DATA_DIR)
+    def infer(options, is_current):
+        with app.app_context():
+            response = _detect_data(options, {}, allow_action=is_current)
+            response, status_code = response if isinstance(response, tuple) else (response, 200)
+            data = response.get_json()
+            if status_code != 200:
+                raise RuntimeError(data.get("error", "检测失败"))
+            data.pop("preview", None)
+            return data
+    app.extensions["monitor_worker"] = MonitorWorker(infer)
     app.register_blueprint(bp)
 
 
@@ -112,13 +123,17 @@ def latest():
 @bp.post("/api/monitor/detect")
 @bp.post("/api/objects/detect")
 def detect():
+    return _detect_data(request.form, request.files)
+
+
+def _detect_data(form, files, allow_action=lambda: True):
     s = service()
-    objects_enabled = request.form.get("objects", "true") == "true"
-    faces_enabled = request.form.get("faces", "false") == "true"
+    objects_enabled = form.get("objects", "true") == "true"
+    faces_enabled = form.get("faces", "false") == "true"
     if objects_enabled and not s.detector:
         return jsonify(error=s.error), 503
-    if request.files.get("image"):
-        jpeg = request.files["image"].read(10*1024*1024+1)
+    if files.get("image"):
+        jpeg = files["image"].read(10*1024*1024+1)
         if len(jpeg) > 10*1024*1024:
             return jsonify(error="图片超过 10MB"), 413
     else:
@@ -138,7 +153,7 @@ def detect():
             return jsonify(error="图片超过 10MB"), 413
         started = time.monotonic()
         if objects_enabled:
-            result = s.run(jpeg, request.form.get("evidence") == "true")
+            result = s.run(jpeg, form.get("evidence") == "true")
         else:
             import cv2
             import numpy as np
@@ -150,8 +165,8 @@ def detect():
                       "height": height, "detections": [], "event_id": None, "inference_ms": 0}
         result = dict(result)
         result["bulb_light"] = s.bulb_light.process(
-            result["detections"], request.form.get("bulb_light") == "true" and objects_enabled,
-            not bool(request.files.get("image")), activate_light)
+            result["detections"], form.get("bulb_light") == "true" and objects_enabled and allow_action(),
+            not bool(files.get("image")), activate_light)
         result["objects_enabled"] = objects_enabled
         result["faces_enabled"] = faces_enabled
         result["face_result"] = None
@@ -185,3 +200,25 @@ def image(event_id):
     if len(event_id) != 32 or any(c not in "0123456789abcdef" for c in event_id):
         abort(404)
     return send_from_directory(service().directory, event_id + ".jpg")
+
+
+@bp.post("/api/monitor/session")
+def monitor_session():
+    data = request.get_json(silent=True) or {}
+    owner = data.get("client")
+    if not isinstance(owner, str) or not 1 <= len(owner) <= 80:
+        return jsonify(error="缺少监测窗口标识"), 400
+    if type(data.get("active")) is not bool:
+        return jsonify(error="active 必须是布尔值"), 400
+    options = {key: "true" if data.get(key) is True else "false"
+               for key in ["faces", "objects", "evidence", "bulb_light"]}
+    try:
+        current_app.extensions["monitor_worker"].configure(owner, data["active"], options)
+    except RuntimeError as exc:
+        return jsonify(error=str(exc)), 409
+    return jsonify(current_app.extensions["monitor_worker"].snapshot())
+
+
+@bp.get("/api/monitor/result")
+def monitor_result():
+    return jsonify(current_app.extensions["monitor_worker"].snapshot())

@@ -19,55 +19,108 @@ async function events() {
     el('events').append(article);
   }
 }
-async function detect(upload = false) {
-  if (busy) return;
-  busy = true;
-  el('once').disabled = el('upload').disabled = true;
-  let preview;
-  try {
-    const body = new FormData();
-    if (upload) {
-      const file = el('file').files[0];
-      if (!file) throw new Error('请先选择图片');
-      body.append('image', file); preview = URL.createObjectURL(file);
-    }
-    body.append('evidence', String(el('evidence').checked));
-    body.append('faces', String(el('enableFaces').checked));
-    body.append('objects', String(el('enableObjects').checked));
-    body.append('bulb_light', String(el('bulbLight').checked));
-    const data = await api('/api/monitor/detect', {method:'POST', body});
-    // 摄像头画面使用检测时同一快照，避免框与后续帧错位。
-    if (!upload) preview = data.preview;
-    if (preview) {
-      const img = new Image(); img.src = preview; await img.decode();
-      const canvas = el('view'); canvas.width = data.width; canvas.height = data.height;
-      const ctx = canvas.getContext('2d'); ctx.drawImage(img,0,0);
-      ctx.strokeStyle = '#e27c42'; ctx.fillStyle = '#e27c42'; ctx.lineWidth = 3; ctx.font = '18px sans-serif';
-      for (const d of data.detections) { const [x,y,r,b] = d.box; ctx.strokeRect(x,y,r-x,b-y); ctx.fillText(`${displayLabel(d.label)} ${(d.confidence*100).toFixed(0)}%`,x,Math.max(20,y-6)); }
-    }
-    el('bulbLightStatus').textContent = data.bulb_light?.message || '等待检测';
-    const faces = data.face_result;
-    if (faces && preview) {
-      const ctx = el('view').getContext('2d');
-      ctx.strokeStyle = '#528fbd'; ctx.fillStyle = '#528fbd';
-      for (const face of faces.faces || []) {
-        const box = face.bbox;
-        ctx.strokeRect(box.x1, box.y1, box.x2-box.x1, box.y2-box.y1);
-        ctx.fillText(face.person_name || '陌生人 / 未匹配', box.x1, Math.max(20,box.y1-6));
-      }
-    }
-    el('faceResult').textContent = !data.faces_enabled ? '本页人脸识别已关闭' :
-      faces?.error || (faces?.mode === 'throttled' ? '识别引擎繁忙，等待下一帧' :
-      (faces?.faces?.length ? faces.faces.map(f => f.person_name || '陌生人 / 未匹配').join('、') : '本帧未检测到人脸'));
-    el('message').textContent = `${new Date(data.time).toLocaleTimeString()} · ${data.inference_ms} ms`;
-    el('result').textContent = data.detections.length ? data.detections.map(d => `${displayLabel(d.label)} ${(d.confidence*100).toFixed(1)}% [${d.box.join(', ')}]`).join('；') : (data.objects_enabled ? '本帧未检测到目标' : '本页物体检测已关闭');
-    if (data.event_id) await events();
-  } catch (error) { el('message').textContent = error.message; }
-  finally { if (upload && preview) URL.revokeObjectURL(preview); busy = false; el('once').disabled = el('upload').disabled = false; }
+const client = crypto.randomUUID();
+let resultVersion = '', expiry = 0, polling = false, previewUrl = null, generation = 0;
+const video = el('liveVideo');
+function clearBoxes() {
+  const canvas = el('view');
+  canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
 }
-el('once').onclick = () => detect(); el('upload').onclick = () => detect(true); el('refresh').onclick = () => events().catch(e => el('message').textContent = e.message);
-el('live').onclick = () => { running = !running; el('live').textContent = running ? '停止连续检测' : '开始连续检测'; if (running) detect(); };
-setInterval(() => { if (running) detect(); },1000);
+function useLiveVideo() {
+  if (previewUrl) { URL.revokeObjectURL(previewUrl); previewUrl = null; }
+  if (video.getAttribute('src') !== '/api/camera/stream') video.src = '/api/camera/stream';
+  clearBoxes();
+}
+function showResult(data, ttl = 5000) {
+  const canvas = el('view'); canvas.width = data.width; canvas.height = data.height;
+  const ctx = canvas.getContext('2d'); ctx.lineWidth = 3; ctx.font = '18px sans-serif';
+  ctx.strokeStyle = '#e27c42'; ctx.fillStyle = '#e27c42';
+  for (const d of data.detections) {
+    const [x,y,r,b] = d.box; ctx.strokeRect(x,y,r-x,b-y);
+    ctx.fillText(`${displayLabel(d.label)} ${(d.confidence*100).toFixed(0)}%`,x,Math.max(20,y-6));
+  }
+  const faces = data.face_result;
+  ctx.strokeStyle = '#528fbd'; ctx.fillStyle = '#528fbd';
+  for (const face of faces?.faces || []) {
+    const b = face.bbox; ctx.strokeRect(b.x1,b.y1,b.x2-b.x1,b.y2-b.y1);
+    ctx.fillText(face.person_name || '陌生人 / 未匹配',b.x1,Math.max(20,b.y1-6));
+  }
+  el('faceResult').textContent = !data.faces_enabled ? '本页人脸识别已关闭' :
+    faces?.error || (faces?.faces?.length ? faces.faces.map(f => f.person_name || '陌生人 / 未匹配').join('、') : '本帧未检测到人脸');
+  el('result').textContent = data.detections.length ? data.detections.map(d => `${displayLabel(d.label)} ${(d.confidence*100).toFixed(1)}%`).join('；') : (data.objects_enabled ? '本帧未检测到目标' : '本页物体检测已关闭');
+  el('bulbLightStatus').textContent = data.bulb_light?.message || '等待检测';
+  el('message').textContent = `${new Date(data.time).toLocaleTimeString()} · 处理耗时 ${data.inference_ms} ms · 蓝色人脸 / 橙色物体`;
+  expiry = performance.now() + ttl;
+  if (data.event_id) events().catch(e => el('message').textContent = e.message);
+}
+function options() {
+  return {client, active:running, faces:el('enableFaces').checked, objects:el('enableObjects').checked,
+    evidence:el('evidence').checked, bulb_light:el('bulbLight').checked};
+}
+async function updateSession() {
+  await api('/api/monitor/session',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(options())});
+}
+async function setRunning(value) {
+  generation++;
+  running = value;
+  try { await updateSession(); }
+  catch (e) { running = false; throw e; }
+  el('live').textContent = running ? '停止连续检测' : '开始连续检测';
+  el('once').disabled = el('upload').disabled = running;
+  clearBoxes(); resultVersion = ''; expiry = 0;
+  if (running) { useLiveVideo(); el('message').textContent = '视频播放中，等待后台检测结果'; }
+}
+async function poll() {
+  if (!running || polling) return;
+  polling = true;
+  const requestedGeneration = generation;
+  try {
+    const state = await api('/api/monitor/result');
+    if (!running || requestedGeneration !== generation) return;
+    if (state.error) { clearBoxes(); el('message').textContent = state.error; }
+    if (state.result && state.result.time !== resultVersion) {
+      resultVersion = state.result.time;
+      showResult(state.result, Math.max(0,state.ttl_ms-state.age_ms));
+    }
+    if (!state.result) clearBoxes();
+  } catch(e) { clearBoxes(); el('message').textContent = e.message; }
+  finally { polling = false; }
+}
+async function detect(upload=false) {
+  if (busy || running) return;
+  busy=true; el('once').disabled=el('upload').disabled=true;
+  try {
+    const body=new FormData();
+    if (upload) {
+      const file=el('file').files[0]; if (!file) throw new Error('请先选择图片');
+      body.append('image',file);
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      previewUrl=URL.createObjectURL(file); video.src=previewUrl; await video.decode();
+    } else useLiveVideo();
+    for (const [key,value] of Object.entries(options())) body.append(key,String(value));
+    const data=await api('/api/monitor/detect',{method:'POST',body});
+    showResult(data);
+  } catch(e) { clearBoxes();el('message').textContent=e.message; }
+  finally { busy=false;el('once').disabled=el('upload').disabled=running; }
+}
+el('once').onclick=()=>detect();el('upload').onclick=()=>detect(true);
+el('live').onclick=()=>setRunning(!running).catch(e=>el('message').textContent=e.message);
+el('refresh').onclick=()=>events().catch(e=>el('message').textContent=e.message);
+for (const id of ['enableFaces','enableObjects','evidence','bulbLight']) {
+  el(id).onchange=()=>{
+    generation++;clearBoxes();resultVersion='';expiry=0;
+    if(running) updateSession().catch(e=>el('message').textContent=e.message);
+  };
+}
+setInterval(poll,500);
+setInterval(()=>{ if(running) updateSession().catch(e=>{clearBoxes();el('message').textContent=e.message;}); },5000);
+setInterval(()=>{
+  if(expiry && performance.now()>expiry){ clearBoxes();expiry=0;el('result').textContent='结果已过期';el('faceResult').textContent='结果已过期';el('message').textContent='检测结果已过期，等待新结果'; }
+},200);
+window.addEventListener('pagehide',()=>{
+  if(running) fetch('/api/monitor/session',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...options(),active:false}),keepalive:true});
+});
+video.onerror=()=>{clearBoxes();el('message').textContent='摄像头画面不可用，请检查连接';};
 api('/api/face/status').then(s => { el('faceResult').textContent = s.model_loaded ? '人脸模型已加载，等待检测' : '人脸模型未就绪'; }).catch(e => el('faceResult').textContent = e.message);
 api('/api/objects/status').then(s => { el('status').textContent = s.loaded ? `已加载 · ${Object.values(s.classes).map(displayLabel).join('、')} · ${s.input_size.join(' × ')} · ${s.provider}` : s.error; }).catch(e => el('status').textContent = e.message);
 events().catch(e => el('message').textContent = e.message);
