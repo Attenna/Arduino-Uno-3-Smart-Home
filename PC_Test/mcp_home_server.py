@@ -1145,6 +1145,9 @@ async def fan(action: Literal["on", "off", "set_speed"],
               value: Optional[int] = None) -> str:
     """控制风扇。action：on(全速)/off(停)/set_speed(需 value 0-255)。"""
     _audit("fan")
+    if action == "set_speed":
+        action = "on" if (value or 0) > 0 else "off"
+        value = None
     return await asyncio.to_thread(HOME.handle_fan, action, value)
 
 
@@ -1190,29 +1193,6 @@ async def ir(code: Optional[int] = None,
     return await asyncio.to_thread(HOME.handle_ir, code, address, command)
 
 
-@mcp.tool()
-async def ac(
-    power: Optional[bool] = None,
-    mode: Optional[Literal["auto", "cool", "heat", "dry", "fan"]] = None,
-    temperature: Optional[int] = None,
-    fan: Optional[Literal["auto", "low", "mid", "high"]] = None,
-    swing_ud: Optional[bool] = None,
-    swing_lr: Optional[bool] = None,
-) -> str:
-    """控制美的空调（红外遥控，Module B 的 D12 发射管）。
-
-    只传需要改变的参数，未传的保持不变（服务端进程内记住当前设定）。
-    power：开关机；mode：auto(自动)/cool(制冷)/heat(制热)/dry(抽湿)/fan(送风)；
-    temperature：17~30℃ 的整数度（真遥控器 RN02G(X) 没有半度档）；
-    fan：风速 auto(自动)/low(低)/mid(中)/high(高)；
-    swing_ud/swing_lr：上下/左右扫风。遥控器上它们是**翻转键**，每次下发即翻转一次，
-    所以只在设定值发生变化时才补发，实际朝向取决于空调当时的状态。
-    注意：设置模式/温度/风速会连带把空调开机（状态帧自带开机效果），无需先 power=true。
-    """
-    _audit("ac")
-    return await asyncio.to_thread(
-        HOME.handle_ac, power=power, mode=mode, temperature=temperature,
-        fan=fan, swing_ud=swing_ud, swing_lr=swing_lr)
 
 
 @mcp.tool()

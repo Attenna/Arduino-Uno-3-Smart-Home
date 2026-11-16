@@ -102,8 +102,8 @@ test('dashboard no longer renders or binds the AC control card', () => {
         assert.equal(js.includes(marker), false, `${marker} 仍被 main.js 绑定`);
     }
     assert.equal(css.includes('.ac-indicator'), false);
-    assert.match(html, /remoteControl\('ac_on'\)/,
-        '远程控制区不属于被删除的独立空调卡片');
+    assert.equal(html.includes("remoteControl('ac_on')"), false);
+    assert.equal(js.includes('/api/ac'), false);
 });
 
 // JS 内部调用同样要能解析：远程面板的开/关灯走 remoteControl()，模板里搜不到。

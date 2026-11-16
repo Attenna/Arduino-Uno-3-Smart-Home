@@ -47,10 +47,7 @@
                                 <span class="slc-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></span>
                                 <span class="slc-text"><b data-i18n="nav.access">门口与安防</b><small data-i18n="links.access_desc">入户方式、门禁与事件</small></span>
                             </a>
-                            <a class="settings-link-card" href="/voice">
-                                <span class="slc-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0014 0v-2M12 19v3"/></svg></span>
-                                <span class="slc-text"><b data-i18n="nav.voice">语音管家</b><small data-i18n="links.voice_desc">语音助手与唤醒词</small></span>
-                            </a>
+
                             <a class="settings-link-card" href="/history">
                                 <span class="slc-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 109-9 9 9 0 00-7.5 4"/><polyline points="3 3 3 8 8 8"/><polyline points="12 7 12 12 15 14"/></svg></span>
                                 <span class="slc-text"><b data-i18n="nav.history">家庭记录</b><small data-i18n="links.history_desc">温湿度与操作历史</small></span>
@@ -81,8 +78,8 @@
                     <div class="card-body">
                         <div id="memberList"></div>
                     </div>
-                    <div class="card-footer" data-i18n="settings.members_footer">
-                        成员信息保存在本机浏览器，用于快捷识别与展示；门禁凭证请前往「门口与安防」管理。
+                    <div class="card-footer" >
+                        与门禁页面共享同一份注册人员数据；人脸、房卡与启停状态在门禁页面统一管理。
                     </div>
                 </div>
             </section>
@@ -134,14 +131,14 @@
                             <div class="status-item">
                                 <span class="k" data-i18n="settings.notify">桌面通知</span>
                                 <label class="editor-toggle" style="margin-left:auto">
-                                    <input type="checkbox" id="prefNotify" onchange="saveNotifyPref()">
+                                    <input type="checkbox" id="prefNotify" disabled title="提醒发送功能尚未接入" onchange="saveNotifyPref()">
                                     <span data-i18n="settings.enabled">启用</span>
                                 </label>
                             </div>
                             <div class="status-item">
                                 <span class="k" data-i18n="settings.temp_warn">温度告警阈值</span>
                                 <span class="pref-inline">
-                                    <input type="number" class="input-field input-narrow" id="prefTempWarn" min="0" max="60" step="1"
+                                    <input type="number" class="input-field input-narrow" id="prefTempWarn" disabled title="提醒发送功能尚未接入" min="0" max="60" step="1"
                                            onchange="saveAlertPrefs()">
                                     <span class="unit">°C</span>
                                 </span>
@@ -149,29 +146,29 @@
                             <div class="status-item">
                                 <span class="k" data-i18n="settings.quiet_hours">免打扰时段</span>
                                 <span class="pref-inline">
-                                    <input type="time" class="input-field input-narrow" id="prefQuietStart" onchange="saveAlertPrefs()">
+                                    <input type="time" class="input-field input-narrow" id="prefQuietStart" disabled title="提醒发送功能尚未接入" onchange="saveAlertPrefs()">
                                     <span class="unit" data-i18n="settings.to">至</span>
-                                    <input type="time" class="input-field input-narrow" id="prefQuietEnd" onchange="saveAlertPrefs()">
+                                    <input type="time" class="input-field input-narrow" id="prefQuietEnd" disabled title="提醒发送功能尚未接入" onchange="saveAlertPrefs()">
                                 </span>
                             </div>
                             <div class="status-item">
                                 <span class="k" data-i18n="settings.alert_access">门禁异常提醒</span>
                                 <label class="editor-toggle" style="margin-left:auto">
-                                    <input type="checkbox" id="prefAlertAccess" onchange="saveAlertPrefs()">
+                                    <input type="checkbox" id="prefAlertAccess" disabled title="提醒发送功能尚未接入" onchange="saveAlertPrefs()">
                                     <span data-i18n="settings.enabled">启用</span>
                                 </label>
                             </div>
                             <div class="status-item">
                                 <span class="k" data-i18n="settings.alert_offline">设备离线提醒</span>
                                 <label class="editor-toggle" style="margin-left:auto">
-                                    <input type="checkbox" id="prefAlertOffline" onchange="saveAlertPrefs()">
+                                    <input type="checkbox" id="prefAlertOffline" disabled title="提醒发送功能尚未接入" onchange="saveAlertPrefs()">
                                     <span data-i18n="settings.enabled">启用</span>
                                 </label>
                             </div>
                         </div>
                     </div>
-                    <div class="card-footer" data-i18n="settings.notify_footer">
-                        提醒配置保存在本机浏览器；免打扰时段内仅记录事件，不弹出通知。
+                    <div class="card-footer" >
+                        提醒偏好保存在当前浏览器，尚未接入桌面通知或后台提醒；门禁结果在门禁页面内显示。
                     </div>
                 </div>
             </section>
@@ -268,14 +265,8 @@
                                 <div class="remote-icon light-off-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="6"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg></div>
                                 <span data-i18n="ha.light_off">关灯</span>
                             </div>
-                            <div class="remote-device" onclick="haAction('ac','on')">
-                                <div class="remote-icon ac-on-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M6 21h12"/></svg></div>
-                                <span data-i18n="ha.ac_on">开空调</span>
-                            </div>
-                            <div class="remote-device" onclick="haAction('ac','off')">
-                                <div class="remote-icon ac-off-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg></div>
-                                <span data-i18n="ha.ac_off">关空调</span>
-                            </div>
+
+
                             <div class="remote-device" onclick="haAction('fan','on')">
                                 <div class="remote-icon fan-on-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4"/></svg></div>
                                 <span data-i18n="ha.fan_on">开风扇</span>

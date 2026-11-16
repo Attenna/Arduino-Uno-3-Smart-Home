@@ -27,8 +27,6 @@ from .global_state import is_var_id
 # RFID 卡号归一化（"AA BB CC DD"）与上报值全等比对，避免大小写/分隔符导致匹配失败
 from ..database import normalize_uid
 # 空调风速的唯一真源是执行层的 midea_ac.FAN_LEVELS；旧 6 档数值由 ac_state 归一
-import midea_ac
-from ..ac_state import normalize_fan_level
 
 COMPARATOR_IDS = {c["id"] for c in COMPARATORS}
 
@@ -320,7 +318,7 @@ def validate_action(action: dict, where: str = "动作块",
             raise ValidationError("风扇动作只能是 set(设置转速)/on/off/toggle(切换)")
         clean["op"] = op
         speed = int(_as_number(action.get("speed", 60), where))
-        clean["speed"] = max(0, min(100, speed))
+        clean["speed"] = 100 if speed > 0 else 0
     elif device == "buzzer":
         # mode: beep(间歇，默认) / on(持续响) / off(停)
         mode = str(action.get("mode") or "beep").strip()
@@ -371,41 +369,6 @@ def validate_action(action: dict, where: str = "动作块",
             if not 0 <= code <= 4294967295:
                 raise ValidationError("NEC 码需为 0~4294967295（32 位无符号）")
             clean["code"] = code
-    elif device == "ac":
-        # 与 MCP 的 ac 工具一致：全部可选，空串/None = 该项不改，但至少要设一项
-        if action.get("power") is not None:
-            clean["power"] = bool(action["power"])
-        mode = str(action.get("mode") or "").strip()
-        if mode:
-            if mode not in ("auto", "cool", "heat", "dry", "fan"):
-                raise ValidationError("空调模式只能是 auto/cool/heat/dry/fan")
-            clean["mode"] = mode
-        temperature = action.get("temperature")
-        if temperature not in (None, ""):
-            temperature = round(_as_number(temperature, where) * 2) / 2
-            if not 17 <= temperature <= 30:
-                raise ValidationError("空调温度需在 17~30℃ 之间")
-            clean["temperature"] = temperature
-        fan = str(action.get("fan") or "").strip()
-        if fan:
-            # 唯一真源是执行层的 midea_ac.FAN_LEVELS；旧版数值档位（20/40/60/80/100）
-            # 由 ac_state.normalize_fan_level 折算到最近的物理档位，此后全网只有一套枚举
-            level = normalize_fan_level(fan)
-            if level is None:
-                raise ValidationError(
-                    "空调风速只能是 " + "/".join(midea_ac.FAN_LEVELS))
-            clean["fan"] = level
-        for key in ("swing_ud", "swing_lr", "eco", "fzc"):
-            if action.get(key) is not None:
-                clean[key] = bool(action[key])
-        timer = action.get("timer")
-        if timer not in (None, ""):
-            timer = round(_as_number(timer, where) * 2) / 2
-            if not 0 <= timer <= 24:
-                raise ValidationError("空调定时需在 0~24 小时之间（0=取消）")
-            clean["timer"] = timer
-        if len(clean) == 1:
-            raise ValidationError("空调动作至少要设置一项（开关/模式/温度/风速/扫风/ECO/防直吹/定时）")
     elif device == "voice":
         act = str(action.get("action") or "wake").strip()
         if act not in ("wake", "say"):

@@ -494,19 +494,20 @@ function defineBlocks() {
     Blockly.Blocks['act_fan'] = {
         init: function () {
             const opField = new Blockly.FieldDropdown([
-                [L('设置转速', 'Set speed'), 'set'], [L('开启', 'Turn on'), 'on'], [L('关闭', 'Close'), 'off'],
+                [L('开关（兼容旧规则）', 'Legacy switch'), 'set'], [L('开启', 'Turn on'), 'on'], [L('关闭', 'Close'), 'off'],
                 [L('切换开/关（同一键再按一次反转）', 'Toggle on/off (same key flips)'), 'toggle']]);
             this.appendDummyInput().appendField(L('🌀 风扇', '🌀 Fan')).appendField(opField, 'OP');
             this.appendDummyInput('SPEEDROW')
                 .appendField(L('转速', 'Speed')).appendField(new Blockly.FieldNumber(60, 0, 100, 1), 'SPEED')
                 .appendField(L('%（填 0 = 用上次转速）', '% (0 = last speed)'));
+            this.getInput('SPEEDROW').setVisible(false);
             this.setPreviousStatement(true, 'ACT');
             this.setNextStatement(true, 'ACT');
             this.setColour(120);
             this.setTooltip(L('切换开/关：同一个触发（如遥控器同一个键）按一次开、再按关。', 'Toggle: the same trigger (e.g. one remote key) turns it on, then off, on each press.'));
             // 关闭动作不需要转速，隐藏转速行
             opField.setValidator((v) => {
-                this.getInput('SPEEDROW').setVisible(v !== 'off');
+                this.getInput('SPEEDROW').setVisible(false);
                 return v;
             });
         },
@@ -1166,11 +1167,10 @@ function summarizeAction(a) {
         }
         case 'fan': {
             const fanOp = a.op || 'set';
-            const fanAt = Number(a.speed) > 0 ? `${a.speed}%` : L('上次转速', 'last speed');
             if (fanOp === 'off') return L('风扇 关闭', 'Fan off');
-            if (fanOp === 'on') return `${L('风扇 开启 ', 'Fan on ')}${fanAt}`;
-            if (fanOp === 'toggle') return `${L('风扇 切换开/关（开时 ', 'Fan toggle (on at ')}${fanAt}${L('）', ')')}`;
-            return `${L('风扇 ', 'Fan ')}${a.speed}%`;
+            if (fanOp === 'on') return L('风扇 开启', 'Fan on');
+            if (fanOp === 'toggle') return L('风扇 切换开/关', 'Fan toggle');
+            return Number(a.speed) > 0 ? L('风扇 开启', 'Fan on') : L('风扇 关闭', 'Fan off');
         }
         case 'buzzer':
             if (a.mode === 'on') return L('蜂鸣器 持续响', 'Buzzer continuous');
@@ -2175,7 +2175,7 @@ function fillAction(a) {
             const fanOp = a.op || 'set';
             b.setFieldValue(fanOp, 'OP');
             b.setFieldValue(String(a.speed === undefined ? 60 : a.speed), 'SPEED');
-            b.getInput('SPEEDROW').setVisible(fanOp !== 'off');
+            b.getInput('SPEEDROW').setVisible(false);
             break;
         }
         case 'buzzer':

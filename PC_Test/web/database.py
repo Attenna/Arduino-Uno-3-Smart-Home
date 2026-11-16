@@ -263,7 +263,8 @@ class SmartHomeDB:
                 result['light_rgb'] = [int(v) for v in parts] if len(parts) == 3 else None
             except ValueError:
                 result['light_rgb'] = None
-        return result
+        return {key: value for key, value in result.items()
+                if not key.startswith(("ac_", "rb_ac", "soil_"))}
 
     def update_status(self, **kwargs):
         # Compatibility API; HTTP control routes must never call this optimistically.

@@ -44,7 +44,7 @@ class RemoteBindingsTests(unittest.TestCase):
     def test_four_keys_toggle_independently(self):
         for cmd, device, field, opened, closed in [
             (0x45, 'light', 'light_status', 'on', 'off'),
-            (0x46, 'fan', 'fan_speed', 60, 0),
+            (0x46, 'fan', 'fan_speed', 100, 0),
             (0x47, 'door', 'door_status', 'open', 'closed'),
             (0x44, 'window', 'window_status', 'open', 'closed'),
         ]:

@@ -2,6 +2,7 @@
 {% block doc_title_key %}nav.dashboard{% endblock %}
 {% block doc_title %}我的家{% endblock %}
 {% block head %}
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/watercolor-scene.css') }}?v=20261115">
     <script src="{{ url_for('static', filename='vendor/chart/chart.umd.min.js') }}"></script>
 {% endblock %}
 {% block page_header %}
@@ -10,6 +11,8 @@
 {% endblock %}
 
 {% block content %}
+    {% include 'watercolor_home.html' %}
+    <details class="wc-advanced"><summary>精细控制与环境历史</summary>
     <!-- 硬件回读一致性 / 串口健康度（诊断，后端已做防误报） -->
     <div id="mismatchIndicator" class="mismatch-indicator na">
         <div class="mismatch-row" data-i18n="mismatch.unavailable">硬件回读不可用</div>
@@ -18,111 +21,6 @@
     <!-- 传感器数据新鲜度：值停更时必须看得出来，而不是拿旧值冒充实时 -->
     <div class="sensor-freshness" id="sensorFreshness"></div>
 
-    <!-- 模式摘要 + 环境摘要 -->
-    <div class="mode-bar">
-        <span class="mode-pill" id="homeModePill">
-            <span class="dot"></span>
-            <span id="homeModeText" data-i18n="home.mode_home">在家</span>
-        </span>
-        <div class="env-chips">
-            <div class="env-chip"><span class="k" data-i18n="home.temp">温度</span><span class="v" id="envTemp">--</span></div>
-            <div class="env-chip"><span class="k" data-i18n="temp.humidity">湿度</span><span class="v" id="envHum">--</span></div>
-            <div class="env-chip"><span class="k" data-i18n="home.avg24h">24h 平均温度</span><span class="v" id="avgTemp24h">--</span></div>
-            <div class="env-chip"><span class="k" data-i18n="home.access24h">24h 门禁</span><span class="v" id="accessCount24h">0</span></div>
-            <div class="env-chip"><span class="k" data-i18n="home.light24h">24h 灯光</span><span class="v" id="lightUsage24h">0</span></div>
-        </div>
-    </div>
-
-    <!-- 房间实时状态 + 常用设备 + 最近事件 -->
-    <div class="room-scene">
-        <div class="room-stage">
-            <div class="floor"></div>
-            <div class="rs-unit rs-lamp" id="rsLamp">
-                <span class="glow"></span>
-                <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M15 30h18l-3.2-16H18.2z"/>
-                    <path d="M24 30v9"/>
-                    <path d="M17 41h14"/>
-                </svg>
-                <span class="rs-label" data-i18n="home.lamp">灯</span>
-            </div>
-            <div class="rs-unit rs-fan" id="rsFan">
-                <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2">
-                    <g class="rotor">
-                        <ellipse cx="24" cy="12" rx="5" ry="10"/>
-                        <ellipse cx="24" cy="12" rx="5" ry="10" transform="rotate(120 24 24)"/>
-                        <ellipse cx="24" cy="12" rx="5" ry="10" transform="rotate(240 24 24)"/>
-                    </g>
-                    <circle cx="24" cy="24" r="3.5"/>
-                </svg>
-                <span class="rs-label" data-i18n="home.fan">风扇</span>
-            </div>
-            <div class="rs-unit rs-window" id="rsWindow">
-                <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2">
-                    <rect x="7" y="7" width="34" height="34" rx="2"/>
-                    <line x1="24" y1="7" x2="24" y2="41"/>
-                    <line x1="7" y1="24" x2="41" y2="24"/>
-                </svg>
-                <span class="rs-label" data-i18n="home.window">窗户</span>
-            </div>
-            <div class="rs-unit rs-door" id="rsDoor">
-                <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2">
-                    <rect x="11" y="6" width="26" height="38" rx="2"/>
-                    <circle cx="31" cy="26" r="2.4"/>
-                </svg>
-                <span class="rs-label" data-i18n="home.door">入户门</span>
-                <span class="rs-countdown hidden" id="rsDoorCountdown"></span>
-            </div>
-        </div>
-
-        <div class="card">
-            <div class="card-header">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="card-icon"><path d="M4 12h16M12 4v16"/></svg>
-                <h3 data-i18n="home.devices">快捷控制</h3>
-            </div>
-            <div class="card-body">
-                <div class="ctrl-group">
-                    <span class="ctrl-group-label" data-i18n="home.grp.light">灯光</span>
-                    <div class="btn-group btn-group-tight">
-                        <button class="btn btn-sm" onclick="setLight('on',100)" data-i18n="light.full">全亮</button>
-                        <button class="btn btn-sm" onclick="setLight('on',50)" data-i18n="light.half">半亮</button>
-                        <button class="btn btn-sm" onclick="setLight('on',25)" data-i18n="light.night">夜灯</button>
-                        <button class="btn btn-sm" onclick="setLight('off',0)" data-i18n="light.off">关闭</button>
-                    </div>
-                </div>
-                <div class="ctrl-group">
-                    <span class="ctrl-group-label" data-i18n="home.grp.fan">风扇</span>
-                    <div class="btn-group btn-group-tight">
-                        <button class="btn btn-sm" onclick="setFan(30)" data-i18n="fan.low">低速</button>
-                        <button class="btn btn-sm" onclick="setFan(60)" data-i18n="fan.medium">中速</button>
-                        <button class="btn btn-sm" onclick="setFan(100)" data-i18n="fan.high">高速</button>
-                        <button class="btn btn-sm" onclick="setFan(0)" data-i18n="fan.off">关闭</button>
-                    </div>
-                </div>
-                <div class="ctrl-group">
-                    <span class="ctrl-group-label" data-i18n="home.grp.window_door">门窗</span>
-                    <div class="btn-group btn-group-tight">
-                        <button class="btn btn-sm" onclick="guardDoor()" data-i18n="door.front">前门</button>
-                        <button class="btn btn-sm" onclick="guardWindow()" data-i18n="door.window">客厅窗户</button>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <div class="card">
-            <div class="card-header">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="card-icon"><path d="M12 8v5l3 2"/><circle cx="12" cy="12" r="9"/></svg>
-                <h3 data-i18n="home.recent">最近事件</h3>
-            </div>
-            <div class="card-body">
-                <div class="event-list" id="homeEvents">
-                    <div class="event-item"><span class="d" data-i18n="home.no_event">暂无事件</span></div>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- 核心状态与控制卡片 -->
     <div class="dashboard-grid">
         <!-- 温湿度卡片 -->
         <div class="card card-temperature">
@@ -160,7 +58,7 @@
                     <circle cx="12" cy="12" r="3"/>
                     <path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/>
                 </svg>
-                <h3 data-i18n="fan.title">风扇 / 伺服电机</h3>
+                <h3 >风扇</h3>
             </div>
             <div class="card-body">
                 <div class="fan-visual" id="fanVisual">
@@ -170,22 +68,16 @@
                         <div class="blade"></div>
                     </div>
                 </div>
-                <div class="control-row">
-                    <label data-i18n="fan.speed">风扇速度</label>
-                    <div class="slider-container">
-                        <input type="range" id="fanSpeed" min="0" max="100" value="0" class="slider slider-fan">
-                        <span class="slider-value" id="fanSpeedValue">0%</span>
-                    </div>
-                </div>
+
                 <div class="fan-readback hidden" id="fanReadback">
                     <span data-i18n="fan.readback">回读</span>
                     <span id="fanReadbackValue">--%</span>
                 </div>
                 <div class="btn-group">
                     <button class="btn btn-sm" onclick="setFan(0)" data-i18n="fan.off">关闭</button>
-                    <button class="btn btn-sm" onclick="setFan(30)" data-i18n="fan.low">低速</button>
-                    <button class="btn btn-sm" onclick="setFan(60)" data-i18n="fan.medium">中速</button>
-                    <button class="btn btn-sm" onclick="setFan(100)" data-i18n="fan.high">高速</button>
+
+
+                    <button class="btn btn-sm" onclick="setFan(100)" >开启</button>
                 </div>
             </div>
         </div>
@@ -340,14 +232,8 @@
                     <div class="remote-icon door-close-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg></div>
                     <span data-i18n="remote.door_close">关门</span>
                 </div>
-                <div class="remote-device" onclick="remoteControl('ac_on')">
-                    <div class="remote-icon ac-on-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="10" rx="2"/><path d="M6 18v2M12 18v3M18 18v2"/></svg></div>
-                    <span data-i18n="remote.ac_on">开空调</span>
-                </div>
-                <div class="remote-device" onclick="remoteControl('ac_off')">
-                    <div class="remote-icon ac-off-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="10" rx="2"/><line x1="3" y1="15" x2="21" y2="3"/></svg></div>
-                    <span data-i18n="remote.ac_off">关空调</span>
-                </div>
+
+
                 <div class="remote-device" onclick="location.href='/access'">
                     <div class="remote-icon camera-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg></div>
                     <span data-i18n="remote.camera">摄像头</span>
@@ -355,9 +241,10 @@
             </div>
         </div>
     </div>
+    </details>
 {% endblock %}
 
 {% block scripts %}
     <script src="{{ url_for('static', filename='js/main.js') }}?v=20261006a"></script>
-    <script src="{{ url_for('static', filename='js/home.js') }}?v=20261003a"></script>
+    <script src="{{ url_for('static', filename='js/watercolor-home.js') }}?v=20261115"></script>
 {% endblock %}

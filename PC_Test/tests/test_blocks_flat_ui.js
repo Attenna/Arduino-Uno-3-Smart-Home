@@ -92,7 +92,7 @@ test('规则卡片摊开显示全部条件与动作，不再折叠成「等 N �
     const html = vm.runInContext(
         `ruleCardHtml(${JSON.stringify(rule)}, 0)`, context);
     assert.match(html, /class="rc-flow"/);
-    for (const text of ['开门', '等待 10s', '风扇 60%']) {
+    for (const text of ['开门', '等待 10s', '风扇 开启']) {
         assert.ok(html.includes(text), `动作「${text}」没显示出来`);
     }
     for (const text of ['有人在家', '光照', '否则', '蜂鸣器 停']) {

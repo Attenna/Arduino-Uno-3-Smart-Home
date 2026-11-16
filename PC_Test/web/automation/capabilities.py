@@ -66,15 +66,9 @@ CONDITION_SOURCES = {
     "fan_speed": {"label": "风扇转速", "kind": "number", "unit": "%",
                   "min": 0, "max": 100},
     # ── 空调设定（美的红外遥控，由面板/语音/规则下发后写库）──
-    "ac_status": {"label": "空调开关", "kind": "enum",
-                  "choices": ["on", "off"],
-                  "choice_labels": {"on": "开", "off": "关"}},
-    "ac_mode": {"label": "空调模式", "kind": "enum",
-                "choices": ["auto", "cool", "heat", "dry", "fan"],
-                "choice_labels": {"auto": "自动", "cool": "制冷", "heat": "制热",
-                                  "dry": "抽湿", "fan": "送风"}},
-    "ac_temperature": {"label": "空调设定温度", "kind": "number", "unit": "℃",
-                       "min": 17, "max": 30},
+
+
+
     # ── 硬件在线健康位（15 秒心跳判定）──
     "sensor_online": {"label": "传感器板在线", "kind": "bool"},
     "output_online": {"label": "执行器板在线", "kind": "bool"},
@@ -139,7 +133,7 @@ EVENT_TRIGGERS = {
                                    {"id": "window", "label": "窗户"},
                                    {"id": "light", "label": "灯"},
                                    {"id": "fan", "label": "风扇"},
-                                   {"id": "ac", "label": "空调"}],
+                                   ],
                        "payload": {"event": "manual_control"}},
 }
 
@@ -182,9 +176,9 @@ ACTION_DEVICES = {
         "value": {"range": [0, 255], "unit": "白光亮度"},
         "r": {"range": [0, 255]}, "g": {"range": [0, 255]}, "b": {"range": [0, 255]}}},
     "fan": {"label": "风扇", "params": {
-        "op": {"choices": ["set", "on", "off", "toggle"],
-               "labels": ["设置转速", "开启", "关闭", "切换开/关（同一键再按一次反转）"]},
-        "speed": {"range": [0, 100], "unit": "%", "label": "转速（开启/切换为开时使用）"}}},
+        "op": {"choices": ["on", "off", "toggle"],
+               "labels": ["开启", "关闭", "切换开/关"]},
+        "speed": {"choices": [0, 100], "labels": ["关闭", "开启"]}}},
     "buzzer": {"label": "蜂鸣器", "params": {
         "mode": {"choices": ["beep", "on", "off"], "labels": ["间歇响", "持续响", "停"]},
         "count": {"range": [1, 10], "label": "次数"},
@@ -235,15 +229,7 @@ ACTION_DEVICES = {
         "command": {"range": [0, 255], "label": "NEC 命令"}}},
     # 美的空调（RN02G(X) 红外状态帧）。留空的项表示"不改"，与 midea_ac.apply_overrides 一致。
     # 注意：改模式/温度/风速会连带把空调开机（状态帧自带开机效果）。
-    "ac": {"label": "空调（美的红外）", "params": {
-        "power": {"type": "bool", "label": "开关机"},
-        "mode": {"choices": ["", "auto", "cool", "heat", "dry", "fan"],
-                 "labels": ["不改", "自动", "制冷", "制热", "抽湿", "送风"]},
-        "temperature": {"range": [17, 30], "label": "温度（℃ 整数）"},
-        "fan": {"choices": ["", "auto", "low", "mid", "high"],
-                "labels": ["不改", "自动", "低", "中", "高"]},
-        "swing_ud": {"type": "bool", "label": "上下扫风"},
-        "swing_lr": {"type": "bool", "label": "左右扫风"}}},
+
 }
 
 

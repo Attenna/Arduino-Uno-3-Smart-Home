@@ -6,7 +6,7 @@
         light: {
             title: 'light.title',
             state: d => (d.light_status === 'on'
-                ? (Number(d.light_brightness) || 0) + '%'
+                ? (Number(d.light_brightness) || 0) + ''
                 : t('status.off')),
             on: d => d.light_status === 'on',
             meta: d => d.light_status === 'on' ? t('light.brightness') : '',
@@ -21,31 +21,20 @@
             title: 'fan.title',
             state: d => {
                 const s = Number(d.fan_speed) || 0;
-                return s <= 0 ? t('status.off') : s + '%';
+                return s <= 0 ? t('status.off') : t('status.on');
             },
             on: d => (Number(d.fan_speed) || 0) > 0,
             meta: d => d.rb_fan_speed === null || d.rb_fan_speed === undefined
-                ? '' : t('fan.readback') + ' ' + d.rb_fan_speed + '%',
+                ? '' : t('fan.readback') + ' ' + (Number(d.rb_fan_speed) > 0 ? t('status.on') : t('status.off')),
             actions: [
-                ['fan.low', 'setFan(30)'],
-                ['fan.medium', 'setFan(60)'],
-                ['fan.high', 'setFan(100)'],
+                ['status.on', 'setFan(100)'],
                 ['fan.off', 'setFan(0)'],
             ],
-        },
-        ac: {
-            title: 'ac.title',
-            state: d => d.ac_status === 'on'
-                ? Math.round(Number(d.ac_temperature) || 26) + '°C · ' + t('ac.mode_' + (d.ac_mode || 'auto'))
-                : t('ac.off_hint'),
-            on: d => d.ac_status === 'on',
-            meta: d => d.ac_status === 'on' ? t('ac.fan') + ': ' + t('ac.fan_' + (d.ac_fan || 'auto')) : '',
-            actions: [['ac.power_on', 'toggleAC()']],
         },
         sensor: {
             title: 'temp.title',
             state: d => (d.temperature ? d.temperature.toFixed(1) + '°C' : '--') +
-                ' / ' + (d.humidity ? d.humidity.toFixed(0) + '%' : '--'),
+                ' / ' + (d.humidity ? d.humidity.toFixed(0) + '' : '--'),
             on: d => d.sensor_online === true,
             meta: d => d.sensor_online ? t('rooms.online') : t('rooms.offline'),
             actions: [],

@@ -161,7 +161,6 @@ async function loadMapping() {
         { key: 'living_window', label_zh: '窗户传感器', label_en: 'Window Sensor' },
         { key: 'main_light', label_zh: '灯光', label_en: 'Light' },
         { key: 'fan', label_zh: '风扇', label_en: 'Fan' },
-        { key: 'ac', label_zh: '空调', label_en: 'AC' },
         { key: 'door_lock', label_zh: '门锁', label_en: 'Door Lock' },
         { key: 'camera', label_zh: '摄像头', label_en: 'Camera' },
     ];
@@ -205,8 +204,8 @@ async function quickMap(entityId) {
 async function haAction(device, action) {
     const isZh = I18N.currentLang === 'zh';
     const labels = isZh
-        ? { light_on: '开灯', light_off: '关灯', ac_on: '开空调', ac_off: '关空调', fan_on: '开风扇', fan_off: '关风扇', door_unlock: '开锁', door_lock: '上锁' }
-        : { light_on: 'Light On', light_off: 'Light Off', ac_on: 'AC On', ac_off: 'AC Off', fan_on: 'Fan On', fan_off: 'Fan Off', door_unlock: 'Unlock', door_lock: 'Lock' };
+        ? { light_on: '开灯', light_off: '关灯', fan_on: '开风扇', fan_off: '关风扇', door_unlock: '开锁', door_lock: '上锁' }
+        : { light_on: 'Light On', light_off: 'Light Off', fan_on: 'Fan On', fan_off: 'Fan Off', door_unlock: 'Unlock', door_lock: 'Lock' };
 
     const key = `${device}_${action}`;
     showNotification(isZh ? `正在执行: ${labels[key] || key}` : `Executing: ${labels[key] || key}`, 'info');
@@ -215,9 +214,6 @@ async function haAction(device, action) {
     switch (device) {
         case 'light':
             result = await apiPost('/api/ha/light', { action, brightness: action === 'on' ? 100 : 0 });
-            break;
-        case 'ac':
-            result = await apiPost('/api/ha/ac', { mode: action === 'on' ? 'cool' : 'off' });
             break;
         case 'fan':
             result = await apiPost('/api/ha/fan', { speed: action === 'on' ? 100 : 0 });

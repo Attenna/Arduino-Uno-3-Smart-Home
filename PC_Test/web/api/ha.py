@@ -80,14 +80,10 @@ def ha_control_light():
 @bp.route("/api/ha/fan", methods=["POST"])
 def ha_control_fan():
     data = request.json or {}
-    return jsonify(ha_client.control_fan(speed_pct=data.get("speed")))
+    from .devices import _pct
+    return jsonify(ha_client.control_fan(speed_pct=100 if _pct(data.get("speed"), 0) > 0 else 0))
 
 
-@bp.route("/api/ha/ac", methods=["POST"])
-def ha_control_ac():
-    data = request.json or {}
-    return jsonify(ha_client.control_ac(
-        mode=data.get("mode", "off"), temperature=data.get("temperature")))
 
 
 @bp.route("/api/ha/door", methods=["POST"])
