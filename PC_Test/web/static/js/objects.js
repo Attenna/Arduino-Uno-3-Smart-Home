@@ -19,7 +19,10 @@ async function events() {
     el('events').append(article);
   }
 }
-const client = crypto.randomUUID();
+// Monitoring ownership ID is not an authentication credential. LAN HTTP may lack randomUUID.
+const client = typeof globalThis.crypto?.randomUUID === 'function'
+  ? globalThis.crypto.randomUUID()
+  : `monitor-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 let resultVersion = '', expiry = 0, polling = false, previewUrl = null, generation = 0;
 const video = el('liveVideo');
 function clearBoxes() {
@@ -109,6 +112,7 @@ el('refresh').onclick=()=>events().catch(e=>el('message').textContent=e.message)
 for (const id of ['enableFaces','enableObjects','evidence','bulbLight']) {
   el(id).onchange=()=>{
     generation++;clearBoxes();resultVersion='';expiry=0;
+    if (id === 'bulbLight') el('bulbLightStatus').textContent = el('bulbLight').checked ? (running ? '联动已启用，等待灯泡检测结果' : '联动已勾选，开始检测后生效') : '灯泡开灯联动已关闭';
     if(running) updateSession().catch(e=>el('message').textContent=e.message);
   };
 }
