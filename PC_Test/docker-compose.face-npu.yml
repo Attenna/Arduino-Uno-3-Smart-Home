@@ -1,0 +1,7 @@
+# Add after docker-compose.npu.yml once both face OM models pass compatibility tests.
+services:
+  web:
+    environment:
+      SMART_HOME_FACE_DETECTOR_NPU_URL: http://host.docker.internal:8094
+      SMART_HOME_FACE_EMBEDDING_NPU_URL: http://host.docker.internal:8095
+      SMART_HOME_FACE_DETECTOR_CHANNELS: '20'

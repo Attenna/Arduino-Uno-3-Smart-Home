@@ -40,3 +40,11 @@ OM SHA256 为 f6e8eba6cc0aed0c12f94874d89023a37dbe30c7ff5d4ab07123186529dee209�
 原检测权重SHA256为d545bf1add5aa736a4febac4f4f9245a6d596cd0fe70d5d57989fe0cb9e626ca。
 本机导出的ONNX为opset12、静态640输入。8张已有本机人脸样本的PyTorch/ONNX框与五点解码最大坐标差0.233像素。
 板上已启动w600k_mbf的ATC转换，随后SSH握手超时，转换结果与NPU特征兼容性尚待确认。当前运行版本仍采用CPU人脸后端，不能把代码适配和本机解码验证视为人脸NPU已上线。
+
+## 受限人脸编译与特征基准
+
+板上编译以TE_PARALLEL_COMPILER=1、OMP_NUM_THREADS=1、OPENBLAS_NUM_THREADS=1运行，通过systemd限制CPUQuota=200%、MemoryMax=6G，按顺序转换MobileFaceNet与五点检测模型。
+2026-11-16 MobileFaceNet在板上12张现有注册图像的归一化特征最小CPU/NPU余弦相似度0.9999858，身份分数最大差0.0003867，所有最近身份及授权判定一致（阈值0.62、差距0.08），NPU中位执行1.873毫秒。
+基准数据仅保留在板上data/npu-face-validation目录，不提交Git。该样本集不能代替陌生人误识率与现场多姿态验收。
+
+2026-11-16 两个人脸OM均已转换并完成板上验证。五点检测模型在8张样本上与CPU检测数量一致，框坐标最大差0.170像素，五点最大差0.107像素，NPU中位14.74毫秒。身份特征模型12张样本的最近身份与授权判定一致。现场活人、多姿态、陌生人和实物联动仍需硬件接回后验收。
