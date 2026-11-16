@@ -18,3 +18,13 @@ POST 接口支持 multipart image，省略图片则读取共享摄像头。evide
 已用本机摄像头真实快照完成 ONNX 推理，当前画面无目标。尚缺无人机正样本和带标注数据，不能据此确认准确率。
 自动化测试使用模拟命中结果验证入库、冷却与服务重新创建后的读取，不代表实物识别准确性。
 后续完成正样本验收后，再备份香橙派并进行分支真机测试、评审合并、部署指定提交。
+
+## 三类别 640 模型本机调试
+
+2026-11-16 接入 yolov8s_3class_640.onnx，输入 1×3×640×640，输出 1×7×8400。
+类别为 drone（无人机）、fire extinguisher（灭火器）、light bulb（灯泡）。
+SHA256 为 b7070f98f5ddda717efe248da61242c2a9772368f295f7e1c2c59eb949318eef。
+通过 SMART_HOME_OBJECT_MODEL 指定权重，无需改动检测接口，页面中统一显示中文名称。
+本机启动脚本为 /Users/wangtianran/Documents/YOLO_face_dection/.venv-smart-home/local_object_640_preview.py。
+测试地址 http://127.0.0.1:5004/objects，摄像头继续使用 8082 共享采集服务。
+已经完成真实摄像头快照推理，无目标画面返回空检测结果。正样本准确率需另行验证。
