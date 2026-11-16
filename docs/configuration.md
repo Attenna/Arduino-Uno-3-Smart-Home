@@ -255,11 +255,12 @@ ls -l /dev/ttyUSB* /dev/ttyACM* /dev/serial/by-id/* /dev/video*
 |----|------|------|
 | `ENABLE_TM1637` | `0` | 四位数码管（已移除，D5/D6 改接 HC-SR04，必须保持关闭） |
 | `ENABLE_IR_TX` | `1` | 红外发射（D12） |
+| `SERVO_DOOR_WINDOW_CROSSED` | `1` | 门/窗舵机交叉接线适配（1=门 D3 / 窗 D2；0=常规门 D2 / 窗 D3） |
 
 常用参数宏：门/窗舵机引脚与角度（`DOOR_*` / `WINDOW_*` / `SERVO_SETTLE_TIME`）、
 `FAN_INA` / `FAN_INB`、`BUZZER_*`、`OLED_*` / `OLED_IS_SH1106`、
 `ULTRASONIC_TRIG_PIN` / `ULTRASONIC_ECHO_PIN`（D6/D5）、
-`MIDEA_*`（美的长码时序）、`FW_VERSION`（当前 `V2.11`）。
+`MIDEA_*`（美的长码时序）、`FW_VERSION`（当前 `V2.14`）。
 B 板仍保留 `RGB_PIN` / `LED_COUNT` / `LIGHT_*` 等灯带宏与驱动，但**灯带实际接 A 板 A0**，
 `light` 命令由 A 板执行，网关不向 B 板下发灯光命令。
 
