@@ -8,7 +8,8 @@ class OLEDDisplay;
 // ============================================
 // OLED 多页轮播（V2.12 起下移到 B 板固件）
 // ============================================
-// 显示逻辑（页面/排版）硬编码在本固件，数据由 B 板每 15s 主动向香橙派拉取。
+// 显示逻辑（页面/排版）硬编码在本固件，数据由 B 板每 8 分钟主动向香橙派拉取；
+// 首帧数据未到时每 5s 重试，避免上位机复位冷却期吞掉唯一一次请求。
 // 只负责「组页 + 计时 + 渲染 + 缓存数据」：不碰 Serial，也不调用其它驱动
 // （B 板本地执行器状态由 CommandDispatcher 汇总成 LocalState 传入）。
 // ============================================
@@ -41,7 +42,8 @@ struct LocalState {
 class OledCarousel {
 public:
     static const uint8_t PAGE_COUNT = 3;
-    static const unsigned long PAGE_INTERVAL_MS = 15000UL;   // 每页停留 15s
+    static const unsigned long PAGE_INTERVAL_MS = 480000UL;  // 每页停留 8 分钟（#129：降低 OLED 面板刷新负载）
+    static const unsigned long REQUEST_RETRY_MS = 5000UL;    // 首帧数据未到时的 oled_req 重试间隔
 
     void begin();
 
@@ -65,6 +67,7 @@ private:
     uint8_t       _page;
     bool          _begun;         // 是否已渲染过首页（决定到期时是否推进页码）
     unsigned long _nextUpdate;
+    unsigned long _nextRequest;   // 首帧数据未到时的下一次重试时刻
     uint16_t      _reqSeq;
     uint16_t      _reqId;
     bool          _dataFresh;     // 首帧数据到达、待补渲染当前页

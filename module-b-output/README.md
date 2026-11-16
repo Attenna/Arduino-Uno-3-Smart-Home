@@ -132,8 +132,8 @@ PlatformIO 已在 [platformio.ini](platformio.ini) 中声明。
 > `off`/`white`/`night`/预设色/`rgb`/`pixels`）。B 板上表里的 `light` 分支为保留驱动，不由网关使用。
 
 > **OLED 轮播（V2.12 起）**：屏上 3 页（`Environment`/`Devices`/`Safety`）的排版与轮播逻辑
-> **硬编码在 B 板固件**，每 15s 切页并**主动**向上位机发送 `{"type":"oled_req","id":N}` 索要
-> 传感器数据；上位机回一帧非 JSON 紧凑帧 `@D<id>,<t10>,<h10>,<light>,<smoke>,<rain>,<touch>,<motion>`，
+> **硬编码在 B 板固件**，每 8 分钟切页并**主动**向上位机发送 `{"type":"oled_req","id":N}` 索要
+> 传感器数据（首帧未到时每 5s 重试）；上位机回一帧非 JSON 紧凑帧 `@D<id>,<t10>,<h10>,<light>,<smoke>,<rain>,<touch>,<motion>`，
 > B 在本地渲染。`oled/show_text`、`oled/clear` 命令仍保留（调试用），但会被下一拍切换覆盖。
 > 详见 [docs/serial-protocol.md](../docs/serial-protocol.md) 的「B 板新增 OLED 数据拉取（V2.12）」。
 

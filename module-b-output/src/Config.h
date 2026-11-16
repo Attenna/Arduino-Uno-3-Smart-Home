@@ -100,6 +100,6 @@
 // ---- 设备标识 ----
 #define BOARD_TYPE          "MODULE_B"
 #define BOARD_ROLE          "OUTPUT_NODE"
-#define FW_VERSION          "V2.14"  // V2.14 适配房屋模型交叉接线：门/窗舵机引脚对调（门=D3、窗=D2，宏可切回）；V2.13 新增栈高水位/空闲 RAM 诊断（ready 帧 diag + selftest ram，EEPROM 跨复位持久化）；V2.12 OLED 多页轮播下移固件并改为 B 每 15s 主动拉取；V2.11 限制灯带 USB 电流并放宽看门狗瞬时阻塞容限；V2.10 新增 HC-SR04 按需测距；V2.9 新增状态回读与自检
+#define FW_VERSION          "V2.15"  // V2.15 OLED 轮播间隔 15s → 8 分钟，首帧数据 5s 重试（#129，降低面板刷新复位频率）；V2.14 适配房屋模型交叉接线：门/窗舵机引脚对调（门=D3、窗=D2，宏可切回）；V2.13 新增栈高水位/空闲 RAM 诊断（ready 帧 diag + selftest ram，EEPROM 跨复位持久化）；V2.12 OLED 多页轮播下移固件并改为 B 主动拉取；V2.11 限制灯带 USB 电流并放宽看门狗瞬时阻塞容限；V2.10 新增 HC-SR04 按需测距；V2.9 新增状态回读与自检
 
 #endif // CONFIG_B_H

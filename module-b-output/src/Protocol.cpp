@@ -32,7 +32,7 @@ void Protocol::sendReady() {
 
 void Protocol::handleSerial() {
     // 轮播到期时，先向香橙派拉取一次数据（发一帧 oled_req，Pi 回一帧 @D...）。
-    // 每 15s 仅此 1 帧上行，避免旧「Pi 逐行推送」的持续串口流量。
+    // 每 8 分钟仅此 1 帧上行；首帧未到时每 5s 重试，避免复位冷却期吞掉请求。
     if (_dispatcher->oledRequestPending()) {
         uint16_t reqId = _dispatcher->takeOledRequest();
         Serial.print(F("{\"module\":\"output\",\"type\":\"oled_req\",\"id\":"));

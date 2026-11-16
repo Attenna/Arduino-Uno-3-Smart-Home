@@ -151,9 +151,9 @@ _B_STALL_NUDGE_CMD = {"cmd": "system", "action": "status"}   # 只读，不动�
 _B_RX_MAX_BYTES = 8192          # 接收重组缓冲上限：拼不出完整帧就丢弃重新同步
 
 # OLED 复位冷却（#58）：B 板每次上电/复位（含 MCP 开串口时的 DTR 复位）都会发 ready
-# 帧；此后一段时间内**暂停回应 OLED 数据帧**（B 每 15s 拉一次，冷却期内不回，下一拍
-# 自然重试），等链路稳定再恢复。目的是别在复位抖动期间继续灌轮播数据，避免「复位→
-# 写入→再复位」互相叠加。同时充当启动宽限。
+# 帧；此后一段时间内**暂停回应 OLED 数据帧**（B 首帧每 5s 重试、之后每 8 分钟拉一次，
+# 冷却结束后重试自然拿到数据），等链路稳定再恢复。目的是别在复位抖动期间继续灌轮播数据，
+# 避免「复位→写入→再复位」互相叠加。同时充当启动宽限。
 _OLED_RESET_COOLDOWN_S = 20.0
 
 
@@ -740,10 +740,10 @@ class HomeController:
         return (now if now is not None else time.time()) - last < _OLED_RESET_COOLDOWN_S
 
     def _push_oled_frame(self, req_id: int) -> None:
-        """回应 B 板的 OLED 数据拉取（B 每 15s 一次 oled_req）。
+        """回应 B 板的 OLED 数据拉取（B 每 8 分钟一次，首帧 5s 重试）。
 
         用非阻塞方式取 `_b_lock`：若此刻正有命令在等响应（持锁），**直接丢帧**——
-        B 板 15s 后自然重试下一拍。绝不阻塞读线程，也全程不碰 `_b_resp_lock`，
+        B 板 5s/8 分钟后自然重试下一拍。绝不阻塞读线程，也全程不碰 `_b_resp_lock`，
         与 `_send_b` 无死锁环。先组帧（取快照锁）再取 b 锁，避免锁嵌套。
 
         B 板刚复位后的冷却期内同样不回帧（`_oled_hold_active`），等链路稳定再恢复，
