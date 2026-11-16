@@ -170,7 +170,7 @@ void CommandDispatcher::update() {
     _display.update();
 #endif
 
-    // OLED 轮播：到期渲染当前页并索要下一拍数据。渲染仅每 15s 一次、毫秒级，
+    // OLED 轮播：到期渲染当前页并索要下一拍数据。渲染仅每 8 分钟一次、毫秒级，
     // 远小于看门狗窗口；update() 内部只做一次 millis() 比较，不阻塞。
     LocalState local;
     local.doorOpen = _door.isOpen();

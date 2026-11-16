@@ -130,8 +130,8 @@ class AutomationEngine:
         # 最近一次启动的旧规则迁移结果（页面提示一次后由 API 消费清空）
         self._migration_info: dict | None = None
 
-        # ── OLED（V2.12：屏上 3 页 Environment/Devices/Safety 已由 B 板固件每 15s
-        # 主动拉取渲染，香橙派不再逐行推送。此处配置仅存档；`_oled_carousel` 仍供
+        # ── OLED（V2.12：屏上 3 页 Environment/Devices/Safety 已由 B 板固件每 8 分钟
+        # 主动拉取渲染（首帧 5s 重试），香橙派不再逐行推送。此处配置仅存档；`_oled_carousel` 仍供
         # {} 占位符格式化与手动 oled 工具/规则使用） ──
         self.oled_path = Path(rules_path).parent / "oled_carousel.json"
         self.oled_enabled = False
@@ -176,7 +176,7 @@ class AutomationEngine:
         self._tick_thread = threading.Thread(
             target=self._tick_loop, name="automation-tick", daemon=True)
         self._tick_thread.start()
-        # OLED 轮播线程已移除：屏上内容现由 B 板固件每 15s 主动拉取渲染，
+        # OLED 轮播线程已移除：屏上内容现由 B 板固件每 8 分钟主动拉取渲染（首帧 5s 重试），
         # 香橙派不再逐行下发（避免持续串口流量触发 B 板复位）。
         logger.info("[自动化] 引擎已启动，规则 %d 条", len(self.rules))
 

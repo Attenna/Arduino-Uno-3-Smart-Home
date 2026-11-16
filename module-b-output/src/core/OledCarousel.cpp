@@ -35,6 +35,7 @@ void OledCarousel::begin() {
     _page = 0;
     _begun = false;
     _nextUpdate = 0;      // 首次 update() 立即渲染并拉取
+    _nextRequest = 0;     // 首帧数据未到时可立即重试
     _reqSeq = 0;
     _reqId = 0;
     _dataFresh = false;
@@ -51,22 +52,34 @@ void OledCarousel::applyData(const OledData& data) {
 }
 
 bool OledCarousel::update(unsigned long now, const LocalState& local, OLEDDisplay& oled) {
+    bool request = false;
+
     if (now >= _nextUpdate) {
         if (_begun) _page = (uint8_t)((_page + 1) % PAGE_COUNT);
         _begun = true;
         render(_page, local, oled);
         _nextUpdate = now + PAGE_INTERVAL_MS;
-        _reqId = ++_reqSeq;              // 生成新请求 id，拒绝陈旧回帧
-        return true;                     // 本拍需向香橙派拉取下一次数据
+        _nextRequest = now + REQUEST_RETRY_MS;
+        request = true;                  // 本拍需向香橙派拉取下一拍数据
+    } else {
+        // 未到期：首帧数据刚落地时，不推进页码就地补渲染一次，
+        // 避免上电后首页长时间显示 "--"。
+        if (_dataFresh && _data.valid) {
+            _dataFresh = false;
+            render(_page, local, oled);
+        }
+        // 还没有任何有效数据：上位机在 B 板复位后有 OLED 冷却期，8 分钟间隔下
+        // 唯一一次启动请求会被吞掉。每 5s 重试，拿到首帧后自然停止。
+        if (!_data.valid && now >= _nextRequest) {
+            _nextRequest = now + REQUEST_RETRY_MS;
+            request = true;
+        }
     }
 
-    // 未到期：首帧数据刚落地时，不推进页码就地补渲染一次，
-    // 避免上电后首页长时间显示 "--"。
-    if (_dataFresh && _data.valid) {
-        _dataFresh = false;
-        render(_page, local, oled);
+    if (request) {
+        _reqId = ++_reqSeq;              // 生成新请求 id，拒绝陈旧回帧
     }
-    return false;
+    return request;
 }
 
 void OledCarousel::render(uint8_t page, const LocalState& local, OLEDDisplay& oled) {
