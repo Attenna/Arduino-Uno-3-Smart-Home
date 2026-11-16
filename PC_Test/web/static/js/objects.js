@@ -65,7 +65,7 @@ async function detect(upload = false) {
 }
 el('once').onclick = () => detect(); el('upload').onclick = () => detect(true); el('refresh').onclick = () => events().catch(e => el('message').textContent = e.message);
 el('live').onclick = () => { running = !running; el('live').textContent = running ? '停止连续检测' : '开始连续检测'; if (running) detect(); };
-setInterval(() => { if (running) detect(); },3000);
+setInterval(() => { if (running) detect(); },1000);
 api('/api/face/status').then(s => { el('faceResult').textContent = s.model_loaded ? '人脸模型已加载，等待检测' : '人脸模型未就绪'; }).catch(e => el('faceResult').textContent = e.message);
 api('/api/objects/status').then(s => { el('status').textContent = s.loaded ? `已加载 · ${Object.values(s.classes).map(displayLabel).join('、')} · ${s.input_size.join(' × ')} · ${s.provider}` : s.error; }).catch(e => el('status').textContent = e.message);
 events().catch(e => el('message').textContent = e.message);

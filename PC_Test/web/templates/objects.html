@@ -40,7 +40,7 @@
                 <h3>物体</h3><div id="result" role="status">等待检测</div>
                 <h3>人脸</h3><div id="faceResult" role="status">等待检测</div>
                 <p class="objects-note">识别开关控制本页显示与推理。门禁自动验证由后台运行，通行结果请到门禁管理查看。</p>
-                <p class="objects-note">连续检测每 3 秒执行一次。位置框使用原图像素，依次为左、上、右、下。</p>
+                <p class="objects-note">连续检测每秒尝试一次，上一轮未完成时跳过本次请求。位置框使用原图像素，依次为左、上、右、下。</p>
             </section>
         </div>
     </div>
