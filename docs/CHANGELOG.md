@@ -2,6 +2,33 @@
 
 记录对系统行为 / 接口有影响的变更。新条目置于顶部。
 
+## 2026-11-17 · 修复：房屋模型门/窗舵机交叉接线导致控制错位（#126）
+
+分支：`fix/126-door-window-servo`。
+
+### 现象与根因
+A/B 板装入房屋模型后，门、窗两个舵机的信号线交叉接到 B 板：门舵机在 D3、窗舵机在 D2。
+固件仍按「门=D2、窗=D3」驱动，于是点「开门」动的是窗、点「开窗」动的是门。
+
+### 变更
+- `module-b-output/src/Config.h`：新增 `SERVO_DOOR_WINDOW_CROSSED`（默认 1），交叉映射
+  `DOOR_SERVO_PIN=D3` / `WINDOW_SERVO_PIN=D2`；宏置 0 恢复常规 D2/D3。门/窗角度不变。
+- `FW_VERSION` V2.13 → V2.14；README / DEPLOYMENT / configuration 同步标注交叉接线。
+- 不改串口协议、Web/网关代码、数据库与 Docker 编排。
+
+### 影响与迁移
+- 仅 B 板固件，需烧录；本次烧录同时带入 main 上未单独烧录的 V2.13 RAM 诊断。
+- 烧录需占用 `/dev/ttyACM0`，临时停止 web 容器释放串口。
+- 回滚：重新烧录 V2.13/V2.12，或把宏置 0。
+
+### 验收
+- `pio run -e uno`：SUCCESS，RAM 81.7%（1673 B）/ Flash 89.8%（28952 B）。
+- 烧录后 ready 帧：`version=V2.14`、`diag.prv_hw=182`。
+- 真机（2026-11-17，任务分支，香橙派）：`door open→close`、`window open→normal`
+  均返回 ok，固件回读状态一致；模型前目视确认门、窗分别动作且顺畅。
+- 遗留观察：B 板在 V2.13 时已有周期复位（约 2–4 次/分钟，`prv_hw` 仅 182/375，
+  非栈溢出），本次烧录后仍存在，属既有供电/串口自愈问题，与本改动无关。
+
 ## 2026-10-20 · 修复：离开页面时取消灯光指令的调用对象写错
 
 分支：`fix/light-debounce-cancel`。无对应 Issue（在做 Web UI 改版的回归排查时发现）。
