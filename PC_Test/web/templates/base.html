@@ -49,7 +49,10 @@
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
                     <span data-i18n="nav.access">门口与安防</span>
                 </a>
-                <a href="/objects" class="side-link">物体检测</a>
+                <a href="/objects" class="side-link {{ 'active' if p == '/objects' else '' }}">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="14" height="14" rx="3"/><path d="m17 10 4-3v10l-4-3"/></svg>
+                    <span>物体检测</span>
+                </a>
 <a href="/hardware" class="side-link {{ 'active' if p == '/hardware' else '' }}"><span>硬件管理</span></a>
 
                 <a href="/history" class="side-link {{ 'active' if p == '/history' else '' }}">

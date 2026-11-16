@@ -1,7 +1,58 @@
-<!doctype html>
-<html lang="zh-CN"><meta charset="utf-8"><title>物体检测 · 橙居</title>
-<style>body{margin:0;background:#f5f1e8;color:#38443e;font:16px system-ui}main{max-width:1200px;margin:48px auto;padding:0 32px}header{display:flex;align-items:center;justify-content:space-between}a{color:#567c6b}section{background:#fffdf8;border-radius:24px;padding:28px;margin-top:24px}.grid{display:grid;grid-template-columns:2fr 1fr;gap:24px}button{background:#658572;color:white;border:0;border-radius:12px;padding:12px 20px;cursor:pointer;margin:8px}button:disabled{opacity:.5}canvas{width:100%;background:#e9e6df;border-radius:16px}small,p{color:#748177}article{padding:18px 0;border-bottom:1px solid #e7e4dc}article img{max-width:220px}#status{line-height:1.8}input{margin:12px 0}</style>
-<main><header><div><h1>物体检测</h1><p>共用门口摄像头，查看检测结果与事件记录</p></div><a href="/">返回中控室</a></header>
-<div class="grid"><section><canvas id="view" width="960" height="540"></canvas><p id="message" role="status">选择摄像头检测或上传图片</p><button id="once">检测摄像头</button><button id="live">开始连续检测</button><label><input type="checkbox" id="evidence">保存命中事件图片</label><hr><input type="file" id="file" accept="image/*"><button id="upload">检测图片</button></section><section><h2>模型状态</h2><p id="status">加载中…</p><h2>本次结果</h2><div id="result">等待检测</div><p>坐标为原图像素，顺序为左、上、右、下。连续检测每 3 秒执行一次，命中事件至少间隔 30 秒。</p></section></div>
-<section><header><h2>检测事件</h2><button id="refresh">刷新</button></header><p>仅命中时记录。图片取证默认关闭，开启后保存原始快照。</p><div id="events"></div></section></main>
-<script src="/static/js/objects.js"></script></html>
+{% extends "base.html" %}
+{% block doc_title_key %}nav.objects{% endblock %}
+{% block doc_title %}物体检测 · 橙居{% endblock %}
+{% block page_header %}
+    <span>物体检测</span>
+    <small>查看无人机、灭火器与灯泡的检测结果</small>
+{% endblock %}
+{% block head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/objects.css') }}?v=20261116">
+{% endblock %}
+{% block content %}
+<div class="objects-page">
+    <div class="objects-grid">
+        <section class="objects-card objects-view">
+            <h2>检测画面</h2>
+            <canvas id="view" width="960" height="540" aria-label="物体检测画面"></canvas>
+            <p id="message" role="status">选择摄像头检测或上传图片</p>
+            <div class="objects-actions">
+                <button id="once" class="objects-primary">检测摄像头</button>
+                <button id="live">开始连续检测</button>
+                <label><input type="checkbox" id="evidence">保存命中事件图片</label>
+            </div>
+            <div class="objects-upload">
+                <label for="file">本地图片</label>
+                <input type="file" id="file" accept="image/*">
+                <button id="upload">检测图片</button>
+            </div>
+        </section>
+        <div class="objects-summary">
+            <section class="objects-card">
+                <h2>模型状态</h2>
+                <p id="status" role="status">加载中…</p>
+            </section>
+            <section class="objects-card">
+                <h2>本次结果</h2>
+                <div id="result" role="status">等待检测</div>
+                <p class="objects-note">连续检测每 3 秒执行一次。位置框使用原图像素，依次为左、上、右、下。</p>
+            </section>
+        </div>
+    </div>
+    <section class="objects-card objects-events">
+        <div class="objects-heading"><h2>检测事件</h2><button id="refresh">刷新记录</button></div>
+        <p class="objects-note">命中事件至少间隔 30 秒。开启图片取证后保存原始快照。</p>
+        <div id="events" aria-live="polite"></div>
+    </section>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/objects.js') }}?v=20261116-shell"></script>
+<script>
+(function () {
+    const clock = document.getElementById('currentTime');
+    function updateClock() { clock.textContent = new Date().toLocaleTimeString('zh-CN', {hour12: false}); }
+    updateClock();
+    setInterval(updateClock, 1000);
+})();
+</script>
+{% endblock %}
