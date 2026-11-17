@@ -84,10 +84,10 @@ class DarkColorRegressionTests(unittest.TestCase):
         self.assertEqual(light_mismatch(row), [])
 
 
-class RealFailureStillDetectedTests(unittest.TestCase):
-    """真失效仍要报得出来（验收 2/3）。"""
+class MigratedLightReadbackTests(unittest.TestCase):
+    """Module B's obsolete light channel cannot describe the A-board strip."""
 
-    def test_every_style_and_brightness_flags_a_zero_readback(self):
+    def test_every_style_ignores_b_zero_light_readback(self):
         for style in STYLES:
             mode, temp, rgb = style
             for pct in (50, 100):
@@ -95,17 +95,17 @@ class RealFailureStillDetectedTests(unittest.TestCase):
                     row = status(light_brightness=pct, light_mode=mode, light_temp=temp,
                                  light_rgb=None if rgb is None else ",".join(map(str, rgb)),
                                  rb_light_brightness=0)   # 命令亮着、回读 0
-                    self.assertEqual(len(light_mismatch(row)), 1)
+                    self.assertEqual(light_mismatch(row), [])
 
-    def test_wrong_nonzero_readback_is_flagged(self):
+    def test_b_nonzero_light_readback_is_also_ignored(self):
         expected = ls.expected_readback_pct(100, ("rgb", None, (100, 50, 20)))
         row = status(light_brightness=100, light_mode="rgb", light_rgb="100,50,20",
                      rb_light_brightness=min(100, expected + 7))
-        self.assertEqual(len(light_mismatch(row)), 1)
+        self.assertEqual(light_mismatch(row), [])
 
-    def test_commanded_off_but_hardware_on_is_flagged(self):
+    def test_unused_b_light_on_cannot_describe_a_lamp(self):
         row = status(light_brightness=0, light_mode="white", rb_light_brightness=40)
-        self.assertEqual(len(light_mismatch(row)), 1)
+        self.assertEqual(light_mismatch(row), [])
 
     def test_commanded_off_and_hardware_off_is_clean(self):
         row = status(light_brightness=0, light_mode="white", rb_light_brightness=0)
