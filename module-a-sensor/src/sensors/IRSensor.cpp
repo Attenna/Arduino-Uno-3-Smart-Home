@@ -30,7 +30,6 @@ bool IRSensor::read() {
     uint16_t bits = IrReceiver.decodedIRData.numberOfBits;
     IrReceiver.resume();
 
-
     // 只接受可识别、非重复的短帧：
     //  - UNKNOWN/溢出是 decodeHash 对噪声和空调长帧的兜底，并不代表按了遥控器；
     //  - NEC 长按每 110ms 发一帧重复码，按新按键处理会让灯/风扇等反复切换；
