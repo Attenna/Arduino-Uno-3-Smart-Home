@@ -82,6 +82,22 @@ class HomeRulesTests(unittest.TestCase):
         self.apply("light_off")
         self.assertEqual(self.status['light_status'], 'off')
 
+    def test_restart_with_light_on_does_not_disable_photocell_control(self):
+        self.status.update(light_status='on', light_brightness=100)
+        self.snapshot(light=550)
+        self.apply('light_off')
+        self.assertEqual(self.status['light_status'], 'off')
+        self.snapshot(light=900)
+        self.apply('light_dark')
+        self.assertEqual(self.status['light_status'], 'on')
+        for _ in range(5):
+            self.snapshot(light=650)
+            self.apply('light_off')
+        self.assertEqual(self.status['light_status'], 'on')
+        self.snapshot(light=400)
+        self.apply('light_off')
+        self.assertEqual(self.status['light_status'], 'off')
+
     def test_light_dark_hysteresis_holds_state_inside_band(self):
         # raw≥730 判暗、raw≤670 判亮，区间内维持上一状态，避免灯光回照自激。
         self.snapshot(temperature=26, light=900)

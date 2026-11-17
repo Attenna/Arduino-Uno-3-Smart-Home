@@ -41,11 +41,11 @@ class LightFeedbackGuard:
             self._calibration_samples = 0
             self._calibration_sample = None
         self._sample = sample
-        # Repeated rule evaluations of the pre-command snapshot cannot calibrate
-        # the lamp. At startup with an already-lit lamp there is no off baseline;
-        # preserve it until it is switched off instead of inventing ambient light.
+        # Repeated evaluations of the pre-command snapshot cannot calibrate.
+        # Without an off baseline, use the real sensor reading; never freeze
+        # light_dark and disable photocell control just because the lamp is on.
         if self._reference is None:
-            return None
+            return raw
         if sample == self._transition_sample:
             return None
         if self._calibration_samples < 2:

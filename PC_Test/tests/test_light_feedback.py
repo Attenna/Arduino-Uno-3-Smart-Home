@@ -42,9 +42,9 @@ class LightFeedbackTests(unittest.TestCase):
         self.assertIsNone(self.guard.update(550, dim, 2))
         self.assertEqual(self.guard.update(700, dim, 3), 796)
 
-    def test_restart_with_lamp_on_does_not_invent_off_baseline(self):
+    def test_restart_with_lamp_on_still_uses_photocell(self):
         for sample in range(1, 10):
-            self.assertIsNone(self.guard.update(550, ON, sample))
+            self.assertEqual(self.guard.update(550, ON, sample), 550)
         self.assertEqual(self.guard.update(800, OFF, 10), 800)
         self.assertEqual(self.guard.update(500, ON, 11), 800)
 

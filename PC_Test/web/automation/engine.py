@@ -915,8 +915,6 @@ class AutomationEngine:
             ambient = self._light_feedback.update(
                 ctx.get("light"), light_status, self._snapshot_ts)
             self._track_light_dark(ambient)
-            if self._light_dark is None and light_status.get("light_status") == "on":
-                self._light_dark = True
             if self._light_dark is not None:
                 ctx["light_dark"] = self._light_dark
         else:
