@@ -107,6 +107,6 @@
 // ---- 设备标识 ----
 #define BOARD_TYPE          "MODULE_A"
 #define BOARD_ROLE          "SENSOR_NODE"
-#define FW_VERSION          "V2.3"  // V2.3：A1 接管风扇单线开关（INB 接 GND，电机独立供电）；V2.2：A0 接管 8 颗 NeoPixel 灯带
+#define FW_VERSION          "V2.4-IR"  // D3 红外显式初始化与重复帧过滤；保留 V2.3 A1 风扇和 A0 灯带
 
 #endif // CONFIG_A_H
