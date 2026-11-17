@@ -3,7 +3,7 @@
 > 面向：在 **Linux 主机（PC 或 Orange Pi）** 上编译烧录 Module A 固件、安装接线、调试、扩展新传感器。
 > 基础信息（用途/引脚/协议）见 [README.md](README.md) 与 [docs/serial-protocol.md](../docs/serial-protocol.md)。
 
-**功能一句话**：Module A 是一块 Arduino Uno，当前固件 `V2.2` 带 9 类现役传感器（含矩阵键盘）与 A0 的 8 颗 NeoPixel 灯带输出，只采集、上报（`data` 周期 + `event` 事件）并按命令驱动灯带，不做业务判断。超声波、土壤湿度已于 2026-09 正式版裁剪。
+**功能一句话**：Module A 是一块 Arduino Uno，当前固件 `V2.3` 带 9 类现役传感器（含矩阵键盘）、A0 的 8 颗 NeoPixel 灯带和 A1 的风扇单线开关，采集/上报（`data` 周期 + `event` 事件）并按命令驱动灯带/风扇，不做业务判断。超声波、土壤湿度已于 2026-09 正式版裁剪。
 
 ---
 
@@ -60,7 +60,7 @@ pio device monitor --port /dev/ttyUSB0 --baud 115200
 烧录后串口应立即输出一行就绪 JSON：
 
 ```json
-{"module":"sensor","type":"ready","board":"MODULE_A","role":"SENSOR_NODE","version":"V2.2"}
+{"module":"sensor","type":"ready","board":"MODULE_A","role":"SENSOR_NODE","version":"V2.3"}
 ```
 
 随后每 1 秒输出一条 `{"type":"data","data":{...}}` 周期数据（默认不含 `distance`/`soil_*`）。在监视器手动输入 `REPORT` 可立即触发一次上报。
@@ -90,8 +90,9 @@ pio device monitor --port /dev/ttyUSB0 --baud 115200
 | PIR 人体红外 | D8 | 5V/GND | SR602/HC-SR501；板上可调灵敏度与延时 |
 | 矩阵键盘（1×1） | 行=D4, 列=A4 | 无需供电 | D4 持续输出 LOW 作行驱动，A4 `INPUT_PULLUP` 读列；按下即 `"1"` |
 | NeoPixel 灯带（8 颗） | 数据=A0（D14） | 独立稳压 5V | MCP 的 `light` 命令由 A 板执行；数据线建议串联 330~470Ω，GND 与 A 板共地 |
+| 直流风扇 + 驱动（L298N/TB6612） | INA=A1（D15），INB=GND | 电机独立 5V | `fan` 命令由 A 板执行；INB 接 GND，A1 单线开关；驱动板 GND 与 A 板共地；建议 INA 对 GND 加 10k/4.7k 下拉 |
 
-**已移除**：HC-SR04 超声波（原 A0/A1，现 A0 改接灯带、**A1 悬空**）；土壤湿度（其 D4/A4 已被键盘复用）。
+**已移除**：HC-SR04 超声波（原 A0/A1，现 A0 改接灯带、**A1 改接风扇**）；土壤湿度（其 D4/A4 已被键盘复用）。
 如需恢复，在 [src/Config.h](src/Config.h) 把 `ENABLE_ULTRASONIC` / `ENABLE_SOIL` 改为 `1`、`ENABLE_KEYPAD` 改为 `0` 后重烧。
 
 > ⚠️ **RC522 只能接 3.3V**，绝不能接 5V。
@@ -137,7 +138,7 @@ python3 -c "import serial,time; s=serial.Serial('/dev/ttyUSB0',115200); [print(s
 |------|------|
 | 无任何输出 | 波特率/串口选错；USB 线是否为数据线；`Permission denied` → dialout 组 |
 | `temperature: null` | DHT11 接线/上拉；需间隔 >2s |
-| 没有 `distance` / `soil_*` | `V2.2` 默认已裁剪，属预期 |
+| 没有 `distance` / `soil_*` | `V2.3` 默认已裁剪，属预期；`fan` 字段应存在 |
 | 键盘无事件 | 确认 D4 行/A4 列接线；按压需保持 >40ms 防抖，松开 120ms 后才接受下一次 |
 | RFID 无事件 | 供电须 3.3V；天线对准；卡片是否为 13.56MHz |
 | 反复输出 ready（重启） | 供电不足复位 → 换 USB 口或加独立 5V |

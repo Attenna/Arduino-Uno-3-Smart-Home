@@ -285,7 +285,8 @@ GET 与 POST 等价（便于浏览器地址栏直接点）。
 }
 ```
 
-> B 板风扇引脚为非 PWM，内部映射为开关：0=停，>0=全速。
+> 风扇 2026-11 已迁到 A 板 A1（单线开关，INB 接 GND），仍为非 PWM：0=停，>0=全速。
+> 硬件回读 `rb_fan_speed` 取自 A 板数据帧的 `fan` 字段，不再使用 B 板已断开的 D7/D8。
 
 ### 空调（AC，美的红外）
 
@@ -817,7 +818,7 @@ curl http://<host>:8101/trigger
 | `light` | `action`, `value`, `r`,`g`,`b`, `count` | 灯光（**执行于 A 板 A0**）：off / white / night / 预设色 / rgb / pixels（**没有 `on`**；`temp` 已停用，A 板无该分支；`value` 是 0~255 亮度，缺省 255、夜灯缺省 60；`pixels` 需 `count` 1~8） |
 | `door` | `action` = open/close | 门 |
 | `window` | `action` = open/close/normal | 窗 |
-| `fan` | `action` = on/off/set_speed, `value` | 风扇 |
+| `fan` | `action` = on/off/set_speed, `value` | 风扇（**执行于 A 板 A1**，单线开关；`value>0`=开、`0`=关） |
 | `buzzer` | `action` = on/off/beep, `count`,`on_ms`,`off_ms` | 蜂鸣器 |
 | `oled` | `action` = show_text/clear, `line`,`text` | OLED |
 | `display` | `action` = show_time/show_number/clear | 数码管（TM1637 已裁剪，返回 error） |
@@ -825,7 +826,7 @@ curl http://<host>:8101/trigger
 | `ac` | `power`,`mode`,`temperature`,`fan`,`swing_ud`,`swing_lr` | 美的空调（生成状态帧走 send_midea） |
 | `get_sensor_status` | 无 | 查询全部传感器 + 最近事件 |
 | `get_serial_health` | 无 | 串口链路健康度：A/B 连接、B 板复位次数、最近引脚告警、心跳失败数、**最近一条设备命令及其固件回读**（只读排障） |
-| `get_output_state` | 无 | B 板（执行器）硬件回读状态：门/窗/风扇/灯/蜂鸣器实际电平 + 观测时刻 + 最近命令（只读） |
+| `get_output_state` | 无 | 执行器硬件回读：门/窗/灯/蜂鸣器来自 B 板，风扇来自 A 板 A1；含观测时刻 + 最近命令（只读） |
 | `get_distance` | 无 | B 板 HC-SR04 实时测距（V2.10+），厘米；仅 `valid=true` 时距离有效。见 [调用示例](ultrasonic.md) |
 | `self_test` | 无 | B 板固件自检（V2.9+）：命令成败计数、风扇两脚方向/电平、灯带 `show()` 次数、数据脚拉高/拉低读回（只读） |
 

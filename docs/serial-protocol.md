@@ -9,7 +9,7 @@
 >
 > | 板 | 固件版本 | 说明 |
 > |----|---------|------|
-> | Module A | `V2.2` | 移除超声波 / 土壤湿度，新增矩阵键盘；**A0 接管 8 颗 NeoPixel 灯带，`light` 命令由 A 板执行** |
+> | Module A | `V2.3` | 移除超声波 / 土壤湿度，新增矩阵键盘；**A0 接管 8 颗 NeoPixel 灯带、A1 接管风扇单线开关，`light`/`fan` 命令由 A 板执行** |
 > | Module B | `V2.15` | **OLED 多页轮播下移固件**：屏上 3 页（Environment/Devices/Safety）由 B 每 8 分钟 **主动拉取**（首帧 5s 重试；V2.12 起；V2.15 将 15s 放慢到 8 分钟），上行 `oled_req`，下行紧凑 `@D...` 数据帧；HC-SR04 按需测距（Trig D6 / Echo D5）； 移除 TM1637 数码管；红外支持 NEC + 美的空调长码；风扇引脚每 loop 自愈；响应回显请求 `id`（V2.6）；看门狗 `WDTO_4S`（V2.11，V2.7 曾为 `WDTO_2S`，固件挂死 4s 自动复位）；命令响应/就绪帧回附固件状态快照 `state`，新增 `system/selftest` 自检（V2.9）；灯带电流限流与看门狗容差（V2.11）。**灯带数据线已移至 A 板 A0**，`light` 命令不再由网关下发到 B 板 |
 >
 > 下文中，被裁剪的字段/命令均以 **「（已裁剪）」** 标注。
@@ -23,12 +23,12 @@
 上电时发送一次（**含 `role` 字段**）：
 
 ```json
-{"module":"sensor","type":"ready","board":"MODULE_A","role":"SENSOR_NODE","version":"V2.2"}
+{"module":"sensor","type":"ready","board":"MODULE_A","role":"SENSOR_NODE","version":"V2.3"}
 ```
 
 ### 1.2 周期状态上报（默认每 1s）
 
-`V2.2` 默认裁剪配置下的实际上报（**不含** `distance` / `soil_*` 字段）：
+`V2.3` 默认裁剪配置下的实际上报（**不含** `distance` / `soil_*` 字段）：
 
 ```json
 {
@@ -42,7 +42,8 @@
     "smoke": false,
     "rain": false,
     "touch": false,
-    "motion": false
+    "motion": false,
+    "fan": 0
   }
 }
 ```
@@ -59,6 +60,7 @@
 | `rain` | boolean | 必有 | 是否检测到雨 |
 | `touch` | boolean | 必有 | 是否触摸按下 |
 | `motion` | boolean | 必有（`ENABLE_PIR=1`） | PIR 是否检测到人体运动 |
+| `fan` | number | 必有（`V2.3+`） | 风扇实际状态：`1`=转，`0`=停（A1 单线开关） |
 | `distance` | number/null | **已裁剪**（`ENABLE_ULTRASONIC=0`） | 超声波距离(cm)，超范围/无回波为 `null` |
 | `soil_moisture` | number | **已裁剪**（`ENABLE_SOIL=0`） | 土壤湿度模拟量 0~1023（越高越干） |
 | `soil_dry` | boolean | **已裁剪**（`ENABLE_SOIL=0`） | 土壤是否干燥（数字输出） |
@@ -95,14 +97,14 @@
 
 ```json
 {"module":"sensor","type":"response","result":"ok","interval":5000}
-{"module":"sensor","type":"who","board":"MODULE_A","role":"SENSOR_NODE","version":"V2.2"}
+{"module":"sensor","type":"who","board":"MODULE_A","role":"SENSOR_NODE","version":"V2.3"}
 ```
 
 ---
 
 ## 2. Module A ← 下行
 
-Module A 以"只报告"为主，另按命令驱动 **A0 的 8 颗 NeoPixel 灯带**（仍不做业务判断）。
+Module A 以"只报告"为主，另按命令驱动 **A0 的 8 颗 NeoPixel 灯带**和 **A1 的风扇单线开关**（仍不做业务判断）。
 
 ### 2.1 灯光控制（A0 灯带）
 
@@ -123,7 +125,27 @@ L,<code>,<value>,<r>,<g>,<b>,<count>,<id>
 {"module":"sensor","type":"response","result":"ok","cmd":"light","id":7,"state":{"light":128,"lit":4}}
 ```
 
-### 2.2 调试命令（纯文本）
+### 2.2 风扇控制（A1 单线开关）
+
+2026-11 起风扇从 B 板迁到 A 板：`A1(D15) → 驱动板 INA`，`INB → GND`，电机独立 5V，
+驱动板 GND 与 A 板共地。网关的 `fan` 工具（面板 / 语音 / 自动化）**路由到 A 板**。
+
+```json
+{"cmd":"fan","action":"on","id":8}
+{"cmd":"fan","action":"off","id":9}
+{"cmd":"fan","action":"set_speed","value":180,"id":10}
+```
+
+紧凑帧（MCP 实际使用，避开 Uno 64 字节接收缓冲）：
+```text
+F,<0|1>,<id>
+```
+`set_speed` 的 `value>0` 映射为开、`0` 为关（A1 非 PWM，只做开关）。响应形如：
+```json
+{"module":"sensor","type":"response","result":"ok","cmd":"fan","action":"on","id":8,"state":{"fan":1}}
+```
+
+### 2.3 调试命令（纯文本）
 
 | 命令 | 作用 |
 |------|------|
@@ -137,7 +159,7 @@ L,<code>,<value>,<r>,<g>,<b>,<count>,<id>
 
 ## 3. Module B（Output Node）← 下行（JSON 命令）
 
-> 下表除 **`light`** 外都由 Module B 执行；**`light` 现由 Module A 执行**（灯带接 A0，见 §2.1）。
+> 下表除 **`light`/`fan`** 外都由 Module B 执行；**`light`/`fan` 现由 Module A 执行**（灯带接 A0，风扇接 A1，见 §2.1/§2.2）。B 板的 `fan` 分支仅为兼容保留，D7/D8 不再接线。
 
 命令格式统一为 `{cmd, action, ...}`：
 
@@ -162,9 +184,9 @@ L,<code>,<value>,<r>,<g>,<b>,<count>,<id>
 |-------|----------|---------|------|------|
 | `door` | `open` / `close` | - | 保留 | 门舵机 90° / 0° |
 | `window` | `open` / `close` / `normal` | - | 保留 | 窗舵机 120° / 0° / 45° |
-| `fan` | `set_speed` | `value` 0~255 | 保留 | PWM 调速；D8 非 PWM，退化为开关（0=停，>0=全速） |
-| `fan` | `on` / `full` | - | 保留 | 全速 |
-| `fan` | `off` / `stop` | - | 保留 | 停止 |
+| `fan` | `set_speed` | `value` 0~255 | **已迁 A 板** | B 固件保留旧分支，但 D7/D8 不再接线；网关 `fan` 走 A 板 A1 |
+| `fan` | `on` / `full` | - | **已迁 A 板** | 同上（兼容保留） |
+| `fan` | `off` / `stop` | - | **已迁 A 板** | 同上（兼容保留） |
 | `light` | `white` | `value` 0~255 | 保留 | 白光亮度（整条灯带）；命令由 Module A 执行 |
 | `light` | `night` | `value` 0~255（缺省 `LIGHT_NIGHT_LEVEL`=60） | 保留 | 夜灯：只点亮居中 `LIGHT_NIGHT_COUNT`（默认 2）颗灯珠，其余保持熄灭 |
 | `light` | `temp` | `temp` 2700~6500(K)，`value` 0~255（缺省 255） | **已停用** | 色温白光。灯带移至 A 板后，A 板固件无 `temp` 分支，网关下发会返回 error（面板已移除色温入口） |

@@ -42,7 +42,7 @@ void Protocol::printBool(bool v) {
     Serial.print(v ? F("true") : F("false"));
 }
 
-void Protocol::sendReport(const SensorManager& s) {
+void Protocol::sendReport(const SensorManager& s, const FanOutput& fan) {
     Serial.print(F("{\"module\":\"sensor\",\"type\":\"data\",\"timestamp\":"));
     Serial.print((unsigned long)millis());
     Serial.print(F(",\"data\":{\"temperature\":"));
@@ -67,6 +67,9 @@ void Protocol::sendReport(const SensorManager& s) {
     Serial.print(F(",\"motion\":"));
     printBool(s.motion());
 #endif
+    // 风扇已迁到 A1：随每帧上报实际开关状态，供 MCP/看板做硬件回读
+    Serial.print(F(",\"fan\":"));
+    Serial.print(fan.isOn() ? 1 : 0);
 #if ENABLE_SOIL
     Serial.print(F(",\"soil_moisture\":"));
     Serial.print(s.soilMoisture());
@@ -148,7 +151,7 @@ void Protocol::sendEvent(const Event& e) {
 }
 
 // ---------- 下行（可选） ----------
-void Protocol::handleInput(SensorManager& s, LightOutput& light) {
+void Protocol::handleInput(SensorManager& s, LightOutput& light, FanOutput& fan) {
     static char buf[160];
     static byte pos = 0;
     while (Serial.available()) {
@@ -157,7 +160,7 @@ void Protocol::handleInput(SensorManager& s, LightOutput& light) {
             if (pos > 0) {
                 buf[pos] = '\0';
                 pos = 0;
-                processLine(buf, s, light);
+                processLine(buf, s, light, fan);
             }
         } else {
             if (pos < sizeof(buf) - 1) buf[pos++] = c;
@@ -243,15 +246,68 @@ bool Protocol::processLightCompact(char* line, LightOutput& light) {
     return true;
 }
 
-void Protocol::processLine(char* line, SensorManager& s, LightOutput& light) {
+void Protocol::respondFan(bool ok, const char* action, long id,
+                          const FanOutput& fan) {
+    Serial.print(F("{\"module\":\"sensor\",\"type\":\"response\",\"result\":\""));
+    Serial.print(ok ? F("ok") : F("error"));
+    Serial.print(F("\",\"cmd\":\"fan\",\"action\":\""));
+    Serial.print(action ? action : "");
+    Serial.print('"');
+    if (id >= 0) { Serial.print(F(",\"id\":")); Serial.print(id); }
+    Serial.print(F(",\"state\":{\"fan\":"));
+    Serial.print(fan.isOn() ? 1 : 0);
+    Serial.println(F("}}"));
+}
+
+bool Protocol::processFanJson(char* line, FanOutput& fan) {
+    if (!strstr(line, "\"cmd\":\"fan\"") && !strstr(line, "\"cmd\": \"fan\"")) return false;
+    char action[12] = {0};
+    long id = jsonLong(line, "\"id\"", -1);
+    bool ok = jsonAction(line, action, sizeof(action));
+    bool on = false;
+    if (ok) {
+        if (strcmp(action, "off") == 0 || strcmp(action, "stop") == 0) {
+            on = false;
+        } else if (strcmp(action, "on") == 0 || strcmp(action, "full") == 0) {
+            on = true;
+        } else if (strcmp(action, "set_speed") == 0) {
+            on = jsonLong(line, "\"value\"", 0) > 0;
+        } else {
+            ok = false;
+        }
+    }
+    if (ok) fan.set(on);
+    respondFan(ok, action, id, fan);
+    return true;
+}
+
+// 紧凑帧：F,<0|1>,<id>\n —— 与灯带 L,... 一样控制在 Uno 64B 串口接收缓冲以内。
+bool Protocol::processFanCompact(char* line, FanOutput& fan) {
+    if (line[0] != 'F' || line[1] != ',') return false;
+    char* save = NULL;
+    strtok_r(line, ",", &save);               // F
+    char* on = strtok_r(NULL, ",", &save);
+    char* id = strtok_r(NULL, ",", &save);
+    if (!on) return true;
+    bool state = atoi(on) != 0;
+    fan.set(state);
+    long requestId = id ? atol(id) : -1;
+    respondFan(true, state ? "on" : "off", requestId, fan);
+    return true;
+}
+
+void Protocol::processLine(char* line, SensorManager& s, LightOutput& light,
+                           FanOutput& fan) {
     trim(line);
     if (processLightCompact(line, light)) return;
+    if (processFanCompact(line, fan)) return;
     if (line[0] == '{' && processLightJson(line, light)) return;
+    if (line[0] == '{' && processFanJson(line, fan)) return;
     toUpper(line);
     if (line[0] == '\0') return;
 
     if (strcmp(line, "REPORT") == 0 || strcmp(line, "STATUS") == 0) {
-        sendReport(s);
+        sendReport(s, fan);
     } else if (strncmp(line, "INTERVAL:", 9) == 0) {
         long v = atol(line + 9);
         if (v >= 200 && v <= 60000) {
