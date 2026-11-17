@@ -19,6 +19,8 @@ def get_status():
     engine = extensions.automation
     store = getattr(engine, "global_state", None)
     status["occupancy"] = store.get("g:有人在家") if store else None
+    # 光照明暗二态与引擎同源（带回差）；None=回差区间内尚无定论。
+    status["light_dark"] = getattr(engine, "_light_dark", None) if engine else None
     bridge = extensions.bridge
     status["hardware_bridge"] = {
         "enabled": bridge is not None and bridge.enabled,

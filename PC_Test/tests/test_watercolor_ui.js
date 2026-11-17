@@ -88,6 +88,15 @@ test('zero sensor readings remain visible', () => {
     assert.equal(ui.element('wcTemperature').textContent, '0.0');
     assert.equal(ui.element('wcHumidity').textContent, '0');
 });
+test('light reading shows the engine dark/bright state next to the raw ADC', () => {
+    const ui = sandbox();
+    ui.status({...online, light_raw: 812, light_dark: true});
+    assert.equal(ui.element('wcLightRaw').textContent, '812 · 暗');
+    ui.status({...online, light_raw: 640, light_dark: false});
+    assert.equal(ui.element('wcLightRaw').textContent, '640 · 亮');
+    ui.status({...online, light_raw: 700, light_dark: null});
+    assert.equal(ui.element('wcLightRaw').textContent, '700');
+});
 test('PIR idle and retained occupancy are shown independently', () => {
     const ui = sandbox();
     ui.status({...online, motion: false, occupancy: {value: true}});

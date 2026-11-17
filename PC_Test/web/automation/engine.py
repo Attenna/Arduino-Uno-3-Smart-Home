@@ -35,7 +35,8 @@ from datetime import datetime
 from pathlib import Path
 
 from .capabilities import CONDITION_SOURCES, EVENT_TRIGGERS
-from .default_rules import DEFAULT_RULES, PRESET_LEGACY_CONTENT, PRESETS_VERSION
+from .default_rules import (DEFAULT_RULES, LIGHT_PAIR_PRESETS,
+                            PRESET_LEGACY_CONTENT, PRESETS_VERSION)
 from ..doorway import DoorwayDistance
 from .global_state import GlobalStateStore, ID_PREFIX
 from .oled_carousel import (DEFAULT_PAGES, PAGES_VERSION, OledCarousel,
@@ -243,7 +244,9 @@ class AutomationEngine:
         self.rules = clean
         if bad_names and self._migration_info is not None:
             self._migration_info["invalid"] = bad_names
-        if self.seed_presets():
+        added = self.seed_presets()
+        repaired = self._repair_light_pair(presets_version)
+        if added or repaired:
             self._write_rules()
         elif self._migration_info and any(
                 self._migration_info.get(k)
@@ -258,6 +261,39 @@ class AutomationEngine:
     _PRESET_CONTENT_KEYS = ("trigger", "conditions", "actions", "else_actions",
                             "match", "cooldown")
     _PRESET_LIST_KEYS = ("conditions", "actions", "else_actions")
+
+    def _repair_light_pair(self, presets_version: int) -> bool:
+        """v11 一次性修复「光照只启用了一半」的规则集。
+
+        暗→开灯、亮→关灯是一对互补规则：只启用一条时，灯会停在最后一次
+        动作的状态（重启后尤其明显），页面也不会有任何告警。用户只会在
+        真机上看到「捂住光敏灯没反应」。只在版本升级时修一次，之后用户
+        再有意停用其中一条会被尊重。
+        """
+        if presets_version >= PRESETS_VERSION:
+            return False
+        by_preset = {r.get("preset"): r for r in self.rules
+                     if isinstance(r, dict) and r.get("preset")}
+        pair = [by_preset.get(pid) for pid in LIGHT_PAIR_PRESETS]
+        if not all(pair):
+            return False
+        enabled = [bool(r.get("enabled", True)) for r in pair]
+        if enabled[0] == enabled[1]:
+            return False
+        defaults = {r.get("preset"): r for r in DEFAULT_RULES}
+        for rule in pair:
+            default = defaults.get(rule.get("preset"))
+            if default:
+                for key in self._PRESET_CONTENT_KEYS:
+                    if key in default:
+                        rule[key] = copy.deepcopy(default[key])
+            rule["enabled"] = True
+        info = self._migration_info or {}
+        info.setdefault("warnings", []).append(
+            "光照联动预设必须成对启用，已按内置内容恢复「暗→开灯 / 亮→关灯」两条规则")
+        self._migration_info = info
+        logger.warning("[自动化] 光照预设只启用了一条，已恢复并启用成对规则")
+        return True
 
     @classmethod
     def _preset_content_matches(cls, rule: dict, variants: list) -> bool:
@@ -494,10 +530,22 @@ class AutomationEngine:
         return added
 
     def restore_presets(self) -> list[dict]:
-        """页面「恢复内置规则」：把用户删掉/改名的默认规则按原样补回并落盘。"""
+        """页面「恢复内置规则」：补回被删/改名的默认规则，并重新启用内容仍是
+        内置版本的停用预设（用户改过内容的保留其停用状态）。"""
         with self._lock:
             self.seed_presets(force=True)
+            defaults = {r.get("preset"): r for r in DEFAULT_RULES}
+            restored = 0
+            for rule in self.rules:
+                default = defaults.get(rule.get("preset"))
+                if not default or rule.get("enabled") is not False:
+                    continue
+                if self._preset_content_matches(rule, [default]):
+                    rule["enabled"] = True
+                    restored += 1
             self._write_rules()
+            if restored:
+                logger.info("[自动化] 恢复内置规则时重新启用 %d 条停用预设", restored)
             return list(self.rules)
 
     def _write_rules(self) -> None:

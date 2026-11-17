@@ -16,22 +16,22 @@
         <div class="card-body">
             <div class="filter-row">
                 <label data-i18n="history.data_type">数据类型:</label>
-                <select id="dataType" onchange="loadHistory()" class="select-input" data-i18n-options="history.type">
-                    <option value="temperature">温度</option>
-                    <option value="humidity">湿度</option>
-                    <option value="light_level">光照强度</option>
-                    <option value="door_window">门窗状态</option>
-                    <option value="light">灯光状态</option>
+                <select id="dataType" onchange="loadHistory()" class="select-input">
+                    <option value="temperature" data-i18n="history.type_temp">温度</option>
+                    <option value="humidity" data-i18n="history.type_humidity">湿度</option>
+                    <option value="light_level" data-i18n="history.type_light_level">光照强度</option>
+                    <option value="door_window" data-i18n="history.type_door">门窗状态</option>
+                    <option value="light" data-i18n="history.type_light">灯光状态</option>
                 </select>
                 <label data-i18n="history.time_range">时间范围:</label>
-                <select id="timeRange" onchange="loadHistory()" class="select-input" data-i18n-options="history.range">
-                    <option value="1">最近1小时</option>
-                    <option value="6">最近6小时</option>
-                    <option value="12">最近12小时</option>
-                    <option value="24" selected>最近24小时</option>
-                    <option value="72">最近3天</option>
-                    <option value="168">最近7天</option>
-                    <option value="720">最近30天(小时聚合)</option>
+                <select id="timeRange" onchange="loadHistory()" class="select-input">
+                    <option value="1" data-i18n="history.range_1h">最近1小时</option>
+                    <option value="6" data-i18n="history.range_6h">最近6小时</option>
+                    <option value="12" data-i18n="history.range_12h">最近12小时</option>
+                    <option value="24" selected data-i18n="history.range_24h">最近24小时</option>
+                    <option value="72" data-i18n="history.range_3d">最近3天</option>
+                    <option value="168" data-i18n="history.range_7d">最近7天</option>
+                    <option value="720" data-i18n="history.range_30d">最近30天(小时聚合)</option>
                 </select>
                 <button class="btn" onclick="loadHistory()" data-i18n="history.refresh">刷新数据</button>
             </div>

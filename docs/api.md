@@ -91,6 +91,7 @@
   "window_status": "normal",
   "light_status": "off",
   "light_brightness": 0,
+  "light_dark": true,
   "light_mode": "white",
   "light_temp": null,
   "light_rgb": null,
@@ -109,6 +110,8 @@
 
 > 状态行还可能包含 `smoke / rain / touch / motion / light_raw / device_uptime_ms`
 > 以及 `ac_swing_ud / ac_swing_lr / ac_eco / ac_fzc` 等扩展列（按数据可得性出现）。
+> `light_dark` 是引擎按回差（raw≥730 暗 / raw≤670 亮 / 中间维持）给出的二态，
+> `null` 表示尚无定论；与自动化积木里的 `light_dark` 同源。
 >
 > `device_mismatch` 是 B 板硬件回读与库中期望状态的比对结果（一致时为 `null`）；
 > `serial_health` 由 web 的硬件桥在自己的循环里低频轮询 MCP `get_serial_health` 得到

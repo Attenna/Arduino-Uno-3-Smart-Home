@@ -76,6 +76,56 @@ class HomeRulesTests(unittest.TestCase):
         self.engine._context()
         self.assertFalse(self.engine._light_dark)
 
+    def test_v11_repairs_half_enabled_light_pair(self):
+        # 实测运行时：light_dark 被停用、light_off 仍在 → 捂光敏灯不亮。
+        dark = dict(self.rules["light_dark"])
+        off = dict(self.rules["light_off"])
+        dark["enabled"] = False
+        off["enabled"] = True
+        self.engine.rules_path.write_text(json.dumps({
+            "presets_version": 10,
+            "rules": [dark, off],
+        }))
+
+        self.engine.load()
+        rules = {r["preset"]: r for r in self.engine.rules}
+        self.assertTrue(rules["light_dark"]["enabled"])
+        self.assertTrue(rules["light_off"]["enabled"])
+        self.assertEqual(rules["light_dark"]["conditions"][-1],
+                         {"sensor": "light_dark", "op": "==", "value": True})
+        self.assertEqual(json.loads(self.engine.rules_path.read_text())["presets_version"],
+                         PRESETS_VERSION)
+        info = self.engine.consume_migration_info()
+        self.assertTrue(any("光照联动预设" in w for w in info["warnings"]))
+
+    def test_v11_keeps_intentionally_disabled_light_pair(self):
+        # 两条都停用视为用户有意关闭光照联动，升级不擅自打开。
+        dark = dict(self.rules["light_dark"])
+        off = dict(self.rules["light_off"])
+        dark["enabled"] = off["enabled"] = False
+        self.engine.rules_path.write_text(json.dumps({
+            "presets_version": 10,
+            "rules": [dark, off],
+        }))
+
+        self.engine.load()
+        rules = {r["preset"]: r for r in self.engine.rules}
+        self.assertFalse(rules["light_dark"]["enabled"])
+        self.assertFalse(rules["light_off"]["enabled"])
+
+    def test_restore_presets_reenables_unmodified_disabled_builtin(self):
+        # 页面「恢复内置」原先只补回被删的预设；未改内容但被停用的预设
+        # （例如 light_dark）必须一起恢复，否则提示与按钮承诺不一致。
+        disabled = next(r for r in self.engine.rules if r["preset"] == "light_dark")
+        disabled["enabled"] = False
+        customized = next(r for r in self.engine.rules if r["preset"] == "temp_hot")
+        customized["enabled"] = False
+        customized["conditions"][-1]["value"] = 30
+
+        restored = {r["preset"]: r for r in self.engine.restore_presets()}
+        self.assertTrue(restored["light_dark"]["enabled"])
+        self.assertFalse(restored["temp_hot"]["enabled"])
+
     def test_v8_upgrade_only_updates_light_presets(self):
         old_dark = dict(self.rules["light_dark"])
         old_dark["conditions"] = [dict(c) for c in old_dark["conditions"]]

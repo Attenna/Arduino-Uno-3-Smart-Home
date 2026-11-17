@@ -2,6 +2,47 @@
 
 记录对系统行为 / 接口有影响的变更。新条目置于顶部。
 
+## 2026-11-17 · 修复：光敏读数正常但光照联动失效（运行时只启用了一半预设）
+
+分支：`fix/light-sensor-automation`。
+
+### 现象与根因
+真机 `GET /api/status` 与 `sensor_history` 显示光敏每秒都在上报（环境光 raw≈810、
+捂住≈985，ADC 与接线正常），但暗→开灯不动作。运行数据 `automation_rules.json`
+（v10）里内置 `light_dark` 被停用、`light_off` 仍启用；另有两支早前手工建立的
+「原始光照 ≥600 开灯 / <600 关灯」规则。传感器触发规则只在**上升沿**执行一次，
+重启后条件已成立也不会补发动作，因此灯会停在最后一次状态。页面既没有提示
+「光照只启用一半」，也没有提示原始光照规则会与内置暗/亮预设抢灯。
+
+### 变更
+- `PRESETS_VERSION` 10 → **11**。首次启动若发现两条光照预设只启用了一条，按内置
+  内容恢复并**成对启用**（两条都停用视为有意关闭，不动）。迁移结果写入页面提示。
+- 「♻️ 恢复内置」现在会重新启用**内容未被改过**的停用预设（改过内容的保留停用），
+  与页面提示文案一致。
+- 自动化页新增两条醒目提示：光照预设只启用一半；启用的原始光照规则会与暗/亮预设
+  抢同一个灯（`automation.js`）。
+- `/api/status` 新增 `light_dark`（引擎同源回差二态）。水彩首页光照读数显示为
+  `810 · 暗` / `640 · 亮`，无定论时只显示原值。
+- 历史页数据类型与时间范围下拉改回逐项 `data-i18n`（原 `data-i18n-options`
+  拼出的键 `history.type.temperature` 根本不存在，整组选项一直不翻译）；补
+  `history.range_30d` 中英文案。
+
+### 影响与回滚
+- 只改规则预设与展示，不改串口协议、数据库结构、A/B 固件与 Docker 编排。
+- 首次升级会重写 `automation_rules.json`（原文件自动备份为 `.pre-global-state.json`
+  等既有迁移备份），如需回滚恢复该 JSON 并回退本次提交即可。
+- 运行时的两支手工原始光照规则不会被代码删除；升级后页面会提示，需人工停用
+  （本次已在真机备份后停用，见部署记录）。
+
+### 验收
+- 单测：`test_v11_repairs_half_enabled_light_pair` /
+  `test_v11_keeps_intentionally_disabled_light_pair` /
+  `test_restore_presets_reenables_unmodified_disabled_builtin`；
+  `test_watercolor_ui.js` 光照二态文案；`test_history_ui.js` 光照选项静态断言。
+- 真机：环境光 raw≈810（暗）时灯在 2 秒内开至 100%；遮住光敏仍保持开灯；
+  自动化页不再出现「只启用一半」提示。
+
+
 ## 2026-11-17 · 优化：OLED 轮播间隔 15s → 8 分钟，降低面板刷新复位（#129）
 
 分支：`fix/129-oled-carousel-8min`。

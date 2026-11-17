@@ -69,7 +69,12 @@
         text('wcFreshness', fresh ? '实时采样' : '数据未更新');
         text('wcTemperature', fresh ? valueText(data.temperature, '', 1) : '—');
         text('wcHumidity', fresh ? valueText(data.humidity) : '—');
-        text('wcLightRaw', fresh ? valueText(data.light_raw) : '—');
+        const lightRaw = valueText(data.light_raw);
+        // 原始 ADC 越大越暗；同时给出引擎同源的回差二态，避免只看到一个数字
+        text('wcLightRaw', fresh && lightRaw !== '—'
+            ? lightRaw + (data.light_dark === true ? ' · 暗'
+                : data.light_dark === false ? ' · 亮' : '')
+            : '—');
         text('wcDistance', fresh ? valueText(data.distance, ' cm') : '—');
         for (const [id, field, yes, no] of [
             ['wcSmoke', 'smoke', '烟雾告警', '正常'],

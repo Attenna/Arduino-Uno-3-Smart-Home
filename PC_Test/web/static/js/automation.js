@@ -1311,7 +1311,8 @@ function renderRuleList() {
         ? `<div class="grid-section">${L('自动化规则', 'Automation rules')} · ${RULES.length}</div>`
           + RULES.map(ruleCardHtml).join('')
         : L('<div class="empty-rules">还没有规则，点右上角「＋ 新建规则」开始。</div>', '<div class="empty-rules">No rules yet. Click "＋ New rule" at the top-right to start.</div>');
-    grid.innerHTML = gatingBannerHtml() + states + rules;
+    grid.innerHTML = gatingBannerHtml() + lightPairWarningHtml()
+        + rawLightConflictHtml() + states + rules;
 }
 
 // 「门控维护预设」被停用 → 依赖它们的联动会静默失效，给醒目提示（#77）
@@ -1328,6 +1329,35 @@ function gatingBannerHtml() {
     return L('<div class="gating-warn"> 基础门控预设被停用：', '<div class="gating-warn"> Base gating presets disabled: ') + names
         + L('。依赖它们的联动（有人/无人判定、手动优先解除）不会报错，只会静默失效；', '. The automations that depend on them (presence detection, manual-priority release) will not error - they will silently stop working; ')
         + L('点右上角「 恢复内置」可一键补回。</div>', 'click " Restore built-ins" at the top-right to bring them back.</div>');
+}
+
+// 光照是一对互补预设：只启用一条时灯会停在最后一次动作，用户看到的就是
+// 「光敏不工作」。两条都停用视为有意关闭，不打扰。
+function lightPairWarningHtml() {
+    const pair = ['light_dark', 'light_off']
+        .map((p) => RULES.find((r) => r.preset === p)).filter(Boolean);
+    if (pair.length !== 2) return '';
+    const off = pair.filter((r) => r.enabled === false);
+    if (!off.length || off.length === pair.length) return '';
+    const names = off.map((r) => esc(r.name)).join('、');
+    return L('<div class="gating-warn"> 光照联动只启用了一半：', '<div class="gating-warn"> Only half of the light automation is enabled: ') + names
+        + L('。暗→开灯与亮→关灯必须成对工作，否则灯会保持上一次状态；', '. Dark→on and bright→off must work as a pair, otherwise the lamp keeps its last state; ')
+        + L('请在卡片菜单里启用被停用的那条，或点「恢复内置」。</div>', 'enable the disabled rule in its card menu, or click "Restore built-ins".</div>');
+}
+
+// 直接按原始 ADC 控制灯的规则会与内置「暗/亮」预设抢同一个执行器，且传感器
+// 规则只在边沿触发，重启后条件已成立时不会补发动作。
+function rawLightConflictHtml() {
+    const pairOn = RULES.some((r) => r.preset
+        && ['light_dark', 'light_off'].includes(r.preset) && r.enabled !== false);
+    if (!pairOn) return '';
+    const raw = RULES.filter((r) => r.enabled !== false && r.trigger
+        && r.trigger.kind === 'sensor' && r.trigger.sensor === 'light'
+        && (r.actions || []).some((a) => a.device === 'light'));
+    if (!raw.length) return '';
+    const names = raw.map((r) => esc(r.name)).join('、');
+    return L('<div class="gating-warn"> 以下规则直接按原始光照值控灯，会和内置「暗/亮」预设互相覆盖：', '<div class="gating-warn"> These rules drive the lamp from raw light and can fight the built-in dark/bright presets: ') + names
+        + L('。建议停用它们，统一由「光照状态（暗/亮）」预设控制。</div>', ' disable them and let the light-state presets handle the lamp.</div>');
 }
 
 function ruleCardHtml(r, i) {
