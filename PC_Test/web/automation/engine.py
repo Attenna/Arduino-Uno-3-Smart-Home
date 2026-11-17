@@ -38,6 +38,7 @@ from .capabilities import CONDITION_SOURCES, EVENT_TRIGGERS
 from .default_rules import DEFAULT_RULES, PRESET_LEGACY_CONTENT, PRESETS_VERSION
 from ..doorway import DoorwayDistance
 from .global_state import GlobalStateStore, ID_PREFIX
+from .light_feedback import LightFeedbackGuard
 from .oled_carousel import (DEFAULT_PAGES, PAGES_VERSION, OledCarousel,
                             OLED_MIN_INTERVAL, is_legacy_default_pages)
 from .schema import validate_rule, validate_rules
@@ -98,6 +99,7 @@ class AutomationEngine:
         # 光照明暗判定（带回差）：raw≥730 判暗、raw≤670 判亮，区间内维持上一状态。
         # light_dark 作为布尔源供积木引用，回差避免灯光回照导致的自激抖动。
         self._light_dark: bool | None = None
+        self._light_feedback = LightFeedbackGuard()
         self.doorway = DoorwayDistance()
         self.capture_photo = None
         # 事件队列（带序号），规则按各自 last_event_id 消费
@@ -903,10 +905,18 @@ class AutomationEngine:
     def _context(self) -> dict:
         """传感器快照 + SQLite 中的执行器当前状态 + 全局状态（g: 变量）。"""
         ctx = dict(self._snapshot)
+        try:
+            light_status = self.db.get_current_status()
+        except Exception:
+            light_status = {}
         ctx["distance_cm"] = self.doorway.snapshot()["distance_cm"]
         ctx["sensor_fresh"] = bool(self._snapshot_ts and time.time() - self._snapshot_ts <= 10)
         if ctx["sensor_fresh"]:
-            self._track_light_dark(ctx.get("light"))
+            ambient = self._light_feedback.update(
+                ctx.get("light"), light_status, self._snapshot_ts)
+            self._track_light_dark(ambient)
+            if self._light_dark is None and light_status.get("light_status") == "on":
+                self._light_dark = True
             if self._light_dark is not None:
                 ctx["light_dark"] = self._light_dark
         else:
@@ -914,7 +924,7 @@ class AutomationEngine:
                         "motion", "touch", "rain", "smoke"):
                 ctx.pop(key, None)
         try:
-            status = self.db.get_current_status()
+            status = light_status
             for key in ("door_status", "window_status", "light_status",
                         "light_brightness", "fan_speed",
                         "sensor_online", "output_online"):
