@@ -188,7 +188,8 @@ def access_test():
 
     替代旧页面上写死的 FACE001/002/003 三个演示按钮 —— 身份来自数据库，
     鉴权、日志、事件广播与真实刷卡/推送完全同一条路径；唯一区别是不去抖，
-    连点两次就该看到两条日志，否则用户以为按钮失灵。
+    连点两次就该看到两条日志，否则用户以为按钮失灵。刷卡与真实路径一致：
+    选中人员有卡号即回显通过（不要求人员处于启用状态），人脸仍看白名单。
     """
     data = request.json or {}
     method = data.get("method") if data.get("method") in VERIFY_METHODS else "face"
@@ -201,10 +202,15 @@ def access_test():
         return _fail(f"该人员还没有录入{label}", f"Person has no {method} credential",
                      400)
     # Dry-run only: do not log a real access grant or broadcast actuator events.
-    matched = db.find_authorized(credential, method)
-    granted = matched is not None
-    # 被拒时把原因一起带回去：只说「未识别」用户不知道该去录脸还是去启用人员
-    reason = None if granted else db.diagnose(credential, method)[0]
+    if method == "rfid":
+        # 刷卡路径不再要求白名单：名单里查到人（含停用）就按真实姓名回显；
+        # 未登记卡也能开门，但自测口要求先选一个名单人员。
+        matched, granted, reason = person, True, None
+    else:
+        matched = db.find_authorized(credential, method)
+        granted = matched is not None
+        # 被拒时把原因一起带回去：只说「未识别」用户不知道该去录脸还是去启用人员
+        reason = None if granted else db.diagnose(credential, method)[0]
     label, label_en = deny_texts(reason) if reason else ("", "")
     return jsonify({
         "granted": granted,

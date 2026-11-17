@@ -160,17 +160,18 @@ camera ──/snapshot 单帧──▶ web 识别哨兵(PIR 门控) ──▶ we
 边缘设备 ──POST /api/face/notify 识别结果────────────────────────────────────────┤
 Module A RC522 ──串口 rfid 事件（录入会话优先取卡）──────────────────────────────┤
                                                                                  ▼
-                                    access_guard 白名单鉴权（repeat_window 去抖 + 通行日志 + deny_reason
-                                    逐轮写 face_events：granted/denied/observed）
+                                    access_guard 鉴权（人脸白名单；刷卡即放行，白名单只补人员归属；
+                                    repeat_window 去抖 + 通行日志 + deny_reason 逐轮写 face_events：granted/denied/observed）
                                                                                  │ access_granted / access_denied{method: face|rfid|keypad}
                                                                                  ▼
                                     积木规则 access_open_door ──▶ web 硬件桥(MCP) ──▶ Module B 开门
                                                                          └─ 10 秒后关门（同一条预设的后两个动作）
 ```
 
-> 后端只做「凭证 → 人员」的白名单判定与通行日志，开门/延时关门/被拒报警全由积木规则
-> 决定（预设 `access_open_door` 含「开门 + 10 秒后关门」/ `access_denied_buzzer`），
-> 事件按 `method`（face / rfid / keypad）可分别筛选；在 /automation 页可改可停用。
+> 后端只做「凭证 → 人员」的归属与通行日志：人脸/键盘密码按白名单放行，刷卡只要读到
+> 有效卡号就放行；开门/延时关门/被拒报警全由积木规则决定（预设 `access_open_door`
+> 含「开门 + 10 秒后关门」/ `access_denied_buzzer`），事件按 `method`（face / rfid /
+> keypad）可分别筛选；在 /automation 页可改可停用。
 >
 > 识别的**生产者**是 `web/face_watcher.py`：摄像头只出流、模型只在 web 进程里，
 > 两边过去没人取帧，所以「录了脸也不开门」。哨兵默认只在 A 板 PIR 报「有人」后的

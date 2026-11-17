@@ -75,6 +75,17 @@ class ApiTests(unittest.TestCase):
             verify.assert_not_called()
             broadcast.assert_not_called()
 
+    def test_access_dry_run_rfid_grants_disabled_person(self):
+        self.login()
+        person = {"id": 1, "name": "test", "rfid_uid": "12 34 56 78",
+                  "enabled": 0}
+        with patch.object(access.db, "get_person", return_value=person):
+            response = self.client.post(
+                "/api/access/test", json={"person_id": 1, "method": "rfid"},
+                headers={"Origin": "http://localhost"})
+            self.assertTrue(response.json["granted"])
+            self.assertEqual(response.json["person"], "test")
+
     def test_readiness_and_liveness(self):
         self.assertEqual(self.client.get("/api/live").status_code, 200)
         with patch.object(status.db, "get_current_status", side_effect=RuntimeError("db")):

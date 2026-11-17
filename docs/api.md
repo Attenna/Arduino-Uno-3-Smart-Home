@@ -392,6 +392,8 @@ GET 与 POST 等价（便于浏览器地址栏直接点）。
 
 本模块只管「谁有什么凭证」和「把凭证录进来」；开门、延时关门、被拒报警都不在这里，
 鉴权结果统一广播成 `access_granted` / `access_denied` 事件，由 /automation 页的积木规则决定。
+其中人脸与键盘密码按白名单放行；A 板 `rfid` 刷卡只要读到有效卡号就广播
+`access_granted{method:"rfid"}`，白名单只用于补全人员姓名（未登记/停用卡照样放行）。
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
@@ -405,7 +407,7 @@ GET 与 POST 等价（便于浏览器地址栏直接点）。
 | DELETE | `/api/access/enroll/rfid/<sid>` | 取消录入会话 |
 | GET | `/api/access/logs` | 通行记录列表 |
 | GET | `/api/access/diagnostics` | 门禁体检 + 识别哨兵状态（页顶状态栏的数据源） |
-| POST | `/api/access/test` | 链路自测：拿名单里的真实人员走完整鉴权（不碰硬件） |
+| POST | `/api/access/test` | 链路自测：拿名单里的真实人员走完整鉴权（不碰硬件；刷卡与真机一样只看卡号） |
 
 `GET /api/access/persons` 返回：
 
@@ -606,6 +608,9 @@ GET 与 POST 等价（便于浏览器地址栏直接点）。
 由内置规则 `access_open_door`（门禁·验证通过 → 开门）执行，可在自动化页停用或改成
 「先播报欢迎语」；未授权记 denied 并广播 `access_denied`，
 需要报警时挂一条 `access_denied_buzzer` 规则即可（默认停用）。
+
+> 刷卡不走本接口：A 板 `rfid` 事件由 `access_guard` 直接处理，读到有效卡号即广播
+> `access_granted{method:"rfid"}`；白名单只用于补全人员姓名。
 
 > 本接口同样**无鉴权**：能连到 :5000 的客户端可以伪造 `face_id` 触发开门规则。
 > 需要收紧时，请在边缘设备与 Web 之间自行加反向代理/网络隔离，或删掉那条积木规则。

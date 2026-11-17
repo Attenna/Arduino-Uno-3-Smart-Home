@@ -121,7 +121,8 @@ automation:
 `face_granted` 已没有广播方，旧规则文件里的它会被就地迁移成
 `access_granted{method:"face"}`（内置预设同理改名，规则 id 与启用状态保持不变）。
 
-「谁算什么凭证」留在后端白名单，开门/延时关门/被拒报警全在规则里 —— 想在门禁链路上
+「谁算什么凭证」留在后端：人脸/键盘密码按白名单判定，刷卡只要读到有效卡号就放行
+（白名单只补人员归属）。开门/延时关门/被拒报警全在规则里 —— 想在门禁链路上
 挂自己的动作，订阅引擎事件即可（`extensions.bind_automation()`），不要去 `access_guard`
 里加硬编码的 `door.open()`。
 
@@ -141,7 +142,7 @@ automation:
 | 类别 | 例子 | 是否评估规则 | 落点 |
 |------|------|-------------|------|
 | **用户显式指令**（允许旁路） | 面板 `POST /api/door`、`/api/window`；工具网关 `POST /api/hardware/tool`；HA `POST /api/ha/door` | 否，直达硬件 | `web/api/devices.py`（经 `_DeviceGate`）、`web/api/ha.py` |
-| **鉴权事件**（规则决定动作） | 刷脸/刷卡/键盘通过 → 广播 `access_granted` | 是 | `web/access_guard.py` 只做白名单判定与广播，动作由规则 `access_open_door` 决定 |
+| **鉴权事件**（规则决定动作） | 刷脸/刷卡/键盘通过 → 广播 `access_granted` | 是 | `web/access_guard.py` 只做凭证归属与广播（人脸/键盘看白名单，刷卡即放行），动作由规则 `access_open_door` 决定 |
 | **自动化行为**（必须走规则） | 触摸开门、门禁开门、有人联动 | 是 | 写成 `web/automation/default_rules.py` 的预设（并抬 `PRESETS_VERSION`） |
 
 - 新增「到点/被触发就开门」这类自动化：**加一条默认预设，不要在引擎或 MCP 里直接下发门命令**。
