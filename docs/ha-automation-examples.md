@@ -180,12 +180,17 @@ come_home:
         payload: '{"cmd":"ir","action":"send_nec","code":16712445}'
 ```
 
-> NEC 码需先用 Module A 的红外接收解码（`type:event`，`event:ir` 含 `protocol/address/command`），
-> 再用 `address<<24 | (~address&0xFF)<<16 | command<<8 | (~command&0xFF)` 拼成 32 位完整码填入 `code`。
+> NEC 码需先用 Module A 的红外接收解码（`type:event`，`event:ir` 含 `protocol/address/command`）。
+> 推荐直接用 MQTT 的 `address` + `command` 参数，由 `mcp_home_server.nec_code()` 统一换算，
+> 不必手算 32 位码。
 >
-> 例：address=0x00、command=0x45 → `0x00FF45BA` = **16729530**（即遥控器「1」键）。
-> 注意 Module B 的发送是**最高位先发**，不是 IRremote 常见的 LSB-first 值（如 `0xBA45FF00`），
-> 两者位数正好相反，填错会解出错误的 address/command。
+> 若必须手填 `code`：Module B 从 **bit31 开始发送（MSB-first）**，而 NEC 的每个字节要求
+> **LSB-first**，因此要对每个字节的 8 个 bit 做反转，而不只是调换字节顺序。
+> 等价于把 IRremote 的 LSB-first 原始码（如 `0xBA45FF00`）做「字节倒序 + 每字节按位反转」。
+>
+> 例：address=0x00、command=0x45 → `0x00FFA25D` = **16753245**（遥控器「1」键）；
+> address=0x00、command=0x40 → `0x00FF02FD` = **16712445**（上面 YAML 里的自定义码示例）。
+> 填成 `0x00FF45BA` 会解出 command=0xA2，而不是 0x45。
 > `code` 只接受**十进制**整数（固件用 `strtoul(...,10)` 解析）。
 >
 > 自动化积木里可直接选键位（内部走 `address=0` + `command`），或用「红外发射 自定义码」填十进制码。

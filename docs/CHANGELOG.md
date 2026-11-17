@@ -2,6 +2,60 @@
 
 记录对系统行为 / 接口有影响的变更。新条目置于顶部。
 
+## 2026-11-17 · 修复：红外遥控收发链路的 NEC 位序与重复帧问题
+
+分支：`fix/133-ir-remote-pipeline`（Issue #133）。
+
+### 现象与根因
+1. **发码位序错**：MCP 用 `address`+`command` 拼码时只按字节摆放，没有反转每个
+   字节的 8 个 bit。B 板 `sendNEC()` 从 bit31 连续发送，而 NEC 协议要求每个字节
+   LSB-first，接收端把 command `0x45` 解成 `0xA2`，电视/空调收到的是错误命令。
+2. **回声抑制失效**：引擎对只填 `code` 的红外动作也只做位移、不按位反转，
+   `0x00FFA25D` 被登记成 `cmd=0xA2`；A 板实际回声是 `cmd=0x45`，匹配不上，
+   存在「发码 → A 板收到 → 规则再发码」的自激风险。
+3. **A 板重复帧/噪声当按键**：NEC 长按每 110ms 发一帧重复码，原实现每 500ms
+   当成一次新按键，按住 1 键会连续切换灯；`decodeHash` 的 UNKNOWN 噪声和美的
+   空调 48bit 长帧也会进入 `recent_events`，挤占真实事件。
+4. 文档/UI 的默认自定义码 `0x00FF45BA` / `16729530` 是错误位序。
+
+### 变更
+- `PC_Test/mcp_home_server.py`：新增 `_reverse_bits8()`；`nec_code()` 对
+  `addr`/`~addr`/`cmd`/`~cmd` 四个字节逐字节按位反转。
+- `PC_Test/web/automation/engine.py`：新增同算法 `_reverse_bits8()`；
+  `_ir_key()` 对只给 `code` 的动作还原真实 `(address, command)`，修复回声抑制。
+- `module-a-sensor/src/sensors/IRSensor.cpp`：丢弃 UNKNOWN/溢出、NEC 重复帧/
+  自动重复帧、以及 `numberOfBits > 32` 的长帧；防抖改为按 `(address, command)`
+  分键处理，1→2 快速连按不再丢第二个键；`FW_VERSION` V2.2 → **V2.3**。
+- `module-b-output/src/drivers/IR.{h,cpp}`：注释明确 `sendNEC()` 为 MSB-first、
+  入参必须是线上码，避免再次填错（发送逻辑本身未改）。
+- 文档/UI 同步：`docs/ha-automation-examples.md` 修正换算公式与示例，
+  `docs/serial-protocol.md` 更新事件/命令说明与固件版本，
+  `docs/ir-remote-bindings.md` 说明长按只触发一次，
+  `capabilities.py` / `automation.js` 的自定义码默认值与提示改为 `16753245`。
+- `PC_Test/tests/test_ir_remote_bindings.py`：新增 B 板 MSB-first 发送 + NEC
+  LSB-first 解码的往返测试，以及 `code` 动作回声抑制测试。
+
+### 影响与迁移
+- 用自动化「红外发射」选键位、或 MCP `address`+`command` 的调用**无需修改**，
+  升级后才真正发出正确命令。
+- 手填 `code` 的既有规则：按旧文档填的 `0x00FF45BA` / `16729530` 需改为
+  `0x00FFA25D` / `16753245`，或改用 `address=0` + `command=0x45`。
+- A 板需烧录 V2.3；B 板仅改注释，逻辑未变，可不重烧。
+- 长按遥控器只触发一次；依赖长按连续切换的规则需改为多次点按。
+- 不改数据库结构、Docker 编排和其他串口命令。
+
+### 验收
+- `pio run -d module-a-sensor`：SUCCESS，RAM 64.9%（1329 B）/ Flash 72.1%（23250 B）。
+- `pio run -d module-b-output`：SUCCESS，RAM 81.9%（1677 B）/ Flash 90.0%（29038 B）。
+- `python -m unittest tests.test_ir_remote_bindings ...`：相关 79 项通过；
+  全量 PC_Test 套件在本机隔离环境受缺少 `cv2`/`sounddevice` 与 Windows GBK
+  默认编码影响，失败项与本次红外改动无关。
+- **真机待验证**：需在香橙派任务分支上按遥控器 1–4 键，确认串口事件
+  `command` 为 69/70/71/68、长按不连续切换，并确认 B 板发射能被目标设备识别。
+
+### 回滚
+恢复本分支前的 `nec_code()`/`_ir_key()` 实现，并重新烧录 A 板 V2.2；B 板无需动作。
+
 ## 未发布 · 修复：灯带回照导致自动开关循环（#136）
 
 - 光照联动记录关灯时的环境基准，开灯或改变亮度/颜色后等待新采样，

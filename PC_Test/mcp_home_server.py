@@ -85,19 +85,34 @@ def detect_board(expect_substr: str, label: str) -> Optional[str]:
 
 # ==================== 红外发射（NEC 码换算）====================
 
+def _reverse_bits8(value: int) -> int:
+    """反转一个字节的 8 个 bit（NEC 线上码与 IRremote 原始码的换算）。"""
+    value &= 0xFF
+    value = ((value & 0xF0) >> 4) | ((value & 0x0F) << 4)
+    value = ((value & 0xCC) >> 2) | ((value & 0x33) << 2)
+    value = ((value & 0xAA) >> 1) | ((value & 0x55) << 1)
+    return value & 0xFF
+
+
 def nec_code(address: int, command: int) -> int:
-    """按 Module B 的红外发送约定拼 32 位码（bit31 先发，不是 LSB-first）。
+    """按 Module B 的发送约定，把 NEC address/command 拼成 32 位线上码。
 
-    B 板 IR.cpp 是最低位在最后、最高位先发，因此**不能**直接填 IRremote 那套
-    常见的 LSB-first 值（如 0xBA45FF00）。要让它解出 address/command，必须按
-    NEC 帧序摆放：addr、~addr、cmd、~cmd 各占一个字节。
+    B 板 IR.cpp 从 bit31 开始逐位发送（MSB-first），而 NEC 协议要求**每个字节
+    LSB-first**。所以不能只把 addr、~addr、cmd、~cmd 按字节摆放，还必须把每个
+    字节内部的 8 个 bit 反过来；否则接收端解出的 command 是位反转后的值。
 
-    例：nec_code(0x00, 0x45) -> 0x00FF45BA -> 16729530
-    （对应 A 板遥控器「1」键 address=0x00 / command=0x45）
+    与 IRremote 的 LSB-first 原始码（例：address=0, command=0x45 时为
+    0xBA45FF00）互为「字节倒序 + 每字节按位反转」。
+
+    例：nec_code(0x00, 0x45) -> 0x00FFA25D -> 16753245（遥控器「1」键）
+        nec_code(0x00, 0x40) -> 0x00FF02FD -> 16712445（文档里的「自定义码」示例）
     """
     a = address & 0xFF
     c = command & 0xFF
-    return ((a << 24) | ((~a & 0xFF) << 16) | (c << 8) | (~c & 0xFF)) & 0xFFFFFFFF
+    return ((_reverse_bits8(a) << 24) |
+            (_reverse_bits8(~a & 0xFF) << 16) |
+            (_reverse_bits8(c) << 8) |
+            _reverse_bits8(~c & 0xFF)) & 0xFFFFFFFF
 
 
 def encode_a_light_command(cmd: dict, request_id: int) -> bytes:

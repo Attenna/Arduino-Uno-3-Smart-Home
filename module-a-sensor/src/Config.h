@@ -107,6 +107,6 @@
 // ---- 设备标识 ----
 #define BOARD_TYPE          "MODULE_A"
 #define BOARD_ROLE          "SENSOR_NODE"
-#define FW_VERSION          "V2.4-IR"  // D3 红外显式初始化与重复帧过滤；保留 V2.3 A1 风扇和 A0 灯带
+#define FW_VERSION          "V2.5-UNIFIED"  // 统一版：保留 D3 显式初始化/A1 风扇/A0 灯带，补充红外长帧过滤
 
 #endif // CONFIG_A_H

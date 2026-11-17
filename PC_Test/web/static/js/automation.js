@@ -612,7 +612,7 @@ function defineBlocks() {
             this.setTooltip(L('只写这一行（0-7），其余行不动；文本里可用 {temperature} 等占位符', 'Writes only this line (0-7), leaving others intact; {temperature} and similar placeholders are supported'));
         },
     };
-    // 红外发射：直接选键位（复用 A 板实测的 NEC 键码表），或填自定义 32 位码
+    // 红外发射：直接选键位（复用 A 板实测的 NEC 键码表），或填自定义 32 位线上码
     Blockly.Blocks['act_ir'] = {
         init: function () {
             this.appendDummyInput().appendField(L(' 红外发射', ' IR send'))
@@ -626,11 +626,11 @@ function defineBlocks() {
     Blockly.Blocks['act_ir_code'] = {
         init: function () {
             this.appendDummyInput().appendField(L(' 红外发射 自定义码', ' IR send (custom code)'))
-                .appendField(new Blockly.FieldNumber(16729530, 0, 4294967295, 1), 'CODE');
+                .appendField(new Blockly.FieldNumber(16753245, 0, 4294967295, 1), 'CODE');
             this.setPreviousStatement(true, 'ACT');
             this.setNextStatement(true, 'ACT');
             this.setColour(120);
-            this.setTooltip(L('十进制 32 位 NEC 码（bit31 先发，不是 LSB-first 那套值）', 'Decimal 32-bit NEC code (bit31 first, not LSB-first)'));
+            this.setTooltip(L('十进制 32 位 NEC 线上码：bit31 先发，每字节按位反转。遥控器「1」键 = 16753245 (0x00FFA25D)', 'Decimal 32-bit NEC on-wire code: bit31 first, bits reversed within each byte. Remote key "1" = 16753245 (0x00FFA25D)'));
         },
     };
     // 空调（美的红外）：每项都能选"不改"，只下发选过的项

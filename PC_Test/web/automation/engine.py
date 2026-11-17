@@ -63,6 +63,19 @@ def _is_state_source(sensor) -> bool:
     return str(sensor or "").startswith(ID_PREFIX)
 
 
+def _reverse_bits8(value: int) -> int:
+    """反转一个字节的 8 个 bit（NEC 线上码与 IRremote 原始码的换算）。
+
+    与 ``mcp_home_server._reverse_bits8`` 保持同一算法：两处必须一致，否则
+    「红外发射」登记的回声键与 A 板上报的 address/command 对不上。
+    """
+    value &= 0xFF
+    value = ((value & 0xF0) >> 4) | ((value & 0x0F) << 4)
+    value = ((value & 0xCC) >> 2) | ((value & 0x33) << 2)
+    value = ((value & 0xAA) >> 1) | ((value & 0x55) << 1)
+    return value & 0xFF
+
+
 # 关键安全动作（关门/关窗/蜂鸣报警）失败后的有界重试：串口偶发忙/超时不应该让
 # 「挡窗」「关门」这类安全动作直接放弃。非安全动作保持 fail-fast，避免把一次
 # 明确的失败拖成多次副作用（见 R5）。
@@ -669,7 +682,10 @@ class AutomationEngine:
         """从红外动作里解出 (address, command)，用于回声比对。
 
         A 板上报的 ir 事件只带 protocol/address/command（没有 32 位整码），
-        所以抑制窗口必须按 (address, command) 记；只给 code 时按 NEC 帧序反解。
+        所以抑制窗口必须按 (address, command) 记。只给 code 时：code 是 B 板
+        线上码（每字节 MSB-first 发出），要还原成接收端解码值，必须把
+        addr/cmd 所在字节再按位反转一次；只做位移会把 0x00FFA25D 误记成
+        cmd=0xA2，导致自发射回声抑制失效并可能形成「发码→收码→再发码」自激。
         """
         addr, cmd = action.get("address"), action.get("command")
         if addr is None or cmd is None:
@@ -677,8 +693,8 @@ class AutomationEngine:
             if code is None:
                 return None
             code = int(code) & 0xFFFFFFFF
-            addr = (code >> 24) & 0xFF
-            cmd = (code >> 8) & 0xFF
+            addr = _reverse_bits8((code >> 24) & 0xFF)
+            cmd = _reverse_bits8((code >> 8) & 0xFF)
         return int(addr) & 0xFF, int(cmd) & 0xFF
 
     def _is_ir_echo(self, event: dict) -> bool:
