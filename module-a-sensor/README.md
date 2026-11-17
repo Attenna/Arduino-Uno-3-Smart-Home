@@ -8,7 +8,7 @@
 
 ## 1. 模块用途
 
-Module A 是一块 Arduino Uno，负责环境感知与用户交互检测。**固件版本 `V2.2`**，经 2026-09 正式版硬件裁剪：
+Module A 是一块 Arduino Uno，负责环境感知与用户交互检测。**固件版本 `V2.3`**，经 2026-09 正式版硬件裁剪：
 
 **现役传感器（9 类）与灯光输出**
 
@@ -104,7 +104,7 @@ PlatformIO 已在 [platformio.ini](platformio.ini) 中声明，无需手动安�
 
 ### 上行示例
 
-周期状态（`V2.2`，无 distance/soil 字段）：
+周期状态（`V2.3`，无 distance/soil 字段）：
 ```json
 {"module":"sensor","type":"data","timestamp":123456,"data":{"temperature":26.4,"humidity":61.0,"light":423,"smoke":false,"rain":false,"touch":false,"motion":false}}
 ```
@@ -148,7 +148,7 @@ L,<code>,<value>,<r>,<g>,<b>,<count>,<id>
 
 **输出（上电）：**
 ```
-{"module":"sensor","type":"ready","board":"MODULE_A","role":"SENSOR_NODE","version":"V2.2"}
+{"module":"sensor","type":"ready","board":"MODULE_A","role":"SENSOR_NODE","version":"V2.3"}
 ```
 
 **输入 `REPORT`，输出：**

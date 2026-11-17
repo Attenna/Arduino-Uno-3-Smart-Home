@@ -9,7 +9,7 @@
 >
 > | 板 | 固件版本 | 说明 |
 > |----|---------|------|
-> | Module A | `V2.2` | 移除超声波 / 土壤湿度，新增矩阵键盘；**A0 接管 8 颗 NeoPixel 灯带，`light` 命令由 A 板执行** |
+> | Module A | `V2.3` | 移除超声波 / 土壤湿度，新增矩阵键盘；**A0 接管 8 颗 NeoPixel 灯带，`light` 命令由 A 板执行**；红外接收过滤长按重复帧、UNKNOWN/Hash 噪声与 >32 bit 长帧（V2.3） |
 > | Module B | `V2.15` | **OLED 多页轮播下移固件**：屏上 3 页（Environment/Devices/Safety）由 B 每 8 分钟 **主动拉取**（首帧 5s 重试；V2.12 起；V2.15 将 15s 放慢到 8 分钟），上行 `oled_req`，下行紧凑 `@D...` 数据帧；HC-SR04 按需测距（Trig D6 / Echo D5）； 移除 TM1637 数码管；红外支持 NEC + 美的空调长码；风扇引脚每 loop 自愈；响应回显请求 `id`（V2.6）；看门狗 `WDTO_4S`（V2.11，V2.7 曾为 `WDTO_2S`，固件挂死 4s 自动复位）；命令响应/就绪帧回附固件状态快照 `state`，新增 `system/selftest` 自检（V2.9）；灯带电流限流与看门狗容差（V2.11）。**灯带数据线已移至 A 板 A0**，`light` 命令不再由网关下发到 B 板 |
 >
 > 下文中，被裁剪的字段/命令均以 **「（已裁剪）」** 标注。
@@ -77,7 +77,7 @@
 {"module":"sensor","type":"event","event":"rain","state":true}
 {"module":"sensor","type":"event","event":"motion","state":true}
 {"module":"sensor","type":"event","event":"keypad","key":"1"}
-{"module":"sensor","type":"event","event":"ir","protocol":2,"address":0,"command":10}
+{"module":"sensor","type":"event","event":"ir","protocol":8,"address":0,"command":69}
 ```
 
 | `event` 值 | 附加字段 | 状态 | 说明 |
@@ -88,14 +88,14 @@
 | `rain` | `state` | 保留 | `true`=有雨，`false`=雨停 |
 | `motion` | `state` | 保留 | `true`=检测到运动，`false`=无人 |
 | `keypad` | `key` | **V2.1 新增** | 矩阵键盘按键字符（当前硬件为 1×1，仅 `"1"`） |
-| `ir` | `protocol`/`address`/`command` | 保留 | 红外遥控解码结果 |
+| `ir` | `protocol`/`address`/`command` | 保留 | 红外遥控解码结果；V2.3 起只上报可识别、非重复、≤32 bit 的帧（长按不连续触发，噪声/空调长帧不再混入） |
 | `soil` | `state` | **已裁剪** | `true`=干燥，`false`=湿润 |
 
 ### 1.4 响应（对下行的回复）
 
 ```json
 {"module":"sensor","type":"response","result":"ok","interval":5000}
-{"module":"sensor","type":"who","board":"MODULE_A","role":"SENSOR_NODE","version":"V2.2"}
+{"module":"sensor","type":"who","board":"MODULE_A","role":"SENSOR_NODE","version":"V2.3"}
 ```
 
 ---
@@ -175,7 +175,7 @@ L,<code>,<value>,<r>,<g>,<b>,<count>,<id>
 | `buzzer` | `beep` | `count`,`on_ms`,`off_ms` | 保留 | 间歇蜂鸣 |
 | `oled` | `show_text` | `line`(0~7), `text` | 保留 | OLED 指定行显示（文本最多 16 字符） |
 | `oled` | `clear` | - | 保留 | OLED 清屏 |
-| `ir` | `send_nec` | `code`(32 位十进制) | 保留（`ENABLE_IR_TX=1`） | V1221 发射 NEC 码（38kHz） |
+| `ir` | `send_nec` | `code`(32 位十进制线上码) | 保留（`ENABLE_IR_TX=1`） | V1221 发射 NEC 码（38kHz）。B 板 bit31 先发，`code` 的每个字节须已按位反转；推荐经 MCP 的 `address`+`command` 由 `nec_code()` 换算（例：addr=0、cmd=0x45 → `16753245` / `0x00FFA25D`） |
 | `ir` | `repeat` | - | 保留 | 发送 NEC 重复帧（长按） |
 | `ir` | `send_midea` | `hex`(6 个十六进制字符) | 保留 | 发射美的 RN02G(X) 空调状态帧：`hex` 是 3 字节 A,B,C（如 `B2BF00`），固件补出 `[A,~A,B,~B,C,~C]` 全 MSB-first 并整帧重复 2 遍。帧内容由 Linux 侧 [PC_Test/midea_ac.py](../PC_Test/midea_ac.py) 生成 |
 | `display` | `show_time` | `hour`,`minute` | **已裁剪**（`ENABLE_TM1637=0`） | 数码管显示时钟（命令将返回 error） |
