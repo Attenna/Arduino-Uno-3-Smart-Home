@@ -35,7 +35,8 @@ void IR::sendNEC(unsigned long code) {
     // 引导码：9ms 载波 + 4.5ms 空闲
     carrier(9000);
     delayMicroseconds(4500);
-    // 32 位数据，高位在前
+    // 32 位数据，bit31 先发。NEC 协议本身要求每个字节 LSB-first，所以调用方传入
+    // 的 code 必须是「每字节已按位反转」的线上码（见 IR.h / nec_code()）。
     //   逻辑 1：560µs 载波 + 1690µs 空闲
     //   逻辑 0：560µs 载波 + 560µs 空闲
     for (byte i = 0; i < 32; i++) {

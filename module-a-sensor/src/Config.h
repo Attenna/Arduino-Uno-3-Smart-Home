@@ -98,6 +98,6 @@
 // ---- 设备标识 ----
 #define BOARD_TYPE          "MODULE_A"
 #define BOARD_ROLE          "SENSOR_NODE"
-#define FW_VERSION          "V2.2"  // V2.2：A0 接管 8 颗 NeoPixel 灯带
+#define FW_VERSION          "V2.3"  // V2.3：红外接收过滤长按重复帧/噪声/长帧
 
 #endif // CONFIG_A_H
