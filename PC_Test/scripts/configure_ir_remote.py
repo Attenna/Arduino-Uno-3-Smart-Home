@@ -1,11 +1,16 @@
 """离线生成遥控规则配置；不直接覆盖运行中的规则文件。"""
 import argparse
+import importlib.util
 import json
-import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from web.automation.remote_profile import configure_remote
+# Import this pure file directly: importing web runs application singletons and
+# opens its runtime DB, which an offline configuration tool must never do.
+_path = Path(__file__).resolve().parents[1] / "web/automation/remote_profile.py"
+_spec = importlib.util.spec_from_file_location("remote_profile_offline", _path)
+_profile = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_profile)
+configure_remote = _profile.configure_remote
 
 
 def main():

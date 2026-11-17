@@ -5,9 +5,6 @@ import copy
 import json
 from pathlib import Path
 
-from .schema import validate_rule
-
-
 EXAMPLES = Path(__file__).resolve().parents[2] / "examples" / "automation"
 FAN_AUTO = {"sensor": "g:允许自动开风扇", "op": "==", "value": True}
 
@@ -42,7 +39,7 @@ def configure_remote(document: dict) -> tuple[dict, list[str]]:
     for template in thermal:
         existing = next((r for r in kept if r.get("id") == template["id"]), None)
         if existing is None:
-            kept.append(validate_rule(template))
+            kept.append(copy.deepcopy(template))
             continue
         if (existing.get("match", "all") != "all"
                 or existing.get("trigger", {}).get("kind") != "interval"
@@ -53,13 +50,12 @@ def configure_remote(document: dict) -> tuple[dict, list[str]]:
             raise ValueError("温控规则的自动许可条件冲突")
         if FAN_AUTO not in conditions:
             conditions.append(copy.deepcopy(FAN_AUTO))
-        validate_rule(existing)
 
     profile = json.loads((EXAMPLES / "ir-remote-0-9.json").read_text(encoding="utf-8"))["rules"]
     seen_commands = set()
     old_presets = {r.get("preset"): r for r in old if is_ir_rule(r) and r.get("preset")}
     for raw in profile:
-        rule = validate_rule(raw)
+        rule = copy.deepcopy(raw)
         previous = old_presets.get(rule.get("preset"))
         if previous:
             rule["id"] = previous["id"]

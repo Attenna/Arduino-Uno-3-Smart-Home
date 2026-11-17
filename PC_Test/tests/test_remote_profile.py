@@ -1,5 +1,7 @@
 import copy
 import json
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -7,6 +9,7 @@ from unittest.mock import Mock, patch
 
 from web.automation.engine import AutomationEngine
 from web.automation.remote_profile import configure_remote, is_ir_rule
+from web.automation.schema import validate_rule
 
 
 class RemoteProfileTests(unittest.TestCase):
@@ -90,6 +93,30 @@ class RemoteProfileTests(unittest.TestCase):
         self.assertEqual(len({int(r['trigger']['command'], 16) for r in remote}), 10)
         self.assertFalse(any(a['device'] == 'voice' for r in remote
                              for a in r['actions'] + r['else_actions']))
+        for rule in remote:
+            validate_rule(rule)
+
+    def test_offline_cli_has_no_web_database_side_effect(self):
+        # Deliberately omit Flask/ONNX/etc. from this subprocess's import search path:
+        # -S excludes site packages. A pure JSON tool needs only the standard library.
+        cli = Path(__file__).resolve().parents[1] / 'scripts/configure_ir_remote.py'
+        source, output = Path(self.tmp.name) / 'input.json', Path(self.tmp.name) / 'output.json'
+        source.write_text(json.dumps(self.document), encoding='utf-8')
+        result = subprocess.run([sys.executable, '-S', str(cli), '--input', str(source),
+                                 '--output', str(output)], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(output.read_text(encoding='utf-8')), self.profile)
+
+    def test_legacy_voice_and_english_ir_rules_are_replaced(self):
+        for rule_id, code, device in [('voiceold', '0x45', 'voice'),
+                                      ('lightold', '0x15', 'light')]:
+            self.document['rules'].append({'id': rule_id, 'name': rule_id, 'enabled': True,
+                'trigger': {'kind': 'event', 'event': 'ir', 'command': code},
+                'actions': [{'device': device}]})
+        result, removed = configure_remote(self.document)
+        self.assertIn('voiceold', removed)
+        self.assertIn('lightold', removed)
+        self.assertEqual(len([r for r in result['rules'] if is_ir_rule(r)]), 10)
 
     def test_install_is_idempotent_preserves_other_rules_and_original(self):
         original = copy.deepcopy(self.document)
