@@ -54,7 +54,9 @@ private:
     Display _display;
 #endif
     OLEDDisplay _oled;
+#if ENABLE_OLED
     OledCarousel _oledCarousel;
+#endif
     bool _oledReqPending;    // 本拍需向香橙派发送 oled_req
     uint16_t _oledReqId;     // 待发请求 id
     bool _oledFrameSeen;     // 当前请求是否已收到回帧（防止一请求多帧重复渲染）
