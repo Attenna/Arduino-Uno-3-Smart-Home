@@ -19,7 +19,8 @@ private:
     uint16_t _protocol;
     uint16_t _address;
     uint16_t _command;
-    unsigned long _lastDecode;
+    uint32_t _lastKey;          // (address<<16)|command，按键级防抖
+    unsigned long _lastDecode;  // 上次接受该键的时间
 };
 
 #endif

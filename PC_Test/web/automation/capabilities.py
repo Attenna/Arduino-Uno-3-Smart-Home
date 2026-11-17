@@ -219,8 +219,9 @@ ACTION_DEVICES = {
         "url": {"label": "URL（默认只放行本机与内网）", "maxlen": 500},
         "text": {"label": "POST 内容（可含 {temperature} 等占位符；填 JSON 即按 JSON 发）",
                  "maxlen": 2048}}},
-    # 红外发射（B 板 D12，NEC 38kHz）。code 为十进制 32 位码；
-    # 也可给 address+command，由 hardware.py 的 helper 换算（NEC 约定见该处注释）。
+    # 红外发射（B 板 D12，NEC 38kHz）。推荐给 address+command，由 MCP 的
+    # nec_code() 换算；code 是十进制 32 位线上码，B 板 bit31 先发，每字节须已按位
+    # 反转（例：address=0、command=0x45 → 0x00FFA25D = 16753245）。
     # 注意：本系统不支持红外自学习/回环转发，B 板发出的码会被 A 板接收头收到，
     # 引擎有「自发射回声抑制」兜底，但同码的收发规则仍应避免同时存在。
     "ir": {"label": "红外发射", "params": {

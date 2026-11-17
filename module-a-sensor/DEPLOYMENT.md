@@ -3,7 +3,7 @@
 > 面向：在 **Linux 主机（PC 或 Orange Pi）** 上编译烧录 Module A 固件、安装接线、调试、扩展新传感器。
 > 基础信息（用途/引脚/协议）见 [README.md](README.md) 与 [docs/serial-protocol.md](../docs/serial-protocol.md)。
 
-**功能一句话**：Module A 是一块 Arduino Uno，当前固件 `V2.2` 带 9 类现役传感器（含矩阵键盘）与 A0 的 8 颗 NeoPixel 灯带输出，只采集、上报（`data` 周期 + `event` 事件）并按命令驱动灯带，不做业务判断。超声波、土壤湿度已于 2026-09 正式版裁剪。
+**功能一句话**：Module A 是一块 Arduino Uno，当前固件 `V2.3` 带 9 类现役传感器（含矩阵键盘）与 A0 的 8 颗 NeoPixel 灯带输出，只采集、上报（`data` 周期 + `event` 事件）并按命令驱动灯带，不做业务判断。超声波、土壤湿度已于 2026-09 正式版裁剪。
 
 ---
 
@@ -60,7 +60,7 @@ pio device monitor --port /dev/ttyUSB0 --baud 115200
 烧录后串口应立即输出一行就绪 JSON：
 
 ```json
-{"module":"sensor","type":"ready","board":"MODULE_A","role":"SENSOR_NODE","version":"V2.2"}
+{"module":"sensor","type":"ready","board":"MODULE_A","role":"SENSOR_NODE","version":"V2.3"}
 ```
 
 随后每 1 秒输出一条 `{"type":"data","data":{...}}` 周期数据（默认不含 `distance`/`soil_*`）。在监视器手动输入 `REPORT` 可立即触发一次上报。
