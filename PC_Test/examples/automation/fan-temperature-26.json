@@ -1,0 +1,32 @@
+{
+  "rules": [
+    {
+      "id": "temp26on",
+      "name": "温控风扇：高于26°C开启",
+      "enabled": true,
+      "trigger": {"kind": "interval", "seconds": 2},
+      "match": "all",
+      "conditions": [
+        {"sensor": "sensor_fresh", "op": "==", "value": true},
+        {"sensor": "temperature", "op": ">", "value": 26}
+      ],
+      "actions": [{"device": "fan", "op": "on", "speed": 100}],
+      "else_actions": [],
+      "cooldown": 0
+    },
+    {
+      "id": "temp26off",
+      "name": "温控风扇：不高于26°C关闭",
+      "enabled": true,
+      "trigger": {"kind": "interval", "seconds": 2},
+      "match": "all",
+      "conditions": [
+        {"sensor": "sensor_fresh", "op": "==", "value": true},
+        {"sensor": "temperature", "op": "<=", "value": 26}
+      ],
+      "actions": [{"device": "fan", "op": "off", "speed": 0}],
+      "else_actions": [],
+      "cooldown": 0
+    }
+  ]
+}

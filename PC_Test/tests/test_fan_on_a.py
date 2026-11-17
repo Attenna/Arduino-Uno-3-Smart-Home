@@ -64,16 +64,16 @@ class FanReadbackTests(unittest.TestCase):
         self.assertEqual(state["fan"], 255)
         self.assertEqual(state["door"], "closed")
 
-    def test_old_a_firmware_keeps_b_board_value(self):
+    def test_missing_a_fan_does_not_fall_back_to_disconnected_b(self):
         home = self._controller(None)
         home._snapshot = {"timestamp": 1}
         state = json.loads(home.output_state())["state"]
-        self.assertEqual(state["fan"], 0)
+        self.assertNotIn("fan", state)
 
     def test_stale_a_snapshot_is_not_used(self):
         home = self._controller(1)
         home._snapshot_ts = time.time() - 60
-        self.assertEqual(json.loads(home.output_state())["state"]["fan"], 0)
+        self.assertNotIn("fan", json.loads(home.output_state())["state"])
 
 
 if __name__ == "__main__":

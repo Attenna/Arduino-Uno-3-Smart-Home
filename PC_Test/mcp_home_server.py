@@ -935,6 +935,9 @@ class HomeController:
         """
         now = time.time()
         state = dict(self._b_last_state)
+        # This deployment routes fan commands to A. Missing/stale A data must
+        # never resurrect the disconnected B fan channel as a zero readback.
+        state.pop("fan", None)
         with self._snapshot_lock:
             a_snap = dict(self._snapshot)
             a_ts = self._snapshot_ts
