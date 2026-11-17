@@ -129,6 +129,26 @@ def encode_a_light_command(cmd: dict, request_id: int) -> bytes:
     return packet
 
 
+def encode_a_fan_command(cmd: dict, request_id: int) -> bytes:
+    """Encode a fan on/off command for Module A (A1 drives INA, INB tied to GND)."""
+    action = str(cmd.get("action") or "").lower()
+    if action in ("off", "stop"):
+        on = 0
+    elif action in ("on", "full"):
+        on = 1
+    elif action == "set_speed":
+        try:
+            on = 1 if int(cmd.get("value", 0) or 0) > 0 else 0
+        except (TypeError, ValueError):
+            raise ValueError("A-board fan set_speed requires a numeric value")
+    else:
+        raise ValueError(f"unsupported A-board fan action: {action}")
+    packet = f"F,{on},{request_id}\n".encode("ascii")
+    if len(packet) >= 64:
+        raise ValueError("A-board fan command exceeds serial RX buffer")
+    return packet
+
+
 # ==================== 智能家居控制器（持有串口）====================
 
 # A 板读线程自愈参数
@@ -178,6 +198,7 @@ class HomeController:
         self._b_lock = threading.Lock()
         self._snapshot_lock = threading.Lock()
         self._snapshot: dict = {}
+        self._snapshot_ts = 0.0       # A 板最后一帧数据到达的墙钟时刻（风扇回读新鲜度）
         self._events: deque = deque(maxlen=50)
         self._ready: dict = {}
         self._ac_lock = threading.Lock()
@@ -342,6 +363,7 @@ class HomeController:
                     with self._snapshot_lock:
                         self._snapshot = msg.get("data", {})
                         self._snapshot["timestamp"] = msg.get("timestamp")
+                        self._snapshot_ts = time.time()
                 elif mtype == "event":
                     ev_name = msg.get("event")
                     with self._snapshot_lock:
@@ -405,9 +427,11 @@ class HomeController:
 
     # ── B 板发命令 + 收响应 ──
     def _send_a(self, cmd: dict) -> str:
-        """向 Module A 下发灯带命令，并等待 A 读线程按请求 id 交付响应。"""
+        """向 Module A 下发灯带/风扇命令，并等待 A 读线程按请求 id 交付响应。"""
         if self.ser_a is None:
-            return "error: Module A 未连接，无法执行灯光操作"
+            return "error: Module A 未连接，无法执行硬件操作"
+        encoder = (encode_a_fan_command if cmd.get("cmd") == "fan"
+                   else encode_a_light_command)
         with self._a_cmd_lock:
             self._a_next_id = (self._a_next_id + 1) & 0x7FFFFFFF
             request_id = self._a_next_id
@@ -416,7 +440,7 @@ class HomeController:
                 self._a_resp = None
                 self._a_resp_event.clear()
             try:
-                self.ser_a.write(encode_a_light_command(cmd, request_id))
+                self.ser_a.write(encoder(cmd, request_id))
                 self.ser_a.flush()
             except Exception as e:
                 return f"error: A 板写入失败: {e}"
@@ -426,7 +450,7 @@ class HomeController:
                 response = self._a_resp or {}
                 self._a_waiter_id = -1
             if response.get("result") != "ok":
-                return "error: A 板拒绝灯光命令"
+                return "error: A 板拒绝命令"
             return "ok"
 
     def _send_b(self, cmd: dict, allow_reopen: bool = True,
@@ -902,17 +926,34 @@ class HomeController:
         }, ensure_ascii=False)
 
     def output_state(self) -> str:
-        """B 板（执行器）硬件回读快照：来自 state 帧，以及 V2.9 起命令响应/就绪帧
-        自带的 state 快照（后者让回读在每条命令后都立即刷新一遍）。
+        """执行器硬件回读快照：门/窗/灯/蜂鸣器来自 B 板 state 帧；风扇 2026-11
+        迁到 A 板 A1，这里用 A 板数据帧里的 ``fan``（0/1）覆盖，避免继续拿 B 板
+        已断开的 D7/D8 当风扇真值。
 
-        与「命令下发值」不同，这是 B 板自己的实际电平。用它对比指令值，就能暴露
-        「面板显示 0% 而风扇在转」这类静默失效（以前 B 板不上报，根本看不出来）。
+        与「命令下发值」不同，这是板子自己的实际电平。用它对比指令值，就能暴露
+        「面板显示 0% 而风扇在转」这类静默失效。
         """
         now = time.time()
+        state = dict(self._b_last_state)
+        # This deployment routes fan commands to A. Missing/stale A data must
+        # never resurrect the disconnected B fan channel as a zero readback.
+        state.pop("fan", None)
+        with self._snapshot_lock:
+            a_snap = dict(self._snapshot)
+            a_ts = self._snapshot_ts
+        fan_age = round(now - a_ts, 1) if a_ts else None
+        # 只用新鲜的 A 板数据覆盖：A 离线/断流时保持旧回读，不把 B 板断开的
+        # D7/D8 当成风扇真值，也不把陈旧的 A 值当成当前状态。
+        if fan_age is not None and fan_age <= 5 and "fan" in a_snap:
+            try:
+                state["fan"] = 255 if int(a_snap["fan"]) else 0
+            except (TypeError, ValueError):
+                pass
         return json.dumps({
-            "state": dict(self._b_last_state),
+            "state": state,
             "age_s": (round(now - self._b_last_state_ts, 1)
                       if self._b_last_state_ts else None),
+            "fan_age_s": fan_age,
             "last_cmd": self._b_last_cmd,
         }, ensure_ascii=False)
 
@@ -987,12 +1028,13 @@ class HomeController:
         return self._send_b({"cmd": "window", "action": action})
 
     def handle_fan(self, action, value=None) -> str:
+        # 风扇 2026-11 迁到 A 板 A1（INA 单线，INB 接 GND）；不再走 B 板。
         cmd = {"cmd": "fan", "action": action}
         if action == "set_speed":
             if value is None:
                 return "error: set_speed 需要 value(0~255)"
             cmd["value"] = value
-        return self._send_b(cmd)
+        return self._send_a(cmd)
 
     def handle_buzzer(self, action, count=None, on_ms=None, off_ms=None) -> str:
         cmd = {"cmd": "buzzer", "action": action}
@@ -1223,7 +1265,7 @@ async def get_serial_health() -> str:
 
 @mcp.tool()
 async def get_output_state() -> str:
-    """查询 B 板（执行器）硬件回读状态：门/窗/风扇/灯/蜂鸣器的实际电平 + 观测时刻（只读）。"""
+    """查询执行器硬件回读：门/窗/灯/蜂鸣器取自 B 板，风扇取自 A 板 A1（只读）。"""
     _audit("get_output_state")
     return await asyncio.to_thread(HOME.output_state)
 

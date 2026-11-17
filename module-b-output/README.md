@@ -49,7 +49,7 @@ Module B 是一块 Arduino Uno，负责执行硬件动作并驱动显示设备�
 |------|------|
 | Arduino Uno | 1 |
 | SG90 舵机 | 2 |
-| 直流风扇 + 驱动（L298N/TB6612） | 1 |
+| ~~直流风扇 + 驱动（L298N/TB6612）~~ | 0（2026-11 已迁到 A 板 A1，B 板 D7/D8 不再接风扇） |
 | NeoPixel 灯带（8 颗） | 1（数据线接 **A 板 A0**，`light` 命令由 A 板执行） |
 | 有源/无源蜂鸣器 | 1 |
 | SH1106 OLED 128×64（SPI 4 线） | 1 |
@@ -66,8 +66,8 @@ Module B 是一块 Arduino Uno，负责执行硬件动作并驱动显示设备�
 | D4 | NeoPixel 灯带数据线（B 板保留驱动；灯带实际接 **A 板 A0**，`light` 命令由 A 板执行） |
 | D5 | HC-SR04 Echo（输入） |
 | D6 | HC-SR04 Trig（输出） |
-| D7 | 风扇 INB（方向） |
-| D8 | 风扇 INA（开关控制） |
+| D7 | ~~风扇 INB~~（2026-11 风扇迁到 A 板 A1，此脚不再接线；固件保留驱动） |
+| D8 | ~~风扇 INA~~（同上，不再接线） |
 | D9 | 蜂鸣器 |
 | D10 | OLED CS |
 | D11 | OLED SDA（=SPI MOSI） |
@@ -109,9 +109,9 @@ PlatformIO 已在 [platformio.ini](platformio.ini) 中声明。
 |-------|----------|---------|------|
 | `door` | `open` / `close` | - | 门舵机 90° / 0° |
 | `window` | `open` / `close` / `normal` | - | 窗舵机 120° / 0° / 45° |
-| `fan` | `set_speed` | `value` 0~255 | 调速（D8 非 PWM，退化为开关：0=停，>0=全速） |
-| `fan` | `on` / `full` | - | 全速 |
-| `fan` | `off` / `stop` | - | 停止 |
+| `fan` | `set_speed` | `value` 0~255 | **已迁到 A 板**；B 固件保留命令但 D7/D8 不再接线，网关的 `fan` 已路由到 A |
+| `fan` | `on` / `full` | - | 同上（保留兼容） |
+| `fan` | `off` / `stop` | - | 同上（保留兼容） |
 | `light` | `white` | `value` 0~255 | 白光亮度 |
 | `light` | `red` / `green` / `blue` / `yellow` / `purple` / `cyan` | - | 预设颜色 |
 | `light` | `rgb` | `r`,`g`,`b` | 自定义颜色 |

@@ -12,12 +12,17 @@
 #include "core/SensorManager.h"
 #include "Protocol.h"
 #include "outputs/Light.h"
+#include "outputs/Fan.h"
 
 SensorManager sensors;
 LightOutput light;
+FanOutput fan;
 unsigned long lastReport = 0;
 
 void setup() {
+    // 风扇已迁到 A1：先于串口等待/传感器初始化锁成"停"，避免上电或 DTR 复位
+    // 期间引脚高阻、驱动板输入悬空导致风扇自己转。
+    fan.begin();
     Protocol::init();
     sensors.begin();
     light.begin();
@@ -40,7 +45,7 @@ void loop() {
     unsigned long now = millis();
     if (now - lastReport >= Protocol::reportInterval()) {
         lastReport = now;
-        Protocol::sendReport(sensors);
+        Protocol::sendReport(sensors, fan);
     }
 
     // 3. 事件推送（边沿触发，即时上报）
@@ -49,6 +54,6 @@ void loop() {
         Protocol::sendEvent(ev);
     }
 
-    // 4. 可选下行控制命令
-    Protocol::handleInput(sensors, light);
+    // 4. 可选下行控制命令（灯带 / 风扇）
+    Protocol::handleInput(sensors, light, fan);
 }

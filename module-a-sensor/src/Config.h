@@ -41,6 +41,15 @@
 #define US_MIN_CM           2
 #define US_MAX_CM           400
 
+// ---- 风扇（2026-11 从 B 板迁到 A1；INB 在驱动端接 GND，单线开关）----
+// 用户实际接线：A1(D15) → 驱动板 INA；INB → GND；驱动板 GND 与 A 板共地；
+// 电机电源独立 5V，不接 A 板 5V。A1 原为超声波 Echo，ENABLE_ULTRASONIC=0 后空闲。
+#define FAN_PIN             A1      // A1(D15) → 驱动板 INA
+#define FAN_ACTIVE_HIGH     1       // 1=高电平转，0=低电平转
+#if ENABLE_ULTRASONIC && (FAN_PIN == US_ECHO_PIN)
+#error "FAN_PIN 与 US_ECHO_PIN 共用 A1：请关闭 ENABLE_ULTRASONIC 或改风扇引脚"
+#endif
+
 // ---- TTP223 触摸 ----
 #define TOUCH_PIN           6
 
@@ -98,6 +107,6 @@
 // ---- 设备标识 ----
 #define BOARD_TYPE          "MODULE_A"
 #define BOARD_ROLE          "SENSOR_NODE"
-#define FW_VERSION          "V2.2"  // V2.2：A0 接管 8 颗 NeoPixel 灯带
+#define FW_VERSION          "V2.3"  // V2.3：A1 接管风扇单线开关（INB 接 GND，电机独立供电）；V2.2：A0 接管 8 颗 NeoPixel 灯带
 
 #endif // CONFIG_A_H

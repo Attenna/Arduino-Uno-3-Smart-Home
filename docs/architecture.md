@@ -75,7 +75,7 @@
 
 **关键设计：串口归属唯一，且串口在 web**。A/B 串口同一时刻只能一个进程占用，因此：
 
-- **串口归 web 容器**：`mcp_home_server.py` 作为 web 的 MCP stdio 子进程独占串口，暴露 14 个工具。**工具到板的归属**：`light` 路由到 **Module A**（A0 驱动 8 颗 NeoPixel），其余执行器/显示工具（`door`/`window`/`fan`/`buzzer`/`oled`/`ir`/`ac`）与 `get_distance`/`self_test` 路由到 **Module B**，只读诊断工具（`get_sensor_status`/`get_serial_health`/`get_output_state`）分别读 A/B 板。web 对外提供两个硬件端点：
+- **串口归 web 容器**：`mcp_home_server.py` 作为 web 的 MCP stdio 子进程独占串口，暴露 14 个工具。**工具到板的归属**：`light` 与 `fan` 路由到 **Module A**（A0 驱动 8 颗 NeoPixel，A1 单线驱动风扇），其余执行器/显示工具（`door`/`window`/`buzzer`/`oled`/`ir`/`ac`）与 `get_distance`/`self_test` 路由到 **Module B**，只读诊断工具（`get_sensor_status`/`get_serial_health`/`get_output_state`）分别读 A/B 板（`get_output_state` 的 `fan` 取自 A 板数据帧）。web 对外提供两个硬件端点：
   - `GET /api/hardware/tools` → 以 OpenAI function schema 返回工具清单；
   - `POST /api/hardware/tool`（`{"name","arguments","source","timeout"}`）→ 下发到板子后做**与面板动作完全一致的记账**（更新 SQLite 状态、写历史、发 `manual_control` 事件让全屋切手动）；桥未就绪时 503；
 - **voice 容器不碰串口**：纯 HTTP 客户端。启动时从 `GET /api/hardware/tools` 取工具清单喂给 LLM，工具调用一律 `POST http://web:5000/api/hardware/tool`（带 `source=voice`）。执行与记账都在 web，语音与面板天然等价（同一状态、同一历史、同一「全屋切手动」事件），无需任何回传；
@@ -108,7 +108,7 @@ Protocol (JSON) ──────────────▶ USB Serial ──�
 
 ## 5. Module B（Output Node）内部
 
-原则：**只负责"改变世界"**。固件 `V2.11`，现役执行器/显示设备 6 类（门/窗舵机、风扇、蜂鸣器、OLED、红外，以及 B 板保留的 NeoPixel 驱动）；**灯带实际由 A 板 A0 驱动**，`light` 命令经网关路由到 A 板。另提供 B 板 HC-SR04 测距输入（`get_distance`）。TM1637 已裁剪。
+原则：**只负责"改变世界"**。B 板固件 `V2.15`，现役执行器/显示设备 5 类（门/窗舵机、蜂鸣器、OLED、红外，以及保留的 NeoPixel/风扇驱动）；**灯带实际由 A 板 A0 驱动、风扇由 A 板 A1 驱动**，`light`/`fan` 命令经网关路由到 A 板。另提供 B 板 HC-SR04 测距输入（`get_distance`）。TM1637 已裁剪。
 
 ```text
 USB Serial
