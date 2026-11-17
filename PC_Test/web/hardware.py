@@ -33,6 +33,11 @@ logger = logging.getLogger(__name__)
 
 # 钩子通道（见 McpHardwareBridge.add_listener）
 HOOK_KINDS = ("snapshot", "event", "ack", "distance")
+# 只读、纯内存的 MCP 工具：不与执行器命令共用串口，必须允许并行轮询。
+# 若把 get_sensor_status 也排进执行器命令锁，一次 B 板超时就会把刷卡事件
+# 挡在 recent_events 里，直到命令超时 / 重试结束（实测尾延迟 3.35s）。
+READ_ONLY_TOOLS = frozenset({"get_sensor_status", "get_serial_health",
+                             "get_output_state"})
 # 收到成功 ACK 即视为「输出板在线」并广播 ack 钩子的执行器工具
 ACK_TRACKED_TOOLS = ("door", "window", "light", "fan", "buzzer", "ir", "ac")
 
@@ -149,7 +154,15 @@ class McpHardwareBridge:
         self._task: asyncio.Task | None = None
         self._stopping = False
         self._session = None
+        # 执行器命令锁：串行化会写串口的工具，避免门/窗/灯同时下发。
         self._call_lock: asyncio.Lock | None = None
+        # 只读 MCP 工具锁：get_sensor_status 等只读内存，不能排在 B 板慢命令后面，
+        # 否则刷卡/按键事件要等执行器超时后才被轮询到（实测有 3.35s 尾延迟）。
+        self._read_lock: asyncio.Lock | None = None
+        # 待发执行器命令计数：_distance_loop 见到它就让路，避免新一轮测距
+        # 继续抢占 B 板命令锁。
+        self._pending_lock = threading.Lock()
+        self._pending_commands = 0
         self._snapshot_lock = threading.Lock()
         self._online = False
         self._last_error = ""
@@ -257,6 +270,7 @@ class McpHardwareBridge:
                         await session.initialize()
                         self._set_online(True)
                         self._call_lock = asyncio.Lock()
+                        self._read_lock = asyncio.Lock()
                         self._session = session
                         reconnect_round = 0
                         tools = await session.list_tools()
@@ -287,6 +301,8 @@ class McpHardwareBridge:
             finally:
                 self._set_online(False)
                 self._session = None
+                self._call_lock = None
+                self._read_lock = None
                 self.tool_schemas = []
             if wait is None:
                 # _poll_loop 正常返回（多为收到停止信号），不额外等待
@@ -304,6 +320,11 @@ class McpHardwareBridge:
     async def _distance_loop(self, session):
         try:
             while not self._stopping:
+                # 执行器命令排队时让路：测距是 0.5s 一次的只读轮询，
+                # 不能抢在开门/关灯前面占用 B 板命令锁。
+                if self.command_pending():
+                    await asyncio.sleep(0.05)
+                    continue
                 payload = {}
                 if any(t["name"] == "get_distance" for t in self.tool_schemas):
                     try:
@@ -611,8 +632,22 @@ class McpHardwareBridge:
 
     # ==================== 同步调用 API（供 Flask 路由） ====================
 
+    def _mark_command_pending(self, delta: int) -> None:
+        """登记待发执行器命令数；_distance_loop 据此让路。"""
+        with self._pending_lock:
+            self._pending_commands = max(0, self._pending_commands + delta)
+
+    def command_pending(self) -> bool:
+        with self._pending_lock:
+            return self._pending_commands > 0
+
     async def _call(self, session, name: str, args: dict, state=None) -> str:
-        async with self._call_lock:
+        # 只读工具只碰内存，走独立的读锁：B 板命令再慢也不能把 A 板事件
+        # 轮询堵在 _call_lock 后面（刷卡事件会滞留在 MCP 的 recent_events）。
+        lock = self._read_lock if name in READ_ONLY_TOOLS else self._call_lock
+        if lock is None:
+            raise RuntimeError("MCP 尚未连接")
+        async with lock:
             if state is not None:
                 if time.monotonic() >= state["deadline"]:
                     raise TimeoutError("Command expired before dispatch")
@@ -636,9 +671,11 @@ class McpHardwareBridge:
                   timeout: float = 10.0) -> tuple[bool, str]:
         """线程安全地调用 MCP 工具，返回 (是否成功, 结果文本)。
 
-        外部系统（语音助手等）经 /api/hardware/tool 过来的调用最终也走这里，
-        由本桥的 asyncio.Lock 串行化——所有设备共用 USB 串口，并发请求会在
-        A/B 板侧交错导致 ACK 超时与状态错乱（实测门连点触发雪崩）。
+        外部系统（语音助手等）经 /api/hardware/tool 过来的调用最终也走这里。
+        执行器命令仍由 _call_lock 串行化——所有设备共用 USB 串口，并发请求会在
+        A/B 板侧交错导致 ACK 超时与状态错乱（实测门连点触发雪崩）；只读内存的
+        get_sensor_status / get_serial_health / get_output_state 走独立读锁，
+        不排在慢执行器命令后面。
         """
         if not self.online or self._session is None or self._loop is None:
             return False, f"硬件服务离线（MCP 未连接：{self.last_error or '串口未连接'}）"
@@ -648,28 +685,35 @@ class McpHardwareBridge:
                 return False, "硬件超时参数必须在 0 到 30 秒之间"
         except (TypeError, ValueError):
             return False, "无效超时参数"
-        state = {"id": uuid.uuid4().hex, "sent": False,
-                 "deadline": time.monotonic() + timeout}
+        is_read = name in READ_ONLY_TOOLS
+        if not is_read:
+            self._mark_command_pending(1)
         try:
-            future = asyncio.run_coroutine_threadsafe(
-                self._call(self._session, name, args or {}, state), self._loop)
-            text = future.result(timeout=timeout)
-        except TimeoutError:
-            # Keep an in-flight call serialized until its actual result arrives.
-            # Cancelling a sent command cannot undo an actuator movement.
-            if not state["sent"]:
-                future.cancel()
-                outcome = "expired_not_sent"
-            else:
-                outcome = "unknown_sent"
-            logger.warning("command=%s tool=%s outcome=%s", state["id"], name, outcome)
-            return False, f"{outcome}: 命令 {state['id']} 超时；请查询设备状态后再操作"
-        except Exception as e:
-            return False, f"硬件调用失败: {e}"
-        if _looks_like_error(text):
-            return False, text
-        # B 板不自报状态：任何执行器工具成功 ACK 都视为输出板在线
-        return True, text
+            state = {"id": uuid.uuid4().hex, "sent": False,
+                     "deadline": time.monotonic() + timeout}
+            try:
+                future = asyncio.run_coroutine_threadsafe(
+                    self._call(self._session, name, args or {}, state), self._loop)
+                text = future.result(timeout=timeout)
+            except TimeoutError:
+                # Keep an in-flight call serialized until its actual result arrives.
+                # Cancelling a sent command cannot undo an actuator movement.
+                if not state["sent"]:
+                    future.cancel()
+                    outcome = "expired_not_sent"
+                else:
+                    outcome = "unknown_sent"
+                logger.warning("command=%s tool=%s outcome=%s", state["id"], name, outcome)
+                return False, f"{outcome}: 命令 {state['id']} 超时；请查询设备状态后再操作"
+            except Exception as e:
+                return False, f"硬件调用失败: {e}"
+            if _looks_like_error(text):
+                return False, text
+            # B 板不自报状态：任何执行器工具成功 ACK 都视为输出板在线
+            return True, text
+        finally:
+            if not is_read:
+                self._mark_command_pending(-1)
 
     # ── 设备语义映射：Web 百分比/状态 → B 板 MCP 工具参数 ──
 
