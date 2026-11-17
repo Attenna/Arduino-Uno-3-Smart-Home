@@ -27,14 +27,20 @@ bool IRSensor::read() {
     uint16_t addr  = IrReceiver.decodedIRData.address;
     uint16_t cmd   = IrReceiver.decodedIRData.command;
     uint8_t flags = IrReceiver.decodedIRData.flags;
+    uint16_t bits = IrReceiver.decodedIRData.numberOfBits;
     IrReceiver.resume();
 
-    // 无效信号不生成按键事件；长按重复帧不应反复切换灯/门等执行器。
-    if (proto == UNKNOWN || (flags & (IRDATA_FLAGS_WAS_OVERFLOW |
-            IRDATA_FLAGS_IS_REPEAT | IRDATA_FLAGS_IS_AUTO_REPEAT))) return false;
+    // 只接受可识别、非重复的短帧：
+    //  - UNKNOWN/溢出是 decodeHash 对噪声和空调长帧的兜底，并不代表按了遥控器；
+    //  - NEC 长按每 110ms 发一帧重复码，按新按键处理会让灯/风扇等反复切换；
+    //  - >32 bit 基本是空调状态帧，本系统键位表只定义 NEC 遥控。
+    bool repeat = (flags & (IRDATA_FLAGS_IS_REPEAT | IRDATA_FLAGS_IS_AUTO_REPEAT)) != 0;
+    bool overflow = (flags & IRDATA_FLAGS_WAS_OVERFLOW) != 0;
+    if (proto == UNKNOWN || overflow || bits > 32 || repeat) return false;
 
-    unsigned long now = millis();
+    // 按键级防抖：只压同一 (address, command) 的连发，1→2 快速连按不会丢第二个键。
     uint32_t key = ((uint32_t)addr << 16) | cmd;
+    unsigned long now = millis();
     if (key == _lastKey && now - _lastDecode < DEBOUNCE_IR_MS) return false;
     _lastKey = key;
     _lastDecode = now;

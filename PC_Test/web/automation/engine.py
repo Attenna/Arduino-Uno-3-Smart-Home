@@ -38,6 +38,7 @@ from .capabilities import CONDITION_SOURCES, EVENT_TRIGGERS
 from .default_rules import DEFAULT_RULES, PRESET_LEGACY_CONTENT, PRESETS_VERSION
 from ..doorway import DoorwayDistance
 from .global_state import GlobalStateStore, ID_PREFIX
+from .light_feedback import LightFeedbackGuard
 from .oled_carousel import (DEFAULT_PAGES, PAGES_VERSION, OledCarousel,
                             OLED_MIN_INTERVAL, is_legacy_default_pages)
 from .schema import validate_rule, validate_rules
@@ -60,6 +61,19 @@ def _is_state_source(sensor) -> bool:
     求值」都要把它与传感器源区别对待（见 on_snapshot / _tick_loop）。
     """
     return str(sensor or "").startswith(ID_PREFIX)
+
+
+def _reverse_bits8(value: int) -> int:
+    """反转一个字节的 8 个 bit（NEC 线上码与 IRremote 原始码的换算）。
+
+    与 ``mcp_home_server._reverse_bits8`` 保持同一算法：两处必须一致，否则
+    「红外发射」登记的回声键与 A 板上报的 address/command 对不上。
+    """
+    value &= 0xFF
+    value = ((value & 0xF0) >> 4) | ((value & 0x0F) << 4)
+    value = ((value & 0xCC) >> 2) | ((value & 0x33) << 2)
+    value = ((value & 0xAA) >> 1) | ((value & 0x55) << 1)
+    return value & 0xFF
 
 
 # 关键安全动作（关门/关窗/蜂鸣报警）失败后的有界重试：串口偶发忙/超时不应该让
@@ -98,6 +112,7 @@ class AutomationEngine:
         # 光照明暗判定（带回差）：raw≥730 判暗、raw≤670 判亮，区间内维持上一状态。
         # light_dark 作为布尔源供积木引用，回差避免灯光回照导致的自激抖动。
         self._light_dark: bool | None = None
+        self._light_feedback = LightFeedbackGuard()
         self.doorway = DoorwayDistance()
         self.capture_photo = None
         # 事件队列（带序号），规则按各自 last_event_id 消费
@@ -667,7 +682,10 @@ class AutomationEngine:
         """从红外动作里解出 (address, command)，用于回声比对。
 
         A 板上报的 ir 事件只带 protocol/address/command（没有 32 位整码），
-        所以抑制窗口必须按 (address, command) 记；只给 code 时按 NEC 帧序反解。
+        所以抑制窗口必须按 (address, command) 记。只给 code 时：code 是 B 板
+        线上码（每字节 MSB-first 发出），要还原成接收端解码值，必须把
+        addr/cmd 所在字节再按位反转一次；只做位移会把 0x00FFA25D 误记成
+        cmd=0xA2，导致自发射回声抑制失效并可能形成「发码→收码→再发码」自激。
         """
         addr, cmd = action.get("address"), action.get("command")
         if addr is None or cmd is None:
@@ -675,8 +693,8 @@ class AutomationEngine:
             if code is None:
                 return None
             code = int(code) & 0xFFFFFFFF
-            addr = (code >> 24) & 0xFF
-            cmd = (code >> 8) & 0xFF
+            addr = _reverse_bits8((code >> 24) & 0xFF)
+            cmd = _reverse_bits8((code >> 8) & 0xFF)
         return int(addr) & 0xFF, int(cmd) & 0xFF
 
     def _is_ir_echo(self, event: dict) -> bool:
@@ -903,10 +921,16 @@ class AutomationEngine:
     def _context(self) -> dict:
         """传感器快照 + SQLite 中的执行器当前状态 + 全局状态（g: 变量）。"""
         ctx = dict(self._snapshot)
+        try:
+            light_status = self.db.get_current_status()
+        except Exception:
+            light_status = {}
         ctx["distance_cm"] = self.doorway.snapshot()["distance_cm"]
         ctx["sensor_fresh"] = bool(self._snapshot_ts and time.time() - self._snapshot_ts <= 10)
         if ctx["sensor_fresh"]:
-            self._track_light_dark(ctx.get("light"))
+            ambient = self._light_feedback.update(
+                ctx.get("light"), light_status, self._snapshot_ts)
+            self._track_light_dark(ambient)
             if self._light_dark is not None:
                 ctx["light_dark"] = self._light_dark
         else:
@@ -914,7 +938,7 @@ class AutomationEngine:
                         "motion", "touch", "rain", "smoke"):
                 ctx.pop(key, None)
         try:
-            status = self.db.get_current_status()
+            status = light_status
             for key in ("door_status", "window_status", "light_status",
                         "light_brightness", "fan_speed",
                         "sensor_online", "output_online"):

@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+import mcp_home_server as server
 from web.automation.engine import AutomationEngine
 
 
@@ -40,6 +41,42 @@ class RemoteBindingsTests(unittest.TestCase):
         with patch.object(self.engine, '_fire', side_effect=run):
             self.engine.on_event(dict(event='ir', address=0, command=command))
         return fired
+
+    @staticmethod
+    def decode_msb_first_nec_wire(code):
+        """Simulate B's bit31-first transmitter + a standard NEC LSB-first decoder."""
+        bits = [(code >> (31 - i)) & 1 for i in range(32)]
+
+        def byte_at(start):
+            return sum(bits[start + i] << i for i in range(8))
+
+        return byte_at(0), byte_at(8), byte_at(16), byte_at(24)
+
+    def test_nec_code_round_trips_through_msb_first_wire_format(self):
+        self.assertEqual(server.nec_code(0x00, 0x45), 0x00FFA25D)
+        self.assertEqual(server.nec_code(0x00, 0x40), 16712445)
+        for address in (0x00, 0x12, 0xFF):
+            for command in (0x45, 0x46, 0x47, 0x44, 0x40, 0x07):
+                with self.subTest(address=hex(address), command=hex(command)):
+                    wire = server.nec_code(address, command)
+                    addr, inv_addr, got_cmd, inv_cmd = self.decode_msb_first_nec_wire(wire)
+                    self.assertEqual((addr, got_cmd), (address, command))
+                    self.assertEqual(inv_addr, (~addr) & 0xFF)
+                    self.assertEqual(inv_cmd, (~got_cmd) & 0xFF)
+                    self.assertEqual(self.engine._ir_key({"code": wire}), (address, command))
+
+    def test_custom_code_echo_is_suppressed(self):
+        self.engine._ir_echo_until[(0, 0x45)] = time.time() + 5
+        with patch.object(self.engine, '_fire') as fire:
+            self.engine.on_event(dict(event='ir', address=0, command=0x45))
+            fire.assert_not_called()
+
+    def test_gateway_sends_corrected_wire_code(self):
+        home = server.HomeController()
+        home._send_b = Mock(return_value="ok")
+        self.assertEqual(home.handle_ir(address=0, command=0x45), "ok")
+        home._send_b.assert_called_once_with(
+            {"cmd": "ir", "action": "send_nec", "code": 16753245})
 
     def test_four_keys_toggle_independently(self):
         for cmd, device, field, opened, closed in [

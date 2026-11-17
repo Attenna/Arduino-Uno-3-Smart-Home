@@ -56,7 +56,9 @@ void CommandDispatcher::begin() {
     _display.begin();
 #endif
     _oled.begin();
+#if ENABLE_OLED
     _oledCarousel.begin();
+#endif
 #if ENABLE_IR_TX
     _ir.begin();
 #endif
@@ -140,10 +142,12 @@ bool CommandDispatcher::_route(const Command& cmd) {
         if (strcmp(cmd.action, "clear") == 0)       { _display.clear(); return true; }
     }
 #endif
+#if ENABLE_OLED
     else if (strcmp(cmd.device, "oled") == 0) {
         if (strcmp(cmd.action, "show_text") == 0) { _oled.showText((byte)cmd.line, cmd.text); return true; }
         if (strcmp(cmd.action, "clear") == 0)    { _oled.clear(); return true; }
     }
+#endif
 #if ENABLE_IR_TX
     else if (strcmp(cmd.device, "ir") == 0) {
         if (strcmp(cmd.action, "send_nec") == 0) { _ir.sendNEC(cmd.code); return true; }
@@ -172,6 +176,7 @@ void CommandDispatcher::update() {
 
     // OLED 轮播：到期渲染当前页并索要下一拍数据。渲染仅每 8 分钟一次、毫秒级，
     // 远小于看门狗窗口；update() 内部只做一次 millis() 比较，不阻塞。
+#if ENABLE_OLED
     LocalState local;
     local.doorOpen = _door.isOpen();
     local.windowState = (uint8_t)_window.getState();
@@ -181,6 +186,7 @@ void CommandDispatcher::update() {
         _oledReqId = _oledCarousel.lastReqId();
         _oledFrameSeen = false;   // 新一轮请求：允许收下一帧
     }
+#endif
 }
 
 uint16_t CommandDispatcher::takeOledRequest() {
@@ -189,11 +195,17 @@ uint16_t CommandDispatcher::takeOledRequest() {
 }
 
 bool CommandDispatcher::applyOledData(uint16_t id, const OledData& data) {
+#if ENABLE_OLED
     // 只接受当前请求的第一帧回包，其余（陈旧/重复/畸形）静默丢弃
     if (_oledFrameSeen || id != _oledReqId) return false;
     _oledFrameSeen = true;
     _oledCarousel.applyData(data);
     return true;
+#else
+    (void)id;
+    (void)data;
+    return false;
+#endif
 }
 
 void CommandDispatcher::buildStatus(char* buf, size_t len) {

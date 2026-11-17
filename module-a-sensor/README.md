@@ -8,7 +8,7 @@
 
 ## 1. 模块用途
 
-Module A 是一块 Arduino Uno，负责环境感知、用户交互检测，以及灯带/风扇输出。**固件版本 `V2.4-IR`**（2026-11 风扇从 B 板迁到 A1），经 2026-09 正式版硬件裁剪：
+Module A 是一块 Arduino Uno，负责环境感知、用户交互检测，以及灯带/风扇输出。**固件版本 `V2.5-UNIFIED`**（2026-11 风扇从 B 板迁到 A1），经 2026-09 正式版硬件裁剪：
 
 **现役传感器（9 类）与输出**
 
@@ -111,7 +111,7 @@ PlatformIO 已在 [platformio.ini](platformio.ini) 中声明，无需手动安�
 
 ### 上行示例
 
-周期状态（`V2.4-IR`，无 distance/soil 字段；`fan` 为 1=转 / 0=停）：
+周期状态（`V2.5-UNIFIED`，无 distance/soil 字段；`fan` 为 1=转 / 0=停）：
 ```json
 {"module":"sensor","type":"data","timestamp":123456,"data":{"temperature":26.4,"humidity":61.0,"light":423,"smoke":false,"rain":false,"touch":false,"motion":false,"fan":0}}
 ```
@@ -170,7 +170,7 @@ F,<0|1>,<id>
 
 **输出（上电）：**
 ```
-{"module":"sensor","type":"ready","board":"MODULE_A","role":"SENSOR_NODE","version":"V2.4-IR"}
+{"module":"sensor","type":"ready","board":"MODULE_A","role":"SENSOR_NODE","version":"V2.5-UNIFIED"}
 ```
 
 **输入 `REPORT`，输出：**

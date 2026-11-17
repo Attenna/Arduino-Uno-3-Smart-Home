@@ -98,16 +98,8 @@ def readback_status(readback: dict) -> dict:
             out[column] = readback[rb_key]
     if readback.get("rb_fan_speed") is not None:
         out["fan_speed"] = int(readback["rb_fan_speed"])
-    if readback.get("rb_light_brightness") is not None:
-        level = int(readback["rb_light_brightness"])
-        # 注意：rb_light_brightness 是**缩放后的峰值电平百分比**，与命令亮度口径
-        # 只在峰值=255 时相等（暗色会偏低，#30）。这里只在对账（B 板复位）时调用，
-        # 而 `Config.h` 的 `LIGHT_BOOT_ON = 0`：复位后灯是灭的、level=0，写回
-        # 0/off 正确。若哪天把 `LIGHT_BOOT_ON` 打开，须改用
-        # `light_state.expected_readback_pct(light_brightness, light_state.from_status(...))`
-        # 折算，否则面板滑块会被写成峰值百分比（例如 100% → 39%）。
-        out["light_brightness"] = level
-        out["light_status"] = "on" if level > 0 else "off"
+    # The strip belongs to Module A. Module B's unused light channel must never
+    # rewrite its commanded state, including when old cached rb_* fields exist.
     return out
 
 
@@ -128,7 +120,7 @@ def normalize_output_state(state: dict) -> dict | None:
 
     return {
         "rb_fan_speed": _pct(state.get("fan"), 255),
-        "rb_light_brightness": _pct(state.get("light"), 255),
+        "rb_light_brightness": None,  # clear legacy Module B light readback
         "rb_door_status": state.get("door"),
         "rb_window_status": state.get("window"),
         "rb_buzzer_status": state.get("buzzer"),
