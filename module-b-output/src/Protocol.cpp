@@ -21,7 +21,9 @@ void Protocol::sendReady() {
     Serial.print(FW_VERSION);
     // 栈诊断（issue #105）：prv_hw = **上一次运行期**的栈高水位字节数（EEPROM 持久
     // 化，崩溃后仍在），boot = 启动序号。复位瞬间读这一帧就能判断崩掉那次栈用多深。
-    Serial.print(F("\",\"diag\":{\"prv_hw\":"));
+    Serial.print(F("\",\"oled_enabled\":"));
+    Serial.print(ENABLE_OLED ? F("true") : F("false"));
+    Serial.print(F(",\"diag\":{\"prv_hw\":"));
     Serial.print(RamDiag::prevStackHighWater());
     Serial.print(F(",\"boot\":"));
     Serial.print(RamDiag::bootCount());
