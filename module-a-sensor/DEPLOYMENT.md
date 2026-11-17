@@ -3,7 +3,7 @@
 > 面向：在 **Linux 主机（PC 或 Orange Pi）** 上编译烧录 Module A 固件、安装接线、调试、扩展新传感器。
 > 基础信息（用途/引脚/协议）见 [README.md](README.md) 与 [docs/serial-protocol.md](../docs/serial-protocol.md)。
 
-**功能一句话**：Module A 是一块 Arduino Uno，当前固件 `V2.3` 带 9 类现役传感器（含矩阵键盘）、A0 的 8 颗 NeoPixel 灯带和 A1 的风扇单线开关，采集/上报（`data` 周期 + `event` 事件）并按命令驱动灯带/风扇，不做业务判断。超声波、土壤湿度已于 2026-09 正式版裁剪。
+**功能一句话**：Module A 是一块 Arduino Uno，当前固件 `V2.4-IR` 带 9 类现役传感器（含矩阵键盘）、A0 的 8 颗 NeoPixel 灯带和 A1 的风扇单线开关，采集/上报（`data` 周期 + `event` 事件）并按命令驱动灯带/风扇，不做业务判断。超声波、土壤湿度已于 2026-09 正式版裁剪。
 
 ---
 
@@ -60,7 +60,7 @@ pio device monitor --port /dev/ttyUSB0 --baud 115200
 烧录后串口应立即输出一行就绪 JSON：
 
 ```json
-{"module":"sensor","type":"ready","board":"MODULE_A","role":"SENSOR_NODE","version":"V2.3"}
+{"module":"sensor","type":"ready","board":"MODULE_A","role":"SENSOR_NODE","version":"V2.4-IR"}
 ```
 
 随后每 1 秒输出一条 `{"type":"data","data":{...}}` 周期数据（默认不含 `distance`/`soil_*`）。在监视器手动输入 `REPORT` 可立即触发一次上报。
@@ -138,7 +138,7 @@ python3 -c "import serial,time; s=serial.Serial('/dev/ttyUSB0',115200); [print(s
 |------|------|
 | 无任何输出 | 波特率/串口选错；USB 线是否为数据线；`Permission denied` → dialout 组 |
 | `temperature: null` | DHT11 接线/上拉；需间隔 >2s |
-| 没有 `distance` / `soil_*` | `V2.3` 默认已裁剪，属预期；`fan` 字段应存在 |
+| 没有 `distance` / `soil_*` | `V2.4-IR` 默认已裁剪，属预期；`fan` 字段应存在 |
 | 键盘无事件 | 确认 D4 行/A4 列接线；按压需保持 >40ms 防抖，松开 120ms 后才接受下一次 |
 | RFID 无事件 | 供电须 3.3V；天线对准；卡片是否为 13.56MHz |
 | 反复输出 ready（重启） | 供电不足复位 → 换 USB 口或加独立 5V |

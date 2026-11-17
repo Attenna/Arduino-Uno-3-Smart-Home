@@ -3,7 +3,7 @@
 
 // IRremote 配置宏必须在库头文件之前定义
 #define IR_USE_AVR_TIMER1
-#define IR_SEND_PIN 0   // 本板只接收，禁用发送以节省资源
+#define IR_SEND_PIN 0   // 本板只接收，业务不得调用 IrSender；此宏本身不禁用发送
 #include <IRremote.hpp>
 
 void IRSensor::begin() {
