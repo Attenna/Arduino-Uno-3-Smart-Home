@@ -19,6 +19,7 @@ private:
     uint16_t _protocol;
     uint16_t _address;
     uint16_t _command;
+    uint32_t _lastKey;
     unsigned long _lastDecode;
 };
 

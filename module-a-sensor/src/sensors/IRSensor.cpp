@@ -6,29 +6,37 @@
 #define IR_SEND_PIN 0   // 本板只接收，禁用发送以节省资源
 #include <IRremote.hpp>
 
-static IRrecv _irrecv(IR_RECV_PIN);
-
 void IRSensor::begin() {
     _hasCode = false;
     _protocol = 0;
     _address = 0;
     _command = 0;
+    _lastKey = 0xFFFFFFFFUL;
     _lastDecode = 0;
-    _irrecv.enableIRIn();
+    // 与已验证的独立抓码器一致：在 setup 中显式设置实际接收脚，
+    // 不依赖全局构造函数留下的引脚/端口状态，也不启用 D13 反馈灯（RC522 SPI）。
+    IrReceiver.begin(IR_RECV_PIN, DISABLE_LED_FEEDBACK);
 }
 
 bool IRSensor::read() {
     if (_hasCode) return true;
-    if (!_irrecv.decode()) return false;
+    if (!IrReceiver.decode()) return false;
 
     // 先取解码结果再 resume
-    uint16_t proto = _irrecv.decodedIRData.protocol;
-    uint16_t addr  = _irrecv.decodedIRData.address;
-    uint16_t cmd   = _irrecv.decodedIRData.command;
-    _irrecv.resume();
+    uint16_t proto = IrReceiver.decodedIRData.protocol;
+    uint16_t addr  = IrReceiver.decodedIRData.address;
+    uint16_t cmd   = IrReceiver.decodedIRData.command;
+    uint8_t flags = IrReceiver.decodedIRData.flags;
+    IrReceiver.resume();
+
+    // 无效信号不生成按键事件；长按重复帧不应反复切换灯/门等执行器。
+    if (proto == UNKNOWN || (flags & (IRDATA_FLAGS_WAS_OVERFLOW |
+            IRDATA_FLAGS_IS_REPEAT | IRDATA_FLAGS_IS_AUTO_REPEAT))) return false;
 
     unsigned long now = millis();
-    if (now - _lastDecode < DEBOUNCE_IR_MS) return false; // 防连按
+    uint32_t key = ((uint32_t)addr << 16) | cmd;
+    if (key == _lastKey && now - _lastDecode < DEBOUNCE_IR_MS) return false;
+    _lastKey = key;
     _lastDecode = now;
 
     _protocol = proto;
