@@ -40,7 +40,7 @@ PC_Test/
 │   ├── config.py           #    路径常量 + web_config.yaml 装载
 │   ├── database.py         #    SQLite 持久层（仅真实硬件数据，含迁移/WAL/校验）
 │   ├── hardware.py         #    MCP 硬件桥（stdio 拉起 mcp_home_server 独占串口，轮询入库 + 健康度）
-│   ├── access_guard.py     #    门禁鉴权：白名单判定 + 8 秒去抖 + 拒绝原因 + 房卡录入会话（只广播，不开门）
+│   ├── access_guard.py     #    门禁鉴权：人脸白名单 + 刷卡即放行 + 8 秒去抖 + 拒绝原因 + 房卡录入会话（只广播，不开门）
 │   ├── face_watcher.py     #    门口识别哨兵：PIR 门控下取 /snapshot → 识别 → 交 access_guard
 │   ├── ha_client.py        #    可选 Home Assistant REST 客户端（硬件管理页）
 │   ├── voice_client.py     #    语音助手 HTTP 客户端（唤醒/文本指令/对话实况 SSE 代理，与硬件无关）
@@ -608,8 +608,9 @@ py -3.13 scripts/enroll_faces.py
 启用五点对齐后必须用上面的脚本重建 `embeddings.pkl`。库里记录预处理版本，旧的框裁剪
 向量不会和新对齐向量混用；门禁页显示的是 ArcFace `score`，不再显示 YOLO 检测置信度。
 
-- 鉴权只回答「这张脸/这张卡是谁」：命中白名单才广播 `access_granted`，
-  开不开门由积木规则决定（见 ② 节）；房卡同样要经过白名单，未登记的卡只会记一条拒绝。
+- 鉴权只回答「这张脸/这张卡是谁」：人脸命中白名单才广播 `access_granted`；刷卡只要读到
+  有效卡号就广播 `access_granted`（白名单只用来补全姓名，未登记/停用的卡照样放行）。
+  开不开门由积木规则决定（见 ② 节）。
 - **谁去取帧做识别**：`web/face_watcher.py` 的门口识别哨兵。摄像头服务只出流、模型只在
   web 进程里，两边过去都不主动取帧，所以「录进人脸也不会开门」。哨兵按
   `face.watcher.interval` 取 `<摄像头服务>/snapshot` 的一帧去检测+识别，结果交
@@ -624,7 +625,7 @@ py -3.13 scripts/enroll_faces.py
   数据来自 `GET /api/access/diagnostics`。
 - 一次录入最多处理 12 帧、单帧 ≤4MB，人脸太小（边长 <56px）的帧会丢弃并在结果里说明；
   每个身份最多用最新的 20 张照片算原型。
-- 「录入房卡」点开一个 45 秒的等待会话，这期间贴上的卡被录入流程取走（不当作一次鉴权）；
+- 「录入房卡」点开一个 45 秒的等待会话，这期间贴上的卡被录入流程取走（不当作一次鉴权，也不触发开门）；
 - 未识别照片存 `data/face/unauthorized/`；嵌入文件 `data/face/embeddings.pkl`。
 - 停用人员：凭证与照片都保留，只是不再认；删除人员会连注册照目录一起清掉，
   并把身份从嵌入库里摘出（同名 face_id 还有别人在用时不清目录，只解绑本人）。
@@ -669,16 +670,16 @@ py -3.13 start_all.py --no-camera                      # 不起摄像头
 - **语音助手不碰串口**：启动时 `GET /api/hardware/tools` 取工具清单，工具调用
   `POST /api/hardware/tool`（`source=voice`）——所以两者可以同时跑，且状态、历史、
   「全屋切手动」事件与面板点击**完全等价**，无需回传对账；
-- 「门禁通过自动开门」就在 Web 进程内闭环（`access_guard` 白名单鉴权 → 积木规则
-  `access_open_door` → 硬件桥），**不经 LLM、不发语音**——室外摄像头认出人（或 A 板
-  刷到登记的卡）后门直接开，室内不会播报。停掉那条规则就变成只鉴权不开门。
+- 「门禁通过自动开门」就在 Web 进程内闭环（`access_guard`：人脸白名单 / 刷卡直接放行 →
+  积木规则 `access_open_door` → 硬件桥），**不经 LLM、不发语音**——室外摄像头认出人（或
+  A 板刷到有效卡）后门直接开，室内不会播报。停掉那条规则就变成只鉴权不开门。
   需要语音播报/唤醒时走另一条独立配置：`voice.url`（环境变量 `SMART_HOME_VOICE_URL`，
   启动器注入 `http://127.0.0.1:8101`），它只管「说话」，不管「动手」。
 - 启动顺序：先 Web（网关就绪）→ 再语音助手 → 再摄像头；`--llm-mode local` 时最先起本地 Qwen。
 
 ```text
 摄像头(室外) ──MJPEG :8080──▶ Web(人脸 YOLO+ArcFace)
-A板 RC522 ──────串口──────────▶   │ 白名单鉴权 → 积木规则 access_open_door
+A板 RC522 ──────串口──────────▶   │ 人脸白名单 / 刷卡直接放行 → 积木规则 access_open_door
                                 ▼
 浏览器 ──:5000──▶ Web 硬件桥 ──MCP stdio──▶ mcp_home_server ──USB──▶ B板开门
                     ▲

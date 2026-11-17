@@ -2,6 +2,32 @@
 
 记录对系统行为 / 接口有影响的变更。新条目置于顶部。
 
+## 2026-11-17 · 修复：刷卡即开门，不再强制人脸/白名单（#132）
+
+分支：`fix/132-card-open`。
+
+### 现象与根因
+用户反馈刷卡进门无反应，怀疑系统要求人脸识别。真机 `automation_logs` 显示刷卡其实已触发
+`access_open_door`，但同一时段 B 板连续 `ready`/`parse_error`/响应超时，`control_door(open)`
+被硬件复位吞掉；同时未登记或停用人员的卡仍被白名单拒绝，不会产生 `access_granted`。
+
+### 变更
+- A 板上报有效 `rfid` 卡号后无条件广播 `access_granted{method:"rfid"}`，由既有
+  `access_open_door` 规则开门；白名单只用于补全人员姓名，未登记/停用/共用凭证照样放行。
+- 空值/格式错误的卡号仍记拒绝，重复读数继续按 `face.watcher.repeat_window`（默认 8 秒）去抖；
+  房卡录入会话、人脸、键盘密码与积木规则均不变。
+- `POST /api/access/test` 的刷卡自测同步为「有卡号即通过」，避免页面自测与真机不一致。
+- 更新门禁/自动化文档与 `web/face/changes_log.md`；新增 `tests/test_rfid_access.py`。
+
+### 影响与回滚
+安全语义变化：任何能被 RC522 读到的卡都能开门，仅适用于明确要求「刷卡即开门」的部署。
+无数据库迁移、无人脸库重建、无 Docker 编排变化。回滚：`git revert <squash commit>` 后重新部署。
+
+### 验收
+- 隔离容器（无串口/摄像头）：`test_rfid*.py` 12 项 OK，`test_hardening.py` 35 项 OK；
+- 全量 361 项仅既有的语音/编码环境失败，与本次改动无关；
+- 真机：需在 B 板供电稳定后确认刷卡产生 `access_granted` 且 `control_door(open)` 返回 ok。
+
 ## 2026-11-17 · 优化：OLED 轮播间隔 15s → 8 分钟，降低面板刷新复位（#129）
 
 分支：`fix/129-oled-carousel-8min`。

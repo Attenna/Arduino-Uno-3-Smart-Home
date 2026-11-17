@@ -2,14 +2,16 @@
 
 分工（对应「抛弃门禁管理的硬编码开门逻辑」）：
 
-    本模块   —— 凭证 → 人员 的白名单判定、通行日志、广播通用门禁事件
-                ``access_granted`` / ``access_denied``；
+    本模块   —— 凭证 → 人员的归属（人脸/键盘密码按白名单，刷卡即放行）、
+                通行日志、广播通用门禁事件 ``access_granted`` / ``access_denied``；
     积木规则 —— 通过后开不开门、延时关门、要不要迎客，被拒时响不响蜂鸣器
                 （内置预设 access_open_door 含「10 秒后关门」与 access_denied_buzzer，
                 在 /automation 页可改可停用）。
 
 A 板的 ``rfid`` 事件在本模块被两处消费：页面上按过「录入房卡」的会话优先把这张卡
-取走并绑到人（不做鉴权，否则新卡必然记一条「拒绝」）；没有等待会话时才走白名单。
+取走并绑到人（不做鉴权，否则新卡必然记一条「拒绝」）；没有等待会话时**刷卡即放行**
+——白名单只用来补全人员归属，不再决定开不开门（issue #132）。人脸与键盘密码仍按
+白名单鉴权。
 """
 from __future__ import annotations
 
@@ -39,6 +41,10 @@ AMBIENT_OBSERVATION_KINDS = frozenset({"idle", "no_camera", "no_identity"})
 
 GRANTED_EVENT = {"event": "access", "status": "granted"}
 DENIED_EVENT = {"event": "access", "status": "denied"}
+
+# 刷卡即放行后，白名单里查不到人时的通行日志/广播人员标签；
+# 仍保留「这张卡是谁」的信息（能查到人就用真名，停用的人也照样显示）。
+UNREGISTERED_CARD_LABEL = "未登记卡片"
 
 # 被拒原因的双语说法：通行日志与门禁页直接用它，不再统一写成「未知人员」
 DENY_REASONS = {
@@ -134,24 +140,38 @@ class AccessGuard:
 
     # ==================== 鉴权 ====================
 
-    def verify(self, method: str, credential: str, debounce: bool = True):
-        """按白名单鉴权一个凭证，写通行日志并广播结果；返回命中的人员或 None。"""
+    def verify(self, method: str, credential: str, debounce: bool = True,
+               force_grant: bool = False):
+        """按白名单鉴权一个凭证，写通行日志并广播结果；返回命中的人员或 None。
+
+        ``force_grant=True`` 用于刷卡路径：白名单只决定人员归属，不再决定放行。
+        未登记、人员停用、凭证被多人共用都照样开门；只有卡号本身无效（空值/格式
+        错误）仍记拒绝，避免把读卡器噪声当成一次通行。
+        """
         reason, person = self.db.diagnose(credential, method)
         matched = reason == "matched"
         if debounce and self.merge_repeat(method, credential):
-            return person if matched else None
+            return person if (matched or force_grant) else None
         if matched:
             self.grant(method, credential, person)
+            return person
+        if force_grant and reason != "bad_credential":
+            fallback = (UNREGISTERED_CARD_LABEL if reason == "no_such_identity"
+                        else "未知人员")
+            self.grant(method, credential, person,
+                       person_name=(person or {}).get("name") or fallback)
             return person
         self.deny(method, credential, reason=reason, person=person)
         return None
 
-    def grant(self, method: str, credential: str, person: dict) -> None:
-        self.db.add_access_log(person["name"], method, "granted",
+    def grant(self, method: str, credential: str, person: dict | None,
+              person_name: str | None = None) -> None:
+        name = person_name or (person or {}).get("name") or "未知人员"
+        self.db.add_access_log(name, method, "granted",
                                credential=credential)
-        self.broadcast(GRANTED_EVENT, method=method, person=person["name"],
+        self.broadcast(GRANTED_EVENT, method=method, person=name,
                        credential=credential)
-        logger.info("[门禁] %s 通过：%s（%s）", method, person["name"], credential)
+        logger.info("[门禁] %s 通过：%s（%s）", method, name, credential)
 
     def deny(self, method: str, credential: str, reason: str | None = None,
              person: dict | None = None) -> None:
@@ -255,7 +275,7 @@ class AccessGuard:
                 return
             if self.capture_card(uid):
                 return
-            self.verify("rfid", uid)
+            self.verify("rfid", uid, force_grant=True)
         elif name == "face" and event.get("status") == "granted":
             # 键盘密码这类在 MCP 子进程内就完成鉴权的路径：它上报的是旧
             # {"event":"face","status":"granted"} 形状，归一成统一门禁事件，
