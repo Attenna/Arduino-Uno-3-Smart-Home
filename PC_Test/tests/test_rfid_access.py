@@ -9,10 +9,13 @@
   - 房卡录入会话、人脸识别等其它路径保持原行为。
 """
 import tempfile
+import time
 import unittest
 from pathlib import Path
+from unittest.mock import Mock
 
 from web.access_guard import AccessGuard, UNREGISTERED_CARD_LABEL
+from web.automation.engine import AutomationEngine
 from web.database import SmartHomeDB
 
 
@@ -84,6 +87,30 @@ class RfidAccessTests(unittest.TestCase):
         self.assertFalse(result["granted"])
         self.assertEqual(self.logs()[0]["status"], "denied")
         self.assertEqual(self.events[-1]["status"], "denied")
+
+    def test_unregistered_card_reaches_the_door_rule(self):
+        """刷卡 → access_granted → 默认 access_open_door → control_door(open)。"""
+        bridge = Mock(online=True)
+        bridge.control_door.return_value = (True, "ok")
+        engine_db = Mock()
+        engine_db.get_current_status.return_value = {
+            "door_status": "closed", "window_status": "normal",
+            "fan_speed": 0, "light_status": "off", "light_brightness": 0}
+        engine = AutomationEngine(bridge, engine_db,
+                                  Path(self.temp.name) / "automation_rules.json")
+        self.addCleanup(engine.stop)
+        engine.load()
+        # 只验证开门这一段；去掉默认预设里的 10 秒等待，避免测试线程拖住临时目录。
+        rule = next(r for r in engine.rules
+                    if r.get("preset") == "access_open_door")
+        rule["actions"] = [{"device": "door", "status": "open"}]
+        self.guard.event_sink = engine.on_event
+        self.swipe()
+        for _ in range(100):
+            if bridge.control_door.called:
+                break
+            time.sleep(0.02)
+        bridge.control_door.assert_called_with("open")
 
 
 if __name__ == "__main__":
