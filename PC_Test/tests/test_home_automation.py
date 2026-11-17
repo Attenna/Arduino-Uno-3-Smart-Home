@@ -53,7 +53,9 @@ class HomeRulesTests(unittest.TestCase):
         self.snapshot(temperature=26, light=700)
         self.apply("temp_cool"); self.apply("light_off")
         self.assertEqual((self.status["fan_speed"], self.status["light_status"]), (100, "on"))
-        # The first illuminated sample was 700 (200 ADC lamp contribution).
+        self.snapshot(temperature=26, light=700)
+        self.apply("light_off")  # second illuminated sample completes calibration
+        # The illuminated samples were 700 (200 ADC lamp contribution).
         # Actual daylight must overcome that contribution before switching off.
         self.snapshot(temperature=25, light=400)
         self.apply("temp_cool"); self.apply("light_off")

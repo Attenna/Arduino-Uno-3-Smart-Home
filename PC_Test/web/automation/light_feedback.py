@@ -12,6 +12,8 @@ class LightFeedbackGuard:
         self._ambient = None
         self._reference = None
         self._offset = None
+        self._calibration_samples = 0
+        self._calibration_sample = None
 
     def update(self, raw, status, sample):
         with self._lock:
@@ -36,15 +38,24 @@ class LightFeedbackGuard:
             self._offset = None
             self._transition_sample = self._sample
             self._output = output
+            self._calibration_samples = 0
+            self._calibration_sample = None
         self._sample = sample
         # Repeated rule evaluations of the pre-command snapshot cannot calibrate
         # the lamp. At startup with an already-lit lamp there is no off baseline;
         # preserve it until it is switched off instead of inventing ambient light.
         if self._reference is None:
             return None
-        if self._offset is None:
-            if sample == self._transition_sample:
-                return None
-            self._offset = max(0, self._reference - raw)
+        if sample == self._transition_sample:
+            return None
+        if self._calibration_samples < 2:
+            if sample != self._calibration_sample:
+                self._offset = max(self._offset or 0, self._reference - raw, 0)
+                self._calibration_samples += 1
+                self._calibration_sample = sample
+            # The first new sample can still contain the previous illumination
+            # level. Observe two distinct frames before publishing the correction.
+            self._ambient = self._reference
+            return self._ambient
         self._ambient = min(1023, raw + self._offset)
         return self._ambient

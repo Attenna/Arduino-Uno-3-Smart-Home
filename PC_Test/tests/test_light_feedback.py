@@ -23,8 +23,17 @@ class LightFeedbackTests(unittest.TestCase):
     def test_actual_daylight_still_allows_automatic_off(self):
         self.guard.update(796, OFF, 1)
         self.guard.update(550, ON, 2)
-        self.assertLessEqual(self.guard.update(400, ON, 3), 670)
-        self.assertEqual(self.guard.update(640, OFF, 4), 640)
+        self.guard.update(550, ON, 3)
+        self.assertLessEqual(self.guard.update(400, ON, 4), 670)
+        self.assertEqual(self.guard.update(640, OFF, 5), 640)
+
+    def test_first_partly_illuminated_sample_cannot_underestimate_feedback(self):
+        self.guard.update(800, OFF, 1)
+        self.guard.update(700, ON, 2)
+        # Re-evaluating one frame must not count as the second sample.
+        self.guard.update(700, ON, 2)
+        self.guard.update(500, ON, 3)
+        self.assertEqual(self.guard.update(500, ON, 4), 800)
 
     def test_brightness_change_relearns_contribution_from_new_sample(self):
         self.guard.update(796, OFF, 1)
