@@ -2,6 +2,7 @@
 #define OLED_DISPLAY_H
 
 #include <Arduino.h>
+#include "../Config.h"
 
 // SH1106 / SSD1306 OLED（U8x8 文本模式，8 行 x 16 列）
 // 只负责显示传入的文本，不组合业务状态。
@@ -13,7 +14,9 @@ public:
     void clear();
 private:
     bool _ready;
+#if ENABLE_OLED
     char _lines[8][17];
+#endif
 };
 
 #endif

@@ -245,3 +245,9 @@ pio run -t upload --upload-port COM4
 
 Trig=D6、Echo=D5、VCC=5V、GND 共地。调用 `get_distance` 获取实时厘米距离；
 接线、协议、无效读数与 HTTP 示例见 [测距接口文档](../docs/ultrasonic.md)。
+## OLED 临时禁用（#138）
+
+当前任务固件默认 `ENABLE_OLED=0`，OLED 的 RES 保持低电平，不初始化、不刷新、
+不索取数据。ready 帧包含 `oled_enabled:false`，固件标识 `V2.15-OLED-OFF`。
+该设置不会切断模块的物理供电；需要完全断电时需断开 OLED 电源。
+恢复显示需将 `src/Config.h` 的开关置 1 后重新编译烧录，或恢复先前固件备份。
