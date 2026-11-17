@@ -22,8 +22,9 @@ class FanTemperatureRuleTests(unittest.TestCase):
         db.update_status.side_effect = lambda **kw: self.status.update(kw)
         self.engine = AutomationEngine(self.bridge, db, Path(self.tmp.name) / 'rules.json')
 
-    def matches(self, temperature, fresh=True):
-        ctx = {'temperature': temperature, 'sensor_fresh': fresh}
+    def matches(self, temperature, fresh=True, automatic=True):
+        ctx = {'temperature': temperature, 'sensor_fresh': fresh,
+               'g:允许自动开风扇': automatic}
         return [self.engine._conditions_hold(rule, ctx) for rule in self.rules]
 
     def test_exact_threshold_has_one_unambiguous_branch(self):
@@ -47,3 +48,7 @@ class FanTemperatureRuleTests(unittest.TestCase):
                     self.assertTrue(ok)
         self.assertEqual([c.args for c in self.bridge.control_fan.call_args_list], [(100,), (0,)])
         self.assertEqual(self.status['fan_speed'], 0)
+
+    def test_manual_fan_mode_blocks_both_temperature_branches(self):
+        for temperature in (22, 26, 30):
+            self.assertEqual(self.matches(temperature, automatic=False), [False, False])

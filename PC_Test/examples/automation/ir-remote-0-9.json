@@ -1,0 +1,349 @@
+{
+  "rules": [
+    {
+      "preset": "ir_remote_light_toggle",
+      "name": "红外键1：灯开/关切换",
+      "enabled": true,
+      "trigger": {
+        "kind": "event",
+        "event": "ir",
+        "command": "0x45"
+      },
+      "conditions": [
+        {
+          "sensor": "light_status",
+          "op": "==",
+          "value": "on"
+        }
+      ],
+      "actions": [
+        {
+          "device": "state",
+          "name": "g:手动优先_灯",
+          "op": "set",
+          "value": true
+        },
+        {
+          "device": "light",
+          "status": "off",
+          "brightness": 0
+        }
+      ],
+      "else_actions": [
+        {
+          "device": "state",
+          "name": "g:手动优先_灯",
+          "op": "set",
+          "value": true
+        },
+        {
+          "device": "light",
+          "status": "on",
+          "brightness": 100
+        }
+      ],
+      "match": "all",
+      "cooldown": 1,
+      "id": "remote01"
+    },
+    {
+      "preset": "ir_remote_fan_toggle",
+      "name": "红外键2：风扇手动开/关（按5恢复温控）",
+      "enabled": true,
+      "trigger": {
+        "kind": "event",
+        "event": "ir",
+        "command": "0x46"
+      },
+      "conditions": [
+        {
+          "sensor": "fan_speed",
+          "op": ">",
+          "value": 0
+        }
+      ],
+      "actions": [
+        {
+          "device": "state",
+          "name": "g:允许自动开风扇",
+          "op": "set",
+          "value": false
+        },
+        {
+          "device": "state",
+          "name": "g:手动优先_风扇",
+          "op": "set",
+          "value": true
+        },
+        {
+          "device": "fan",
+          "op": "off",
+          "speed": 0
+        }
+      ],
+      "else_actions": [
+        {
+          "device": "state",
+          "name": "g:允许自动开风扇",
+          "op": "set",
+          "value": false
+        },
+        {
+          "device": "state",
+          "name": "g:手动优先_风扇",
+          "op": "set",
+          "value": true
+        },
+        {
+          "device": "fan",
+          "op": "on",
+          "speed": 100
+        }
+      ],
+      "match": "all",
+      "cooldown": 1,
+      "id": "remote02"
+    },
+    {
+      "preset": "ir_remote_door_toggle",
+      "name": "红外键3：门开/关切换",
+      "enabled": true,
+      "trigger": {
+        "kind": "event",
+        "event": "ir",
+        "command": "0x47"
+      },
+      "conditions": [
+        {
+          "sensor": "door_status",
+          "op": "==",
+          "value": "open"
+        }
+      ],
+      "actions": [
+        {
+          "device": "door",
+          "status": "close"
+        }
+      ],
+      "else_actions": [
+        {
+          "device": "door",
+          "status": "open"
+        }
+      ],
+      "match": "all",
+      "cooldown": 1,
+      "id": "remote03"
+    },
+    {
+      "preset": "ir_remote_window_toggle",
+      "name": "红外键4：窗开/关切换",
+      "enabled": true,
+      "trigger": {
+        "kind": "event",
+        "event": "ir",
+        "command": "0x44"
+      },
+      "conditions": [
+        {
+          "sensor": "window_status",
+          "op": "==",
+          "value": "open"
+        }
+      ],
+      "actions": [
+        {
+          "device": "state",
+          "name": "g:手动优先_窗",
+          "op": "set",
+          "value": true
+        },
+        {
+          "device": "window",
+          "status": "close"
+        }
+      ],
+      "else_actions": [
+        {
+          "device": "state",
+          "name": "g:手动优先_窗",
+          "op": "set",
+          "value": true
+        },
+        {
+          "device": "window",
+          "status": "open"
+        }
+      ],
+      "match": "all",
+      "cooldown": 1,
+      "id": "remote04"
+    },
+    {
+      "id": "remote05",
+      "name": "红外键5：恢复26°C自动温控",
+      "enabled": true,
+      "trigger": {
+        "kind": "event",
+        "event": "ir",
+        "command": "0x40"
+      },
+      "match": "all",
+      "conditions": [],
+      "actions": [
+        {
+          "device": "state",
+          "name": "g:允许自动开风扇",
+          "op": "set",
+          "value": true
+        },
+        {
+          "device": "state",
+          "name": "g:手动优先_风扇",
+          "op": "set",
+          "value": false
+        }
+      ],
+      "else_actions": [],
+      "cooldown": 1
+    },
+    {
+      "id": "remote06",
+      "name": "红外键6：短提示音",
+      "enabled": true,
+      "trigger": {
+        "kind": "event",
+        "event": "ir",
+        "command": "0x43"
+      },
+      "match": "all",
+      "conditions": [],
+      "actions": [
+        {
+          "device": "buzzer",
+          "mode": "beep",
+          "count": 1,
+          "on_ms": 100,
+          "off_ms": 100
+        }
+      ],
+      "else_actions": [],
+      "cooldown": 1
+    },
+    {
+      "id": "remote07",
+      "name": "红外键7：灯白光25%",
+      "enabled": true,
+      "trigger": {
+        "kind": "event",
+        "event": "ir",
+        "command": "0x07"
+      },
+      "match": "all",
+      "conditions": [],
+      "actions": [
+        {
+          "device": "state",
+          "name": "g:手动优先_灯",
+          "op": "set",
+          "value": true
+        },
+        {
+          "device": "light",
+          "status": "on",
+          "brightness": 25,
+          "color": "white",
+          "value": 64
+        }
+      ],
+      "else_actions": [],
+      "cooldown": 1
+    },
+    {
+      "id": "remote08",
+      "name": "红外键8：灯白光60%",
+      "enabled": true,
+      "trigger": {
+        "kind": "event",
+        "event": "ir",
+        "command": "0x15"
+      },
+      "match": "all",
+      "conditions": [],
+      "actions": [
+        {
+          "device": "state",
+          "name": "g:手动优先_灯",
+          "op": "set",
+          "value": true
+        },
+        {
+          "device": "light",
+          "status": "on",
+          "brightness": 60,
+          "color": "white",
+          "value": 153
+        }
+      ],
+      "else_actions": [],
+      "cooldown": 1
+    },
+    {
+      "id": "remote09",
+      "name": "红外键9：灯白光100%",
+      "enabled": true,
+      "trigger": {
+        "kind": "event",
+        "event": "ir",
+        "command": "0x09"
+      },
+      "match": "all",
+      "conditions": [],
+      "actions": [
+        {
+          "device": "state",
+          "name": "g:手动优先_灯",
+          "op": "set",
+          "value": true
+        },
+        {
+          "device": "light",
+          "status": "on",
+          "brightness": 100,
+          "color": "white",
+          "value": 255
+        }
+      ],
+      "else_actions": [],
+      "cooldown": 1
+    },
+    {
+      "id": "remote00",
+      "name": "红外键0：关灯",
+      "enabled": true,
+      "trigger": {
+        "kind": "event",
+        "event": "ir",
+        "command": "0x19"
+      },
+      "match": "all",
+      "conditions": [],
+      "actions": [
+        {
+          "device": "state",
+          "name": "g:手动优先_灯",
+          "op": "set",
+          "value": true
+        },
+        {
+          "device": "light",
+          "status": "off",
+          "brightness": 0
+        }
+      ],
+      "else_actions": [],
+      "cooldown": 1
+    }
+  ]
+}
