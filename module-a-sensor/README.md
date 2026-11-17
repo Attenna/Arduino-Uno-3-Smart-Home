@@ -1,6 +1,6 @@
 # Module A — Sensor Node（传感器节点）
 
-> **职责：只负责"观察世界"——采集传感器数据并上报，不做任何业务判断。**
+> **职责：采集传感器数据并上报；另负责灯带（A0）与风扇（A1）两个低风险输出。业务判断仍全部在香橙派。**
 >
 > 🚀 部署/接线/调试/二次开发完整指南见 **[DEPLOYMENT.md](DEPLOYMENT.md)**。
 
@@ -8,9 +8,9 @@
 
 ## 1. 模块用途
 
-Module A 是一块 Arduino Uno，负责环境感知与用户交互检测。**固件版本 `V2.2`**，经 2026-09 正式版硬件裁剪：
+Module A 是一块 Arduino Uno，负责环境感知、用户交互检测，以及灯带/风扇输出。**固件版本 `V2.3`**（2026-11 风扇从 B 板迁到 A1），经 2026-09 正式版硬件裁剪：
 
-**现役传感器（9 类）与灯光输出**
+**现役传感器（9 类）与输出**
 
 | # | 传感器 | 类型 | 说明 |
 |---|--------|------|------|
@@ -23,12 +23,14 @@ Module A 是一块 Arduino Uno，负责环境感知与用户交互检测。**固
 | 7 | RC522 RFID | SPI | 刷卡 UID |
 | 8 | PIR 人体红外 | 数字 | 运动检测（SR602/HC-SR501） |
 | 9 | 矩阵键盘 | 数字 | 当前硬件 1×1，仅按键 `"1"` |
+| — | NeoPixel 灯带 | 数字输出 | A0，8 颗 |
+| — | 直流风扇（单线开关） | 数字输出 | A1 → 驱动板 INA；INB 接 GND；电机独立 5V |
 
 **已裁剪（驱动文件保留，编译期开关关闭）**
 
 | 传感器 | 原引脚 | 裁剪开关 |
 |--------|--------|---------|
-| HC-SR04 超声波 | A0/A1 | `ENABLE_ULTRASONIC=0`（A0 已改接 NeoPixel 灯带，A1 悬空） |
+| HC-SR04 超声波 | A0/A1 | `ENABLE_ULTRASONIC=0`（A0 改接灯带，A1 改接风扇） |
 | 土壤湿度 YL-69/FC-28 | D4/A4 | `ENABLE_SOIL=0`（引脚改接矩阵键盘） |
 
 数据通过 USB 串口以 JSON 形式上报，分两种：
@@ -54,6 +56,7 @@ Module A 是一块 Arduino Uno，负责环境感知与用户交互检测。**固
 | PIR 人体红外模块（SR602/HC-SR501） | 1 |
 | 矩阵键盘（当前 1×1） | 1 |
 | NeoPixel 灯带（8 颗，接 A0） | 1 |
+| 直流风扇 + 驱动（L298N/TB6612） | 1（INA 接 A1，INB 接 GND，电机独立 5V） |
 
 ---
 
@@ -71,7 +74,7 @@ Module A 是一块 Arduino Uno，负责环境感知与用户交互检测。**固
 | D10 | RFID SS |
 | D11/D12/D13 | SPI（MOSI/MISO/SCK，RFID） |
 | A0 | NeoPixel 灯带数据线（数字 D14，8 颗） |
-| A1 | （悬空；原超声波 Echo） |
+| A1 | 风扇 INA（数字 D15；INB 接 GND，电机独立 5V） |
 | A2 | 雨滴（模拟） |
 | A3 | 烟雾（模拟） |
 | A4 | 矩阵键盘列读取（KEYPAD_COL_PIN，INPUT_PULLUP） |
@@ -81,6 +84,10 @@ Module A 是一块 Arduino Uno，负责环境感知与用户交互检测。**固
 
 > D0/D1 保留给 USB 串口，禁止接灯带。灯带使用独立稳压 5V 电源并与 A 板共地；
 > 数据线建议串联 330–470Ω 电阻。
+>
+> 风扇 2026-11 从 B 板迁到 A1：`A1 → 驱动板 INA`，`INB → GND`，驱动板 GND 与 A 板共地；
+> 电机电源用独立 5V（不要接 A 板 5V）。建议在驱动板 INA 对 GND 加 10k（或 4.7k）下拉，
+> 避免 A 板复位/高阻时风扇误导通。
 
 ---
 
@@ -104,9 +111,9 @@ PlatformIO 已在 [platformio.ini](platformio.ini) 中声明，无需手动安�
 
 ### 上行示例
 
-周期状态（`V2.2`，无 distance/soil 字段）：
+周期状态（`V2.3`，无 distance/soil 字段；`fan` 为 1=转 / 0=停）：
 ```json
-{"module":"sensor","type":"data","timestamp":123456,"data":{"temperature":26.4,"humidity":61.0,"light":423,"smoke":false,"rain":false,"touch":false,"motion":false}}
+{"module":"sensor","type":"data","timestamp":123456,"data":{"temperature":26.4,"humidity":61.0,"light":423,"smoke":false,"rain":false,"touch":false,"motion":false,"fan":0}}
 ```
 
 事件：
@@ -132,6 +139,21 @@ L,<code>,<value>,<r>,<g>,<b>,<count>,<id>
 `red` / `green` / `blue` / `yellow` / `purple` / `cyan` / `rgb` / `pixels`（无 `temp`）。
 响应回 `{"module":"sensor","type":"response","result":"ok","cmd":"light",...,"state":{"light":..,"lit":..}}`。
 
+**控制命令（风扇，A1 单线开关）**：`fan` 命令已从 B 板改路由到 A 板。固件接受：
+
+```json
+{"cmd":"fan","action":"on","id":8}
+{"cmd":"fan","action":"off","id":9}
+{"cmd":"fan","action":"set_speed","value":180,"id":10}
+```
+
+以及紧凑帧（MCP 实际使用）：
+```text
+F,<0|1>,<id>
+```
+`set_speed` 的 `value>0` 映射为开、`0` 为关（A1 非 PWM，只做开关）。响应回
+`{"module":"sensor","type":"response","result":"ok","cmd":"fan","action":"on","id":8,"state":{"fan":1}}`。
+
 **调试命令（纯文本）**：
 
 | 命令 | 作用 |
@@ -148,12 +170,12 @@ L,<code>,<value>,<r>,<g>,<b>,<count>,<id>
 
 **输出（上电）：**
 ```
-{"module":"sensor","type":"ready","board":"MODULE_A","role":"SENSOR_NODE","version":"V2.2"}
+{"module":"sensor","type":"ready","board":"MODULE_A","role":"SENSOR_NODE","version":"V2.3"}
 ```
 
 **输入 `REPORT`，输出：**
 ```json
-{"module":"sensor","type":"data","timestamp":5012,"data":{"temperature":26.4,"humidity":61.0,"light":423,"smoke":false,"rain":false,"touch":false,"motion":false}}
+{"module":"sensor","type":"data","timestamp":5012,"data":{"temperature":26.4,"humidity":61.0,"light":423,"smoke":false,"rain":false,"touch":false,"motion":false,"fan":0}}
 ```
 
 ---

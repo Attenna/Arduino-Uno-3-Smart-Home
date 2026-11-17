@@ -246,8 +246,12 @@ ls -l /dev/ttyUSB* /dev/ttyACM* /dev/serial/by-id/* /dev/video*
 
 常用参数宏：`SERIAL_BAUD`、`DHT_PIN`、`DHT_INTERVAL_MS`、`REPORT_INTERVAL_MS`（默认 `1000`）、
 `KEYPAD_DEBOUNCE_MS`、`KEYPAD_RELEASE_MS`、`RAIN_THRESHOLD`、各类 `DEBOUNCE_*`、
-`RGB_PIN`（`A0`）/ `RGB_LED_COUNT`（`8`）/ `RGB_SAFE_BRIGHTNESS`，
-以及设备标识 `BOARD_TYPE` / `BOARD_ROLE` / `FW_VERSION`（当前 `V2.2`）。
+`RGB_PIN`（`A0`）/ `RGB_LED_COUNT`（`8`）/ `RGB_SAFE_BRIGHTNESS`、
+`FAN_PIN`（`A1`）/ `FAN_ACTIVE_HIGH`（`1`），
+以及设备标识 `BOARD_TYPE` / `BOARD_ROLE` / `FW_VERSION`（当前 `V2.3`）。
+
+> `FAN_PIN` 与 `US_ECHO_PIN` 都默认是 A1；`ENABLE_ULTRASONIC=1` 时会触发编译期
+> `#error`，必须二选一。
 
 ### 6.2 Module B（[Config.h](../module-b-output/src/Config.h)）
 
@@ -260,9 +264,10 @@ ls -l /dev/ttyUSB* /dev/ttyACM* /dev/serial/by-id/* /dev/video*
 常用参数宏：门/窗舵机引脚与角度（`DOOR_*` / `WINDOW_*` / `SERVO_SETTLE_TIME`）、
 `FAN_INA` / `FAN_INB`、`BUZZER_*`、`OLED_*` / `OLED_IS_SH1106`、
 `ULTRASONIC_TRIG_PIN` / `ULTRASONIC_ECHO_PIN`（D6/D5）、
-`MIDEA_*`（美的长码时序）、`FW_VERSION`（当前 `V2.14`）。
-B 板仍保留 `RGB_PIN` / `LED_COUNT` / `LIGHT_*` 等灯带宏与驱动，但**灯带实际接 A 板 A0**，
-`light` 命令由 A 板执行，网关不向 B 板下发灯光命令。
+`MIDEA_*`（美的长码时序）、`FW_VERSION`（当前 `V2.15`）。
+B 板仍保留 `RGB_PIN` / `LED_COUNT` / `LIGHT_*` 等灯带宏与驱动，但**灯带实际接 A 板 A0**；
+`FAN_*` 宏与驱动也保留，但**风扇实际接 A 板 A1**，`light`/`fan` 命令由 A 板执行，
+网关不向 B 板下发这两类命令。
 
 > 所有引脚/阈值/时序只能改 Config.h，禁止在驱动 `.cpp` 内硬编码。
 
