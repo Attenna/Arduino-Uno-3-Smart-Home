@@ -28,6 +28,8 @@ document.addEventListener('DOMContentLoaded', () => {
     loadPersons();
     loadAccessLogs();
     loadFaceEvents();
+    loadVisitors();
+    setInterval(() => loadVisitors().catch(console.error), 10000);
     startFacePolling();
     startFaceStream();
     setInterval(loadDiagnostics, DIAG_INTERVAL_MS);   // 首帧由 loadPersons() 带出来
@@ -408,6 +410,7 @@ function toggleAccessLang() {
     renderTestPicker();
     loadAccessLogs();
     loadFaceEvents();
+    loadVisitors();
     renderWatcher();          // 状态与体检是 JS 渲染的，用缓存立刻翻一次
     renderDiagnostics();
     lastEventId = null;       // 结果面板同理：重渲染最新事件，silent 免得再弹通知
@@ -757,3 +760,19 @@ async function loadAccessLogs() {
 
 const ACCESS_METHOD_ZH = { face: '人脸识别', rfid: '刷房卡', keypad: '键盘密码' };
 const ACCESS_METHOD_EN = { face: 'Face', rfid: 'Room card', keypad: 'Keypad' };
+
+
+async function loadVisitors() {
+    const container = document.getElementById('visitorPhotos');
+    try {
+        const rows = await apiGet('/api/face/visitors');
+        if (!Array.isArray(rows)) throw new Error('Invalid visitor response');
+        container.innerHTML = rows.length ? rows.map(row => {
+            const date = serverDate(row.timestamp);
+            const timestamp = date ? date.toLocaleString(I18N.currentLang === 'zh' ? 'zh-CN' : 'en-US') : '--';
+            return `<article><a href="${esc(row.image_url)}" target="_blank" rel="noopener"><img src="${esc(row.image_url)}" alt="${esc(t('visitors.alt'))}" loading="lazy" style="width:100%;aspect-ratio:4/3;object-fit:cover;border-radius:14px"></a><p>${esc(timestamp)}</p><p>${esc(row.person_name || t('visitors.unknown'))} · ${esc(reasonText(row.deny_reason))}</p></article>`;
+        }).join('') : '<p>' + esc(t('visitors.empty')) + '</p>';
+    } catch (error) {
+        container.textContent = t('visitors.error');
+    }
+}
