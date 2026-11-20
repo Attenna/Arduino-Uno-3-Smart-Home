@@ -70,6 +70,41 @@ class DoorwayTests(unittest.TestCase):
         self.feed(102)
         self.fire.assert_called_once()
 
+    def echo_timeout(self, at):
+        self.clock.return_value = at
+        self.engine.on_distance(dict(valid=False, status='timeout', distance_cm=None))
+
+    def test_stranger_echo_pause_excludes_missing_time_and_keeps_latch(self):
+        self.rule['trigger']['sensor'] = 'stranger_distance_cm'
+        self.engine.observe_stranger(True, 30)
+        self.feed(100)
+        self.echo_timeout(101)
+        self.echo_timeout(101.5)
+        self.feed(102)
+        self.feed(102.99)
+        self.fire.assert_not_called()
+        self.feed(103)
+        self.echo_timeout(103.5)
+        self.feed(104)
+        self.fire.assert_called_once()
+
+    def test_stranger_long_gap_range_exit_and_face_loss_restart_hold(self):
+        self.rule['trigger']['sensor'] = 'stranger_distance_cm'
+        self.engine.observe_stranger(True, 30)
+        self.feed(100)
+        self.echo_timeout(101)
+        self.feed(102.1)
+        self.feed(104, 50)
+        self.feed(105)
+        self.echo_timeout(106)
+        self.engine.observe_stranger(False, 0)
+        self.engine.observe_stranger(True, 30)
+        self.feed(106.5)
+        self.feed(108.4)
+        self.fire.assert_not_called()
+        self.feed(108.5)
+        self.fire.assert_called_once()
+
     def test_invalid_resets_hold(self):
         self.feed(100)
         self.feed(101, None)
