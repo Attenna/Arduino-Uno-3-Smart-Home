@@ -162,6 +162,7 @@ def visitor_events():
         event = dict(row)
         name = event.get('image_path') or ''
         if PHOTO_NAME.fullmatch(name) and (store.directory / name).is_file():
+            event['legacy_photo'] = not name.startswith('visitor_visit_')
             event['last_seen'] = (store.directory / name).stat().st_mtime
             event['image_url'] = '/api/face/visitors/images/' + name
             event['reason_text'] = deny_texts(event.get('deny_reason'))[0]

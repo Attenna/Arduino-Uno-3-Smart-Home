@@ -6,6 +6,7 @@ const I18N = {
         zh: {
             "visitors.title": "未授权来访",
             "visitors.refresh": "刷新照片",
+            "visitors.archive": "历史照片",
             "visitors.help": "后台门禁识别启用且已录入用户后生效。同一位置持续出现的人脸每次来访保存一张代表照，超过6秒未出现后重新计次，照片保留30天。点击照片查看原图。",
             "visitors.loading": "正在加载来访照片…",
             "visitors.empty": "暂无未授权来访照片",
@@ -708,6 +709,7 @@ const I18N = {
         en: {
             "visitors.title": "Unauthorized visits",
             "visitors.refresh": "Refresh photos",
+            "visitors.archive": "Earlier photos",
             "visitors.help": "Requires background access recognition and an enrolled user. Save at most one photo per tracked face per visit (a gap over 6 seconds starts another visit). Keep photos for 30 days. Click to view the original.",
             "visitors.loading": "Loading visitor photos…",
             "visitors.empty": "No unauthorized visitor photos yet",

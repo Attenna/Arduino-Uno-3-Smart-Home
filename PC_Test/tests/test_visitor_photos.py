@@ -25,6 +25,14 @@ class VisitorPhotosTests(unittest.TestCase):
         self.now += 31
         self.assertEqual(len(self.store.capture(self.jpeg, [self.face, other])), 2)
 
+    def test_long_visit_retains_one_photo_and_updates_last_seen(self):
+        name = self.store.capture(self.jpeg, [self.face])[0]
+        for _ in range(12):
+            self.now += 3
+            self.assertEqual(self.store.capture(self.jpeg, [self.face]), {})
+        self.assertEqual((self.store.directory / name).stat().st_mtime, self.now)
+        self.assertEqual(len(list(self.store.directory.iterdir())), 1)
+
     def test_departure_then_reentry_saves_again(self):
         self.store.capture(self.jpeg, [self.face])
         self.now += 7
