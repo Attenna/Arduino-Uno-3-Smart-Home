@@ -87,6 +87,16 @@ class DoorwayTests(unittest.TestCase):
         self.feed(100)
         self.assertNotIn('temperature', self.engine._context())
 
+    def test_output_hold_releases_another_rule_at_deadline(self):
+        with patch.object(self.engine, '_apply_output', return_value=(True, 'ack')) as apply:
+            self.engine._perform({'device': 'fan', 'keep_sec': 5}, {'id': 'custom'})
+            self.clock.return_value = 102
+            self.engine._perform({'device': 'fan'}, {'id': 'temperature'})
+            self.assertEqual(apply.call_count, 1)
+            self.clock.return_value = 105
+            self.engine._perform({'device': 'fan'}, {'id': 'temperature'})
+            self.assertEqual(apply.call_count, 2)
+
     def test_bad_measurements(self):
         for value in (None, True, '20', 0, 401, float('nan'), float('inf')):
             self.feed(100, value)
