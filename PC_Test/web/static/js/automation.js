@@ -463,6 +463,7 @@ function defineBlocks() {
                 .appendField(new Blockly.FieldDropdown([[L('打开', 'Open'), 'on'], [L('关闭', 'Close'), 'off']]), 'STATUS')
                 .appendField(new Blockly.FieldNumber(100, 0, 100, 1), 'BRIGHTNESS')
                 .appendField('%');
+            this.appendDummyInput().appendField(L('保持', 'Hold')).appendField(new Blockly.FieldNumber(0, 0, 86400, 1), 'KEEP').appendField(L('秒', 's'));
             this.setPreviousStatement(true, 'ACT');
             this.setNextStatement(true, 'ACT');
             this.setColour(120);
@@ -474,6 +475,7 @@ function defineBlocks() {
         init: function () {
             this.appendDummyInput().appendField(L(' 灯颜色', ' Light color'))
                 .appendField(new Blockly.FieldDropdown(lightColorOptions), 'COLOR');
+            this.appendDummyInput().appendField(L('保持', 'Hold')).appendField(new Blockly.FieldNumber(0, 0, 86400, 1), 'KEEP').appendField(L('秒', 's'));
             this.setPreviousStatement(true, 'ACT');
             this.setNextStatement(true, 'ACT');
             this.setColour(120);
@@ -486,6 +488,7 @@ function defineBlocks() {
                 .appendField(new Blockly.FieldNumber(255, 0, 255, 1), 'R').appendField('R')
                 .appendField(new Blockly.FieldNumber(0, 0, 255, 1), 'G').appendField('G')
                 .appendField(new Blockly.FieldNumber(0, 0, 255, 1), 'B').appendField('B');
+            this.appendDummyInput().appendField(L('保持', 'Hold')).appendField(new Blockly.FieldNumber(0, 0, 86400, 1), 'KEEP').appendField(L('秒', 's'));
             this.setPreviousStatement(true, 'ACT');
             this.setNextStatement(true, 'ACT');
             this.setColour(120);
@@ -501,6 +504,7 @@ function defineBlocks() {
                 .appendField(L('转速', 'Speed')).appendField(new Blockly.FieldNumber(60, 0, 100, 1), 'SPEED')
                 .appendField(L('%（填 0 = 用上次转速）', '% (0 = last speed)'));
             this.getInput('SPEEDROW').setVisible(false);
+            this.appendDummyInput().appendField(L('保持', 'Hold')).appendField(new Blockly.FieldNumber(0, 0, 86400, 1), 'KEEP').appendField(L('秒', 's'));
             this.setPreviousStatement(true, 'ACT');
             this.setNextStatement(true, 'ACT');
             this.setColour(120);
@@ -1932,16 +1936,16 @@ function actionToJson(b) {
         case 'act_door':   return { device: 'door', status: b.getFieldValue('STATUS') };
         case 'act_window': return { device: 'window', status: b.getFieldValue('STATUS') };
         case 'act_light':  return { device: 'light', status: b.getFieldValue('STATUS'),
-                                    brightness: Number(b.getFieldValue('BRIGHTNESS')) };
+                                    ...(Number(b.getFieldValue('KEEP')) ? {keep_sec: Number(b.getFieldValue('KEEP'))} : {}), brightness: Number(b.getFieldValue('BRIGHTNESS')) };
         case 'act_light_color':
             return { device: 'light', status: 'on', brightness: 100,
-                     color: b.getFieldValue('COLOR') };
+                     ...(Number(b.getFieldValue('KEEP')) ? {keep_sec: Number(b.getFieldValue('KEEP'))} : {}), color: b.getFieldValue('COLOR') };
         case 'act_light_rgb':
             return { device: 'light', status: 'on', brightness: 100, color: 'rgb',
-                     r: Number(b.getFieldValue('R')), g: Number(b.getFieldValue('G')),
+                     ...(Number(b.getFieldValue('KEEP')) ? {keep_sec: Number(b.getFieldValue('KEEP'))} : {}), r: Number(b.getFieldValue('R')), g: Number(b.getFieldValue('G')),
                      b: Number(b.getFieldValue('B')) };
         case 'act_fan':    return { device: 'fan', op: b.getFieldValue('OP') || 'set',
-                                    speed: Number(b.getFieldValue('SPEED')) };
+                                    ...(Number(b.getFieldValue('KEEP')) ? {keep_sec: Number(b.getFieldValue('KEEP'))} : {}), speed: Number(b.getFieldValue('SPEED')) };
         case 'act_buzzer': return { device: 'buzzer', mode: 'beep',
                                     count: Number(b.getFieldValue('COUNT')),
                                     on_ms: Number(b.getFieldValue('ONMS')),
@@ -2160,20 +2164,24 @@ function fillAction(a) {
         case 'light':
             if (a.color === 'rgb') {
                 b = createTyped('act_light_rgb');
+                b.setFieldValue(String(a.keep_sec || 0), 'KEEP');
                 b.setFieldValue(String(a.r === undefined ? 255 : a.r), 'R');
                 b.setFieldValue(String(a.g === undefined ? 0 : a.g), 'G');
                 b.setFieldValue(String(a.b === undefined ? 0 : a.b), 'B');
             } else if (a.color && a.color !== 'white') {
                 b = createTyped('act_light_color');
+                b.setFieldValue(String(a.keep_sec || 0), 'KEEP');
                 b.setFieldValue(optionValue(lightColorOptions(), a.color, 'red'), 'COLOR');
             } else {
                 b = createTyped('act_light');
+                b.setFieldValue(String(a.keep_sec || 0), 'KEEP');
                 b.setFieldValue(a.status || 'on', 'STATUS');
                 b.setFieldValue(String(a.brightness === undefined ? 100 : a.brightness), 'BRIGHTNESS');
             }
             break;
         case 'fan': {
             b = createTyped('act_fan');
+                b.setFieldValue(String(a.keep_sec || 0), 'KEEP');
             const fanOp = a.op || 'set';
             b.setFieldValue(fanOp, 'OP');
             b.setFieldValue(String(a.speed === undefined ? 60 : a.speed), 'SPEED');

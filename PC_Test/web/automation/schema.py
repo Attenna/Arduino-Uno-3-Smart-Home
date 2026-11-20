@@ -249,6 +249,12 @@ def validate_action(action: dict, where: str = "动作块",
     if device not in ACTION_DEVICES:
         raise ValidationError(f"{where}未知设备: {device}")
     clean = {"device": device}
+    if device in ("light", "fan") and "keep_sec" in action:
+        seconds = _as_number(action["keep_sec"], where)
+        if not 0 <= seconds <= 86400:
+            raise ValidationError("保持时间必须为 0 到 86400 秒")
+        if seconds:
+            clean["keep_sec"] = seconds
     if device == "camera":
         if action.get("action", "snapshot") != "snapshot":
             raise ValidationError("摄像头动作只能是 snapshot")
