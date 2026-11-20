@@ -36,6 +36,7 @@ COMPARATORS = [
 # 数值源的 min/max 是保存期的量程校验（schema._clean_comparison）：超出物理量程
 # 的阈值一定恒假，属「能选但永远不成立」的假规则，必须在保存时拦掉。
 CONDITION_SOURCES = {
+    "stranger_distance_cm": {"label": "门口有未匹配人脸时的超声波距离", "kind": "number", "unit": "cm", "min": 2, "max": 400},
     "distance_cm": {"label": "门口超声波距离", "kind": "number", "unit": "cm",
                     "min": 2, "max": 400},
     "sensor_fresh": {"label": "传感器数据新鲜（10秒内）", "kind": "bool"},
