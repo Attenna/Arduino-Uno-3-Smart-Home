@@ -182,7 +182,7 @@
     <section class="card" style="margin-top:20px">
         <div class="card-header"><h3 data-i18n="visitors.title">未授权来访</h3><button class="btn btn-secondary" onclick="loadVisitors()" data-i18n="visitors.refresh">刷新照片</button></div>
         <div class="card-body">
-            <p data-i18n="visitors.help">后台门禁识别启用且已录入用户后生效。同一位置持续出现的人脸每30秒最多保存一张，照片保留30天。点击照片查看原图。</p>
+            <p data-i18n="visitors.help">后台门禁识别启用且已录入用户后生效。同一位置持续出现的人脸每次来访保存一张代表照，超过6秒未出现后重新计次，照片保留30天。点击照片查看原图。</p>
             <div id="visitorPhotos" data-i18n="visitors.loading" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:20px">正在加载来访照片…</div>
         </div>
     </section>

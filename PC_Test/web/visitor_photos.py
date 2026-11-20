@@ -46,7 +46,10 @@ class VisitorPhotos:
                 track.update(box=rect, seen=now)
                 current.append(track)
                 reason = self.db.diagnose(identity, 'face')[0] if identity else 'unmatched_face'
-                if reason == 'matched' or now - track['saved'] < 30:
+                if reason == 'matched':
+                    continue
+                if track.get('photo'):
+                    os.utime(self.directory / track['photo'], (now, now))
                     continue
                 if not jpeg.startswith(b'\xff\xd8'):
                     raise ValueError('Invalid visitor JPEG')
@@ -59,7 +62,8 @@ class VisitorPhotos:
                 finally:
                     temp.unlink(missing_ok=True)
                 paths[index] = name
-                track['saved'] = now
+                track['photo'] = name
+                os.utime(self.directory / name, (now, now))
             self.tracks = current + available
         return paths
 

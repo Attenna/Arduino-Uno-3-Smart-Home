@@ -770,7 +770,7 @@ async function loadVisitors() {
         container.innerHTML = rows.length ? rows.map(row => {
             const date = serverDate(row.timestamp);
             const timestamp = date ? date.toLocaleString(I18N.currentLang === 'zh' ? 'zh-CN' : 'en-US') : '--';
-            return `<article><a href="${esc(row.image_url)}" target="_blank" rel="noopener"><img src="${esc(row.image_url)}" alt="${esc(t('visitors.alt'))}" loading="lazy" style="width:100%;aspect-ratio:4/3;object-fit:cover;border-radius:14px"></a><p>${esc(timestamp)}</p><p>${esc(row.person_name || t('visitors.unknown'))} · ${esc(reasonText(row.deny_reason))}</p></article>`;
+            return `<article><a href="${esc(row.image_url)}" target="_blank" rel="noopener"><img src="${esc(row.image_url)}" alt="${esc(t('visitors.alt'))}" loading="lazy" style="width:100%;aspect-ratio:4/3;object-fit:cover;border-radius:14px"></a><p>${esc(timestamp)} → ${esc(new Date(row.last_seen * 1000).toLocaleTimeString())} · ${Math.max(0, Math.round(row.last_seen - date.getTime() / 1000))} s</p><p>${esc(row.person_name || t('visitors.unknown'))} · ${esc(reasonText(row.deny_reason))}</p></article>`;
         }).join('') : '<p>' + esc(t('visitors.empty')) + '</p>';
     } catch (error) {
         container.textContent = t('visitors.error');
