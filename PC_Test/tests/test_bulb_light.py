@@ -21,6 +21,24 @@ class BulbLightTests(unittest.TestCase):
         link.process([{'label': 'drone'}], True, True, action)
         action.assert_not_called()
 
+    @patch('web.bulb_light.activate_light', return_value=(True, 'ack'))
+    @patch('web.extensions.db')
+    @patch('web.extensions.automation')
+    def test_continuous_hit_miss_and_manual_takeover(self, engine, db, activate):
+        import threading
+        engine.output_locks = {'light': threading.RLock()}
+        engine.output_holds = {}
+        db.get_current_status.return_value = {'light_status':'off'}
+        link = BulbLightLink()
+        hit = [{'label':'light bulb'}]
+        for frame in [hit, hit, [], []]:
+            link.follow(frame, 1, 5, lambda: True)
+        self.assertEqual([c.args[0] for c in activate.call_args_list], ['on', 'off'])
+        link.follow(hit, 1, 5, lambda: True)
+        engine.output_holds.clear()
+        link.follow([], 1, 5, lambda: True)
+        self.assertEqual(activate.call_count, 3)
+
     def test_failure_is_reported_and_throttled(self):
         link = BulbLightLink()
         action = Mock(return_value=(False, 'offline'))
