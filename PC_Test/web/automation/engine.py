@@ -99,6 +99,7 @@ class AutomationEngine:
         # light_dark 作为布尔源供积木引用，回差避免灯光回照导致的自激抖动。
         self._light_dark: bool | None = None
         self.doorway = DoorwayDistance()
+        self.echo_missing_since = None
         self.stranger_until = 0.0
         self.output_locks = {device: threading.RLock() for device in ("light", "fan")}
         self.output_holds = {}
@@ -600,12 +601,26 @@ class AutomationEngine:
     def on_distance(self, payload):
         with self._lock:
             interrupted = self.doorway.update(payload)
+            now = time.monotonic()
+            valid = self.doorway.snapshot()["valid"]
+            no_echo = isinstance(payload, dict) and payload.get("status") == "timeout" and payload.get("valid") is False
+            missing_since = self.echo_missing_since
+            if no_echo and missing_since is None:
+                missing_since = now
+            self.echo_missing_since = missing_since if no_echo else None
             for rule in list(self._iter_enabled()):
                 trig = rule["trigger"]
                 if trig.get("sensor") not in ("distance_cm", "stranger_distance_cm") or trig["kind"] != "sensor":
                     continue
                 rid = rule["id"]
-                if interrupted or not self.doorway.snapshot()["valid"]:
+                stranger_rule = trig["sensor"] == "stranger_distance_cm"
+                gap = now - missing_since if missing_since is not None else 0.0
+                if stranger_rule and not interrupted and now < self.stranger_until and gap <= 1.0:
+                    if no_echo:
+                        continue
+                    if valid and rid in self._hold_since:
+                        self._hold_since[rid] += gap
+                if interrupted or not valid or (stranger_rule and gap > 1.0):
                     self._hold_since.pop(rid, None)
                     self._hold_fired.pop(rid, None)
                     self._prev_trigger[rid] = False
