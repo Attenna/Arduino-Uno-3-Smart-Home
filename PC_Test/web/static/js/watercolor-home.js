@@ -70,7 +70,8 @@
         text('wcTemperature', fresh ? valueText(data.temperature, '', 1) : '—');
         text('wcHumidity', fresh ? valueText(data.humidity) : '—');
         text('wcLightRaw', fresh ? valueText(data.light_raw) : '—');
-        text('wcDistance', fresh ? valueText(data.distance, ' cm') : '—');
+        text('wcDistance', connected() && data.doorway?.valid ? valueText(data.doorway.distance_cm, ' cm', 1) :
+            (!connected() || data.doorway?.status === 'stale' ? '数据过期' : '暂无有效回波'));
         for (const [id, field, yes, no] of [
             ['wcSmoke', 'smoke', '烟雾告警', '正常'],
             ['wcRain', 'rain', '有雨', '无雨'],

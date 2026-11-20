@@ -17,6 +17,8 @@ def get_status():
               if not key.startswith(("ac_", "rb_ac", "soil_"))}
     status["statistics"] = db.get_statistics()
     engine = extensions.automation
+    doorway = getattr(engine, "doorway", None)
+    status["doorway"] = doorway.snapshot() if doorway else None
     store = getattr(engine, "global_state", None)
     status["occupancy"] = store.get("g:有人在家") if store else None
     bridge = extensions.bridge
