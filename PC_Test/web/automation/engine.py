@@ -99,6 +99,7 @@ class AutomationEngine:
         # light_dark 作为布尔源供积木引用，回差避免灯光回照导致的自激抖动。
         self._light_dark: bool | None = None
         self.doorway = DoorwayDistance()
+        self.stranger_until = 0.0
         self.capture_photo = None
         # 事件队列（带序号），规则按各自 last_event_id 消费
         self._events: list[tuple[int, dict]] = []
@@ -528,7 +529,7 @@ class AutomationEngine:
             for cancelled in self._running.values():
                 cancelled.set()
             for rule in clean:
-                if (rule["trigger"].get("sensor") == "distance_cm"
+                if (rule["trigger"].get("sensor") in ("distance_cm", "stranger_distance_cm")
                         and old_rules.get(rule["id"]) != rule):
                     for store in (self._prev_trigger, self._hold_since, self._hold_fired, self._last_fire):
                         store.pop(rule["id"], None)
@@ -582,12 +583,24 @@ class AutomationEngine:
 
     # ==================== 外部输入（bridge / face API 调用） ====================
 
+    def observe_stranger(self, present, lifetime):
+        with self._lock:
+            now = time.monotonic()
+            if not present or now >= self.stranger_until:
+                for rule in self._iter_enabled():
+                    if rule["trigger"].get("sensor") == "stranger_distance_cm":
+                        rid = rule["id"]
+                        self._hold_since.pop(rid, None)
+                        self._hold_fired.pop(rid, None)
+                        self._prev_trigger[rid] = False
+            self.stranger_until = now + lifetime if present else 0.0
+
     def on_distance(self, payload):
         with self._lock:
             interrupted = self.doorway.update(payload)
             for rule in list(self._iter_enabled()):
                 trig = rule["trigger"]
-                if trig.get("sensor") != "distance_cm" or trig["kind"] != "sensor":
+                if trig.get("sensor") not in ("distance_cm", "stranger_distance_cm") or trig["kind"] != "sensor":
                     continue
                 rid = rule["id"]
                 if interrupted or not self.doorway.snapshot()["valid"]:
@@ -606,13 +619,13 @@ class AutomationEngine:
                     sensor = rule["trigger"].get("sensor")
                     # 距离规则的中断由 doorway 自己判定；g: 变量与快照新鲜度无关，
                     # 否则传感器板离线会连带把「手动优先到期」的计时清掉
-                    if sensor != "distance_cm" and not _is_state_source(sensor):
+                    if sensor not in ("distance_cm", "stranger_distance_cm") and not _is_state_source(sensor):
                         self._hold_since.pop(rule["id"], None)
                         self._hold_fired.pop(rule["id"], None)
             self._snapshot = dict(snap or {})
             self._snapshot_ts = time.time()
             for rule in list(self._iter_enabled()):
-                if rule["trigger"]["kind"] == "sensor" and rule["trigger"].get("sensor") != "distance_cm":
+                if rule["trigger"]["kind"] == "sensor" and rule["trigger"].get("sensor") not in ("distance_cm", "stranger_distance_cm"):
                     self._evaluate_sensor_rule(rule)
         except Exception as e:                       # noqa: BLE001
             logger.debug("[自动化] 快照求值异常: %s", e)
@@ -904,6 +917,7 @@ class AutomationEngine:
         """传感器快照 + SQLite 中的执行器当前状态 + 全局状态（g: 变量）。"""
         ctx = dict(self._snapshot)
         ctx["distance_cm"] = self.doorway.snapshot()["distance_cm"]
+        ctx["stranger_distance_cm"] = ctx["distance_cm"] if time.monotonic() < self.stranger_until else None
         ctx["sensor_fresh"] = bool(self._snapshot_ts and time.time() - self._snapshot_ts <= 10)
         if ctx["sensor_fresh"]:
             self._track_light_dark(ctx.get("light"))
