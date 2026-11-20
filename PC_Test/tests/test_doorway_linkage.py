@@ -46,6 +46,23 @@ class DoorwayTests(unittest.TestCase):
         self.feed(108)
         self.assertEqual(self.fire.call_count, 2)
 
+    def test_stranger_and_distance_must_overlap_for_full_hold(self):
+        self.rule['trigger']['sensor'] = 'stranger_distance_cm'
+        self.feed(100)
+        self.feed(102)
+        self.engine.observe_stranger(True, 4)
+        self.feed(103)
+        self.feed(104)
+        self.engine.observe_stranger(False, 0)
+        self.feed(105)
+        self.engine.observe_stranger(True, 5)
+        self.feed(106)
+        self.feed(107)
+        self.fire.assert_not_called()
+        self.feed(108)
+        self.feed(109)
+        self.fire.assert_called_once()
+
     def test_startup_counts_full_hold(self):
         self.feed(100)
         self.feed(101.99)
