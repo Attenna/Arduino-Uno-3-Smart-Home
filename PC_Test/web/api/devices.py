@@ -38,6 +38,9 @@ def _note_manual(device, **state):
     automation = getattr(extensions, "automation", None)
     if automation is None:
         return
+    if device in ("fan", "light"):
+        with automation.output_locks[device]:
+            automation.output_holds.pop(device, None)
     try:
         automation.on_event({"event": "manual_control", "device": device,
                             "ts": time.time()})
