@@ -88,7 +88,7 @@ def init_objects(app):
     app.extensions["objects"] = ObjectService(model, DATA_DIR)
     def infer(options, is_current):
         with app.app_context():
-            response = _detect_data(options, {}, allow_action=is_current)
+            response = _detect_data(options, {}, allow_action=is_current, continuous=True)
             response, status_code = response if isinstance(response, tuple) else (response, 200)
             data = response.get_json()
             if status_code != 200:
@@ -127,7 +127,7 @@ def detect():
     return _detect_data(request.form, request.files)
 
 
-def _detect_data(form, files, allow_action=lambda: True):
+def _detect_data(form, files, allow_action=lambda: True, continuous=False):
     s = service()
     objects_enabled = form.get("objects", "true") == "true"
     faces_enabled = form.get("faces", "false") == "true"
@@ -165,9 +165,14 @@ def _detect_data(form, files, allow_action=lambda: True):
             result = {"time": datetime.now(timezone.utc).isoformat(), "width": width,
                       "height": height, "detections": [], "event_id": None, "inference_ms": 0}
         result = dict(result)
-        result["bulb_light"] = s.bulb_light.process(
-            result["detections"], form.get("bulb_light") == "true" and objects_enabled and allow_action(),
-            not bool(files.get("image")), activate_light)
+        enabled = form.get("bulb_light") == "true" and objects_enabled and allow_action()
+        if continuous and enabled:
+            worker = current_app.extensions["monitor_worker"]
+            result["bulb_light"] = s.bulb_light.follow(result["detections"], form["monitor_revision"],
+                                                      max(5, worker.interval + 3), allow_action)
+        else:
+            result["bulb_light"] = s.bulb_light.process(result["detections"], enabled,
+                                                      not bool(files.get("image")), activate_light)
         result["objects_enabled"] = objects_enabled
         result["faces_enabled"] = faces_enabled
         result["face_result"] = None

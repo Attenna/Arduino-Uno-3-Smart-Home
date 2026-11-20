@@ -71,6 +71,7 @@ class MonitorWorker:
                 continue
             started = time.monotonic()
             try:
+                options["monitor_revision"] = revision
                 result = self.infer(options, lambda: self.current(revision))
                 with self.lock:
                     if revision == self.revision and time.monotonic() < self.deadline:
