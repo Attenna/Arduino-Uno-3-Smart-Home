@@ -6,7 +6,7 @@ import time
 import uuid
 from pathlib import Path
 
-PHOTO_NAME = re.compile(r'visitor_[0-9a-f]{32}\.jpg\Z')
+PHOTO_NAME = re.compile(r'visitor_(?:visit_)?[0-9a-f]{32}\.jpg\Z')
 
 
 def overlap(a, b):
@@ -40,18 +40,21 @@ class VisitorPhotos:
                 candidates = [t for t in available if t['identity'] == identity and overlap(t['box'], rect) >= .3]
                 track = max(candidates, key=lambda t: overlap(t['box'], rect), default=None)
                 if track is None:
-                    track = {'saved': float('-inf'), 'identity': identity}
+                    track = {'identity': identity}
                 else:
                     available.remove(track)
                 track.update(box=rect, seen=now)
                 current.append(track)
                 reason = self.db.diagnose(identity, 'face')[0] if identity else 'unmatched_face'
-                if reason == 'matched' or now - track['saved'] < 30:
+                if reason == 'matched':
+                    continue
+                if track.get('photo'):
+                    os.utime(self.directory / track['photo'], (now, now))
                     continue
                 if not jpeg.startswith(b'\xff\xd8'):
                     raise ValueError('Invalid visitor JPEG')
                 self.directory.mkdir(parents=True, exist_ok=True)
-                name = 'visitor_' + uuid.uuid4().hex + '.jpg'
+                name = 'visitor_visit_' + uuid.uuid4().hex + '.jpg'
                 temp = self.directory / (name + '.tmp')
                 try:
                     temp.write_bytes(jpeg)
@@ -59,7 +62,8 @@ class VisitorPhotos:
                 finally:
                     temp.unlink(missing_ok=True)
                 paths[index] = name
-                track['saved'] = now
+                track['photo'] = name
+                os.utime(self.directory / name, (now, now))
             self.tracks = current + available
         return paths
 
