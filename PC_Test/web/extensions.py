@@ -60,6 +60,7 @@ def init_bridge(cfg: dict) -> McpHardwareBridge:
             bridge.add_listener("event", security_monitor.on_event)
             bridge.add_listener("snapshot", security_monitor.on_snapshot)
             # PIR 是识别哨兵的门控：没人时一帧都不抓
+            face_watcher.observe_stranger = automation.observe_stranger
             face_watcher.attach_bridge(bridge)
 
             # B 板不主动上报 state：执行器指令收到 ACK 即刷新 output_last_seen，

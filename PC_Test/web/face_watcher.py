@@ -69,6 +69,7 @@ class FaceWatcher:
                         "denied": 0, "strangers": 0, "errors": 0}
         self._last: dict | None = None
         self._camera_error: str | None = None
+        self.observe_stranger = None
         self._visitor_photos = None
 
     def configure(self, cfg: dict | None) -> None:
@@ -198,6 +199,9 @@ class FaceWatcher:
                    box.get("y2", 9999) - box.get("y1", 0))
         if side and side < self.min_face_px:
             return self._observe("too_far", face_px=int(side))
+        if self.observe_stranger:
+            unknown = any(not face.get("face_id") and _face_area(face) >= self.min_face_px ** 2 for face in faces)
+            self.observe_stranger(unknown, max(self.interval, self._spacing()) + 2)
         photo_paths = {}
         if hasattr(self.guard.db, 'db_path'):
             from .visitor_photos import VisitorPhotos
@@ -318,6 +322,8 @@ class FaceWatcher:
         return entry
 
     def _observe(self, kind: str, **fields) -> dict:
+        if self.observe_stranger and kind != "throttled":
+            self.observe_stranger(False, 0)
         """把一轮「没有可鉴权身份」的观测留痕到 face_events，并返回这一轮的说明。
 
         太远/节流/无脸/未唤醒/摄像头失败这些轮次过去在写库前就 return，门禁页看不到
