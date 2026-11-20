@@ -4,6 +4,15 @@ const I18N = {
 
     dict: {
         zh: {
+            "visitors.title": "未授权来访",
+            "visitors.refresh": "刷新照片",
+            "visitors.help": "后台门禁识别启用且已录入用户后生效。同一位置持续出现的人脸每次来访保存一张代表照，超过6秒未出现后重新计次，照片保留30天。点击照片查看原图。",
+            "visitors.loading": "正在加载来访照片…",
+            "visitors.empty": "暂无未授权来访照片",
+            "visitors.error": "来访照片加载失败，请点击刷新重试",
+            "visitors.alt": "未授权来访现场照片",
+            "visitors.unknown": "未匹配身份",
+
             // 通用
             'nav.dashboard': '我的家',
             'nav.rooms': '房间与设备',
@@ -697,6 +706,15 @@ const I18N = {
             'chart.light_level_history': '光照强度历史趋势',
         },
         en: {
+            "visitors.title": "Unauthorized visits",
+            "visitors.refresh": "Refresh photos",
+            "visitors.help": "Requires background access recognition and an enrolled user. Save at most one photo per tracked face per visit (a gap over 6 seconds starts another visit). Keep photos for 30 days. Click to view the original.",
+            "visitors.loading": "Loading visitor photos…",
+            "visitors.empty": "No unauthorized visitor photos yet",
+            "visitors.error": "Could not load visitor photos. Refresh to retry.",
+            "visitors.alt": "Unauthorized visitor scene",
+            "visitors.unknown": "Unmatched identity",
+
             // Common
             'nav.dashboard': 'My Home',
             'nav.rooms': 'Rooms & Devices',

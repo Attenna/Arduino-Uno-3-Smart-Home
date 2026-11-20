@@ -148,3 +148,35 @@ def face_get_latest_event():
         return jsonify(event)
     return jsonify({"message": "暂无识别事件",
                     "message_en": "No face events yet"}), 200
+
+
+@bp.get('/api/face/visitors')
+def visitor_events():
+    from ..visitor_photos import VisitorPhotos, PHOTO_NAME
+    store = VisitorPhotos(db)
+    store.cleanup()
+    with db.connection() as c:
+        rows = c.execute("SELECT * FROM face_events WHERE status='denied' AND image_path LIKE 'visitor_%' ORDER BY id DESC LIMIT 100").fetchall()
+    result = []
+    for row in rows:
+        event = dict(row)
+        name = event.get('image_path') or ''
+        if PHOTO_NAME.fullmatch(name) and (store.directory / name).is_file():
+            event['last_seen'] = (store.directory / name).stat().st_mtime
+            event['image_url'] = '/api/face/visitors/images/' + name
+            event['reason_text'] = deny_texts(event.get('deny_reason'))[0]
+            result.append(event)
+    return jsonify(result)
+
+
+@bp.get('/api/face/visitors/images/<name>')
+def visitor_image(name):
+    from flask import abort, send_from_directory
+    from ..visitor_photos import VisitorPhotos, PHOTO_NAME
+    if not PHOTO_NAME.fullmatch(name):
+        abort(404)
+    store = VisitorPhotos(db)
+    store.cleanup()
+    response = send_from_directory(store.directory, name)
+    response.headers['Cache-Control'] = 'private, no-store'
+    return response

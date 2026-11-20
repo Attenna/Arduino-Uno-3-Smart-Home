@@ -69,6 +69,7 @@ class FaceWatcher:
                         "denied": 0, "strangers": 0, "errors": 0}
         self._last: dict | None = None
         self._camera_error: str | None = None
+        self._visitor_photos = None
 
     def configure(self, cfg: dict | None) -> None:
         """读取 face.watcher 配置；摄像头地址与 /api/camera/stream 同源解析。"""
@@ -184,6 +185,8 @@ class FaceWatcher:
         if result.get("mode") == "throttled":
             return self._observe("throttled")
         if not result.get("detected"):
+            if self._visitor_photos:
+                self._visitor_photos.capture(blob, [])
             return self._observe("no_face")
         self._bump("faces")
         faces = result.get("faces") or []
@@ -195,6 +198,24 @@ class FaceWatcher:
                    box.get("y2", 9999) - box.get("y1", 0))
         if side and side < self.min_face_px:
             return self._observe("too_far", face_px=int(side))
+        photo_paths = {}
+        if hasattr(self.guard.db, 'db_path'):
+            from .visitor_photos import VisitorPhotos
+            if self._visitor_photos is None:
+                self._visitor_photos = VisitorPhotos(self.guard.db)
+            try:
+                photo_paths = self._visitor_photos.capture(blob, faces)
+            except (OSError, ValueError) as exc:
+                logger.warning("[识别哨兵] 来访照片保存失败: %s", exc)
+        target_index = next((i for i, face in enumerate(faces) if face is target), -1)
+        for index, path in photo_paths.items():
+            if index != target_index:
+                face = faces[index]
+                self.guard.handle_face_result(
+                    face.get('face_id') or '', score=face.get('score'),
+                    detection_confidence=face.get('confidence'), image_path=path,
+                    device_source='face_watcher', record_only=True)
+        image_path = photo_paths.get(target_index, '')
         until = self._cooldowns.get(face_id, 0.0)
         if face_id and time.time() < until:
             # 开门后人还在门口站着：不重复开门，但这一轮识别照样留痕（record_only），
@@ -202,13 +223,13 @@ class FaceWatcher:
             self.guard.handle_face_result(
                 face_id, score=target.get("score"),
                 detection_confidence=target.get("confidence"),
-                device_source="face_watcher", record_only=True)
+                device_source="face_watcher", image_path=image_path, record_only=True)
             return self._note("cooldown", face_id=face_id,
                               until=round(until - time.time(), 1))
         outcome = self.guard.handle_face_result(
             face_id, score=target.get("score"),
             detection_confidence=target.get("confidence"),
-            device_source="face_watcher")
+            device_source="face_watcher", image_path=image_path)
         if outcome.get("duplicate"):
             return self._note("duplicate", face_id=face_id)
         if outcome.get("granted"):
