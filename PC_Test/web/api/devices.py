@@ -372,6 +372,13 @@ def control_light():
     target = (light_status, brightness, style, count)
 
     def _run(v):
+        engine = extensions.automation
+        if engine is None:
+            return _apply_light(v)
+        with engine.output_locks["light"]:
+            return _apply_light(v)
+
+    def _apply_light(v):
         status, level, chosen, selected_count = v
         # 四种亮法互斥，由 hardware_plan 选一条固件命令：关灯 > 自定义颜色 > 色温 > 白光/夜灯
         method, args, kwargs = light_state.hardware_plan(status, level, chosen, selected_count)
