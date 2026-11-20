@@ -100,6 +100,8 @@ class AutomationEngine:
         self._light_dark: bool | None = None
         self.doorway = DoorwayDistance()
         self.stranger_until = 0.0
+        self.output_locks = {device: threading.RLock() for device in ("light", "fan")}
+        self.output_holds = {}
         self.capture_photo = None
         # 事件队列（带序号），规则按各自 last_event_id 消费
         self._events: list[tuple[int, dict]] = []
@@ -1201,6 +1203,20 @@ class AutomationEngine:
                 time.sleep(WAIT_POLL_SECONDS)
 
     def _perform(self, action: dict, rule: dict | None = None) -> tuple[bool, str]:
+        device = action["device"]
+        if device in self.output_locks:
+            with self.output_locks[device]:
+                owner = (rule or {}).get("id")
+                active_owner, until = self.output_holds.get(device, (None, 0))
+                if time.monotonic() < until and active_owner != owner:
+                    return True, "设备保持中，本次动作让位"
+                result = self._apply_output(action, rule)
+                if result[0]:
+                    self.output_holds[device] = (owner, time.monotonic() + action.get("keep_sec", 0))
+                return result
+        return self._apply_output(action, rule)
+
+    def _apply_output(self, action, rule):
         device = action["device"]
         if device == "camera":
             if self.capture_photo is None:

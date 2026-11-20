@@ -38,6 +38,9 @@ def _note_manual(device, **state):
     automation = getattr(extensions, "automation", None)
     if automation is None:
         return
+    if device in ("fan", "light"):
+        with automation.output_locks[device]:
+            automation.output_holds.pop(device, None)
     try:
         automation.on_event({"event": "manual_control", "device": device,
                             "ts": time.time()})
@@ -369,6 +372,13 @@ def control_light():
     target = (light_status, brightness, style, count)
 
     def _run(v):
+        engine = extensions.automation
+        if engine is None:
+            return _apply_light(v)
+        with engine.output_locks["light"]:
+            return _apply_light(v)
+
+    def _apply_light(v):
         status, level, chosen, selected_count = v
         # 四种亮法互斥，由 hardware_plan 选一条固件命令：关灯 > 自定义颜色 > 色温 > 白光/夜灯
         method, args, kwargs = light_state.hardware_plan(status, level, chosen, selected_count)
