@@ -179,6 +179,14 @@
         </div>
     </div>
 
+    <section class="card" style="margin-top:20px">
+        <div class="card-header"><h3 data-i18n="visitors.title">未授权来访</h3><button class="btn btn-secondary" onclick="loadVisitors()" data-i18n="visitors.refresh">刷新照片</button></div>
+        <div class="card-body">
+            <p data-i18n="visitors.help">后台门禁识别启用且已录入用户后生效。同一位置持续出现的人脸每30秒最多保存一张，照片保留30天。点击照片查看原图。</p>
+            <div id="visitorPhotos" data-i18n="visitors.loading" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:20px">正在加载来访照片…</div>
+        </div>
+    </section>
+
     <!-- 门禁日志 -->
     <div class="card card-table" style="margin-top:20px">
         <div class="card-header">
@@ -214,6 +222,6 @@
 
 {% block scripts %}
     <script src="{{ url_for('static', filename='js/doorway.js') }}?v=1" defer></script>
-    <script src="{{ url_for('static', filename='js/access.js') }}?v=20261006a"></script>
+    <script src="{{ url_for('static', filename='js/access.js') }}?v=20261119-visitors"></script>
     <script>window.toggleDashboardLang = toggleAccessLang;</script>
 {% endblock %}
